@@ -1,0 +1,39 @@
+{
+  "name": "tracker-bot",
+  "version": "1.0.0",
+  "main": "tracker-bot.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@gutenye/ocr-node": "^1.4.8",
+    "axios": "^1.9.0",
+    "better-sqlite3": "^11.7.0",
+    "chartjs-node-canvas": "^5.0.0",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-sharp": "^4.2.41",
+    "form-data": "^4.0.1",
+    "fs": "^0.0.1-security",
+    "googleapis": "^144.0.0",
+    "module-alias": "^2.2.3",
+    "multer": "^1.4.5-lts.1",
+    "node-fetch": "^2.7.0",
+    "onnxruntime-node": "^1.20.1",
+    "openai": "^4.85.3",
+    "path": "^0.12.7",
+    "punycode": "^2.3.1",
+    "puppeteer": "^23.11.1",
+    "sharp": "^0.33.5",
+    "string-similarity": "^4.0.4",
+    "tesseract.js": "^6.0.0",
+    "whatwg-url": "^14.1.0"
+  }
+}

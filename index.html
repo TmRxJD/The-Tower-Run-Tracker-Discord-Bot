@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Image Preprocessing</title>
+</head>
+<body>
+    <h2>Upload an Image for Processing</h2>
+    <input type="file" id="upload">
+    <br><br>
+    <h3>Original Image</h3>
+    <img id="originalImg" style="max-width: 400px;">
+    <h3>Processed Image (Preview with Adjustments)</h3>
+    <img id="processedImg" style="max-width: 400px;">
+    <br><br>
+
+    <h3>Live Adjustments</h3>
+    <label>Brightness: <input type="number" id="brightness" value="0" step="0.1"></label>
+    <label>Contrast: <input type="number" id="contrast" value="1" step="0.1"></label>
+    <label>Grayscale: <input type="checkbox" id="grayscale"></label>
+    <button onclick="updateImage()">Apply</button>
+
+    <script>
+        let imagePath = "";
+
+        document.getElementById('upload').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('image', file);
+
+            const response = await fetch('http://localhost:3000/upload', { 
+                method: 'POST', 
+                body: formData 
+            });
+
+            const data = await response.json();
+
+            // Display images
+            document.getElementById('originalImg').src = data.original;
+            document.getElementById('processedImg').src = data.processed;
+
+            imagePath = data.original; // Store path for updates
+        });
+
+        function updateImage() {
+            if (!imagePath) return alert("Please upload an image first!");
+
+            const brightness = document.getElementById('brightness').value;
+            const contrast = document.getElementById('contrast').value;
+            const grayscale = document.getElementById('grayscale').checked ? "&grayscale=true" : "";
+
+            document.getElementById('processedImg').src = 
+                `http://localhost:3000/sharp${imagePath.replace('http://localhost:3000', '')}?brightness=${brightness}&contrast=${contrast}${grayscale}`;
+        }
+    </script>
+</body>
+</html>
