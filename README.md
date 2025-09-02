@@ -1,4 +1,4 @@
-# The Tower Run Tracker
+# The Tower Run Tracker Bot
 
 A powerful Discord bot for tracking, analyzing, and sharing Tower Run results. Designed for the Tower Run community, this bot supports both automated screenshot uploads and manual entry, with advanced features for data review, editing, sharing, and migration. This bot is paired with a website made for the purpose of visualizing data, both mobile and desktop friendly.
 
@@ -35,9 +35,6 @@ A powerful Discord bot for tracking, analyzing, and sharing Tower Run results. D
 ### 📊 Google Sheets Integration
 - **Spreadsheet Tracker**: Optionally use a Google Spreadsheet as your data backend.
 - **Sheet Data Import/Export**: Import runs from a sheet, or get a link to your personal tracker sheet.
-
-### 🕒 Scheduled Tasks
-- **Chart Generation**: Automatically generates and posts comparison charts every Thursday and Sunday at 10:00 AM (configurable).
 
 ### 🛠️ Advanced
 - **Session Management**: Keeps user sessions for smooth multi-step flows and prevents memory leaks with automatic cleanup.
