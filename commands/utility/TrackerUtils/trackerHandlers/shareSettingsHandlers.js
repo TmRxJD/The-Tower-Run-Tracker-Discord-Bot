@@ -3,61 +3,30 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelect
 const { userSessions, trackerEmitter } = require('./sharedState.js');
 const { handleError } = require('./errorHandlers.js');
 const { createShareEmbed, formatNumberForDisplay } = require('../trackerUI/trackerUIEmbeds.js');
-const { calculateHourlyRates } = require('./trackerHelpers.js');
+const { calculateHourlyRates, parseNumberInput } = require('./trackerHelpers.js');
 const path = require('path');
-const Database = require('better-sqlite3');
-
-const SHARE_SETTINGS_DB = path.join(__dirname, '..', 'shareSettingsDB', 'shareSettings.db');
-
-// Initialize database
-const db = new Database(SHARE_SETTINGS_DB);
-
-// Create table if it doesn't exist
-db.exec(`
-    CREATE TABLE IF NOT EXISTS share_settings (
-        user_id TEXT PRIMARY KEY,
-        include_tier INTEGER DEFAULT 1,
-        include_wave INTEGER DEFAULT 1,
-        include_duration INTEGER DEFAULT 1,
-        include_total_coins INTEGER DEFAULT 1,
-        include_total_cells INTEGER DEFAULT 1,
-        include_total_dice INTEGER DEFAULT 1,
-        include_coins_per_hour INTEGER DEFAULT 1,
-        include_cells_per_hour INTEGER DEFAULT 1,
-        include_dice_per_hour INTEGER DEFAULT 1,
-        include_notes INTEGER DEFAULT 1,
-        include_screenshot INTEGER DEFAULT 0
-    )
-`);
-
-// Prepare statements
-const insertOrReplaceStmt = db.prepare(`
-    INSERT OR REPLACE INTO share_settings 
-    (user_id, include_tier, include_wave, include_duration, include_total_coins, include_total_cells, include_total_dice, include_coins_per_hour, include_cells_per_hour, include_dice_per_hour, include_notes, include_screenshot)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
-
-const selectStmt = db.prepare('SELECT * FROM share_settings WHERE user_id = ?');
+const { loadSetting, saveSetting, loadAllSettings, saveMultipleSettings } = require('./settingsDB.js');
 
 /**
  * Load share settings for a user
  */
 async function loadShareSettings(userId) {
     try {
-        const row = selectStmt.get(userId);
-        if (row) {
+        const settings = loadAllSettings(userId);
+        if (Object.keys(settings).length > 0) {
             return {
-                includeTier: Boolean(row.include_tier),
-                includeWave: Boolean(row.include_wave),
-                includeDuration: Boolean(row.include_duration),
-                includeTotalCoins: Boolean(row.include_total_coins),
-                includeTotalCells: Boolean(row.include_total_cells),
-                includeTotalDice: Boolean(row.include_total_dice),
-                includeCoinsPerHour: Boolean(row.include_coins_per_hour),
-                includeCellsPerHour: Boolean(row.include_cells_per_hour),
-                includeDicePerHour: Boolean(row.include_dice_per_hour),
-                includeNotes: Boolean(row.include_notes),
-                includeScreenshot: Boolean(row.include_screenshot)
+                includeTier: settings.includeTier === 'true',
+                includeWave: settings.includeWave === 'true',
+                includeDuration: settings.includeDuration === 'true',
+                includeKilledBy: settings.includeKilledBy === 'true',
+                includeTotalCoins: settings.includeTotalCoins === 'true',
+                includeTotalCells: settings.includeTotalCells === 'true',
+                includeTotalDice: settings.includeTotalDice === 'true',
+                includeCoinsPerHour: settings.includeCoinsPerHour === 'true',
+                includeCellsPerHour: settings.includeCellsPerHour === 'true',
+                includeDicePerHour: settings.includeDicePerHour === 'true',
+                includeNotes: settings.includeNotes === 'true',
+                includeScreenshot: settings.includeScreenshot === 'true'
             };
         } else {
             // Return defaults
@@ -65,6 +34,7 @@ async function loadShareSettings(userId) {
                 includeTier: true,
                 includeWave: true,
                 includeDuration: true,
+                includeKilledBy: true,
                 includeTotalCoins: true,
                 includeTotalCells: true,
                 includeTotalDice: true,
@@ -82,6 +52,7 @@ async function loadShareSettings(userId) {
             includeTier: true,
             includeWave: true,
             includeDuration: true,
+            includeKilledBy: true,
             includeTotalCoins: true,
             includeTotalCells: true,
             includeTotalDice: true,
@@ -99,20 +70,21 @@ async function loadShareSettings(userId) {
  */
 async function saveShareSettings(userId, settings) {
     try {
-        insertOrReplaceStmt.run(
-            userId,
-            settings.includeTier ? 1 : 0,
-            settings.includeWave ? 1 : 0,
-            settings.includeDuration ? 1 : 0,
-            settings.includeTotalCoins ? 1 : 0,
-            settings.includeTotalCells ? 1 : 0,
-            settings.includeTotalDice ? 1 : 0,
-            settings.includeCoinsPerHour ? 1 : 0,
-            settings.includeCellsPerHour ? 1 : 0,
-            settings.includeDicePerHour ? 1 : 0,
-            settings.includeNotes ? 1 : 0,
-            settings.includeScreenshot ? 1 : 0
-        );
+        const settingsToSave = {
+            includeTier: settings.includeTier ? 'true' : 'false',
+            includeWave: settings.includeWave ? 'true' : 'false',
+            includeDuration: settings.includeDuration ? 'true' : 'false',
+            includeKilledBy: settings.includeKilledBy ? 'true' : 'false',
+            includeTotalCoins: settings.includeTotalCoins ? 'true' : 'false',
+            includeTotalCells: settings.includeTotalCells ? 'true' : 'false',
+            includeTotalDice: settings.includeTotalDice ? 'true' : 'false',
+            includeCoinsPerHour: settings.includeCoinsPerHour ? 'true' : 'false',
+            includeCellsPerHour: settings.includeCellsPerHour ? 'true' : 'false',
+            includeDicePerHour: settings.includeDicePerHour ? 'true' : 'false',
+            includeNotes: settings.includeNotes ? 'true' : 'false',
+            includeScreenshot: settings.includeScreenshot ? 'true' : 'false'
+        };
+        saveMultipleSettings(userId, settingsToSave);
     } catch (error) {
         console.error('Error saving share settings:', error);
     }
@@ -128,6 +100,7 @@ function createPreviewShareEmbed(selectedElements, user) {
         wave: 8309,
         duration: '7h 36m 5s',
         roundDuration: '7h 36m 5s',
+        killedBy: 'Boss',
         totalCoins: '90.01q',
         coins: '90.01q',
         totalCells: '810.80K',
@@ -149,31 +122,32 @@ function createPreviewShareEmbed(selectedElements, user) {
             (selectedElements.includeTier ? `🔢 Tier: **14**\n` : '') +
             (selectedElements.includeWave ? `🌊 Wave: **8309**\n` : '') +
             (selectedElements.includeDuration ? `⏱️ Duration: **7h 36m 5s**\n` : '') +
-            (selectedElements.includeTotalCoins ? `🪙 Total Coins: **${exampleRunData.totalCoins}**\n` : '') +
-            (selectedElements.includeTotalCells ? `🔋 Total Cells: **${exampleRunData.totalCells}**\n` : '') +
-            (selectedElements.includeTotalDice ? `🎲 Total Dice: **${exampleRunData.totalDice}**\n` : '') +
-            ((selectedElements.includeCoinsPerHour || selectedElements.includeCellsPerHour || selectedElements.includeDicePerHour) ? '### **Earnings per Hour**' : '')
+            (selectedElements.includeKilledBy ? `💀 Killed By: **Scatter**\n` : '') +
+            (selectedElements.includeTotalCoins ? `🪙 Total Coins: **90.01q**\n` : '') +
+            (selectedElements.includeTotalCells ? `🔋 Total Cells: **810.80K**\n` : '') +
+            (selectedElements.includeTotalDice ? `🎲 Total Dice: **11.33K**\n` : '') +
+            ((selectedElements.includeCoinsPerHour || selectedElements.includeCellsPerHour || selectedElements.includeDicePerHour) ? '### **📈 Earnings per Hour**' : '')
         )
         .setColor(Colors.Gold)
         .setThumbnail('https://i.postimg.cc/pTVP1MPh/Screenshot-2025-05-04-124710.png')
-        .setFooter({ text: '📊 Tracked with The Tower Run Tracker\nUse /track to log a run\n\nUse the dropdown below to select which elements you want to include in your share messages. The display will update in real time to show how your selections will affect the appearance of your share messages.' });
+        .setFooter({ text: ' Tracked with The Tower Run Tracker\nUse /track to log a run\n\n\nUse the dropdown below to select which elements you want to include in your share messages. The display will update in real time to show how your selections will affect the appearance of your share messages.' });
 
     if (selectedElements.includeCoinsPerHour || selectedElements.includeCellsPerHour || selectedElements.includeDicePerHour) {
         const fields = [];
         if (selectedElements.includeCoinsPerHour) {
-            fields.push({ name: '🪙\nCoins', value: formatNumberForDisplay(stats.coinsPerHour), inline: true });
+            fields.push({ name: '🪙\nCoins', value: formatNumberForDisplay(parseNumberInput(stats.coinsPerHour)), inline: true });
         }
         if (selectedElements.includeCellsPerHour) {
-            fields.push({ name: '🔋\nCells', value: formatNumberForDisplay(stats.cellsPerHour), inline: true });
+            fields.push({ name: '🔋\nCells', value: formatNumberForDisplay(parseNumberInput(stats.cellsPerHour)), inline: true });
         }
         if (selectedElements.includeDicePerHour) {
-            fields.push({ name: '🎲\nDice', value: formatNumberForDisplay(stats.dicePerHour), inline: true });
+            fields.push({ name: '🎲\nDice', value: formatNumberForDisplay(parseNumberInput(stats.dicePerHour)), inline: true });
         }
         shareEmbed.addFields(fields);
     }
 
     if (selectedElements.includeNotes) {
-        shareEmbed.addFields({ name: '📝\nNotes', value: 'Example notes for preview' });
+        shareEmbed.addFields({ name: '\nNotes', value: 'Lorem ipsum dolor sit amet.' });
     }
 
     if (selectedElements.includeScreenshot) {
@@ -186,7 +160,7 @@ function createPreviewShareEmbed(selectedElements, user) {
 /**
  * Handle share settings flow
  */
-async function handleShareSettingsFlow(interaction, commandInteractionId = interaction.id) {
+async function handleShareSettingsFlow(interaction, commandInteractionId) {
     try {
         const userId = interaction.user.id;
         const user = interaction.user;
@@ -206,11 +180,12 @@ async function handleShareSettingsFlow(interaction, commandInteractionId = inter
                 .setCustomId('share_elements_select')
                 .setPlaceholder('Select elements to include')
                 .setMinValues(0)
-                .setMaxValues(11)
+                .setMaxValues(12)
                 .addOptions([
                     { label: 'Tier', value: 'tier', description: 'Include tier in share messages', default: currentSettings.includeTier },
                     { label: 'Wave', value: 'wave', description: 'Include wave in share messages', default: currentSettings.includeWave },
                     { label: 'Duration', value: 'duration', description: 'Include duration in share messages', default: currentSettings.includeDuration },
+                    { label: 'Killed By', value: 'killed_by', description: 'Include killed by in share messages', default: currentSettings.includeKilledBy },
                     { label: 'Total Coins', value: 'total_coins', description: 'Include total coins in share messages', default: currentSettings.includeTotalCoins },
                     { label: 'Total Cells', value: 'total_cells', description: 'Include total cells in share messages', default: currentSettings.includeTotalCells },
                     { label: 'Total Dice', value: 'total_dice', description: 'Include total dice in share messages', default: currentSettings.includeTotalDice },
@@ -264,6 +239,7 @@ async function handleShareSettingsFlow(interaction, commandInteractionId = inter
                         currentSettings.includeTier = selected.includes('tier');
                         currentSettings.includeWave = selected.includes('wave');
                         currentSettings.includeDuration = selected.includes('duration');
+                        currentSettings.includeKilledBy = selected.includes('killed_by');
                         currentSettings.includeTotalCoins = selected.includes('total_coins');
                         currentSettings.includeTotalCells = selected.includes('total_cells');
                         currentSettings.includeTotalDice = selected.includes('total_dice');
@@ -289,11 +265,12 @@ async function handleShareSettingsFlow(interaction, commandInteractionId = inter
                                 .setCustomId('share_elements_select')
                                 .setPlaceholder('Select elements to include')
                                 .setMinValues(0)
-                                .setMaxValues(11)
+                                .setMaxValues(12)
                                 .addOptions([
                                     { label: 'Tier', value: 'tier', description: 'Include tier in share messages', default: currentSettings.includeTier },
                                     { label: 'Wave', value: 'wave', description: 'Include wave in share messages', default: currentSettings.includeWave },
                                     { label: 'Duration', value: 'duration', description: 'Include duration in share messages', default: currentSettings.includeDuration },
+                                    { label: 'Killed By', value: 'killed_by', description: 'Include killed by in share messages', default: currentSettings.includeKilledBy },
                                     { label: 'Total Coins', value: 'total_coins', description: 'Include total coins in share messages', default: currentSettings.includeTotalCoins },
                                     { label: 'Total Cells', value: 'total_cells', description: 'Include total cells in share messages', default: currentSettings.includeTotalCells },
                                     { label: 'Total Dice', value: 'total_dice', description: 'Include total dice in share messages', default: currentSettings.includeTotalDice },
@@ -340,11 +317,12 @@ async function handleShareSettingsFlow(interaction, commandInteractionId = inter
                                 .setCustomId('share_elements_select')
                                 .setPlaceholder('Select elements to include')
                                 .setMinValues(0)
-                                .setMaxValues(11)
+                                .setMaxValues(12)
                                 .addOptions([
                                     { label: 'Tier', value: 'tier', description: 'Include tier in share messages', default: currentSettings.includeTier },
                                     { label: 'Wave', value: 'wave', description: 'Include wave in share messages', default: currentSettings.includeWave },
                                     { label: 'Duration', value: 'duration', description: 'Include duration in share messages', default: currentSettings.includeDuration },
+                                    { label: 'Killed By', value: 'killed_by', description: 'Include killed by in share messages', default: currentSettings.includeKilledBy },
                                     { label: 'Total Coins', value: 'total_coins', description: 'Include total coins in share messages', default: currentSettings.includeTotalCoins },
                                     { label: 'Total Cells', value: 'total_cells', description: 'Include total cells in share messages', default: currentSettings.includeTotalCells },
                                     { label: 'Total Dice', value: 'total_dice', description: 'Include total dice in share messages', default: currentSettings.includeTotalDice },
@@ -406,11 +384,12 @@ async function handleShareSettingsFlow(interaction, commandInteractionId = inter
                             .setCustomId('share_elements_select')
                             .setPlaceholder('Select elements to include')
                             .setMinValues(0)
-                            .setMaxValues(11)
+                            .setMaxValues(12)
                             .addOptions([
                                 { label: 'Tier', value: 'tier', description: 'Include tier in share messages', default: currentSettings.includeTier },
                                 { label: 'Wave', value: 'wave', description: 'Include wave in share messages', default: currentSettings.includeWave },
                                 { label: 'Duration', value: 'duration', description: 'Include duration in share messages', default: currentSettings.includeDuration },
+                                { label: 'Killed By', value: 'killed_by', description: 'Include killed by in share messages', default: currentSettings.includeKilledBy },
                                 { label: 'Total Coins', value: 'total_coins', description: 'Include total coins in share messages', default: currentSettings.includeTotalCoins },
                                 { label: 'Total Cells', value: 'total_cells', description: 'Include total cells in share messages', default: currentSettings.includeTotalCells },
                                 { label: 'Total Dice', value: 'total_dice', description: 'Include total dice in share messages', default: currentSettings.includeTotalDice },

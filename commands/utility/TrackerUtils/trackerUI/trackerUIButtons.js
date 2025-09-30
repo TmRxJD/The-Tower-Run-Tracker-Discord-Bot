@@ -3,15 +3,15 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 function createMainMenuButtons(trackerType = 'Web', trackerLink = 'https://the-tower-run-tracker.com/', shareState = {}) {
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId('tracker_upload')
-            .setLabel('Upload')
-            .setStyle(ButtonStyle.Primary)
-            .setEmoji('📤'),
-        new ButtonBuilder()
             .setCustomId('tracker_paste')
             .setLabel('Paste')
             .setStyle(ButtonStyle.Success)
             .setEmoji('📋'),
+        new ButtonBuilder()
+            .setCustomId('tracker_upload')
+            .setLabel('Upload')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('📤'),
         new ButtonBuilder()
             .setCustomId('tracker_manual')
             .setLabel('Manual Entry')

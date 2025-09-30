@@ -93,6 +93,18 @@ function createInitialEmbed(lastRun = null, userId = null, runCount = 0, runType
             `**Here is your last run:**`
         );
 
+        let stats = {};
+        try {
+            if (calculateHourlyRates && (lastRun.duration || lastRun.roundDuration)) {
+                stats = calculateHourlyRates(lastRun.duration || lastRun.roundDuration, lastRun);
+            }
+        } catch (error) {
+            console.error("[InitialEmbed] Error calculating hourly rates:", error);
+        }
+        stats.coinsPerHour = stats.coinsPerHour || 'N/A';
+        stats.cellsPerHour = stats.cellsPerHour || 'N/A';
+        stats.dicePerHour = stats.dicePerHour || 'N/A';
+
         const fieldsToAdd = [
             { name: getDisplayFieldName('tier') + '|Wave', value: String(lastRun.tier || 'N/A') + ' | ' + String(lastRun.wave || 'N/A') || 'N/A', inline: true },
             { name: getDisplayFieldName('duration'), value: lastRun.duration || lastRun.roundDuration || 'N/A', inline: true },
@@ -100,6 +112,9 @@ function createInitialEmbed(lastRun = null, userId = null, runCount = 0, runType
             { name: getDisplayFieldName('coins'), value: String(lastRun.coins || lastRun.totalCoins || 'N/A'), inline: true },
             { name: getDisplayFieldName('cells'), value: String(lastRun.cells || lastRun.totalCells || 'N/A'), inline: true },
             { name: getDisplayFieldName('dice'), value: String(lastRun.rerollShards || lastRun.totalDice || 'N/A'), inline: true },
+            { name: '🪙\nCoins/Hr', value: formatNumberForDisplay(parseNumberInput(stats.coinsPerHour)), inline: true },
+            { name: '🔋\nCells/Hr', value: formatNumberForDisplay(parseNumberInput(stats.cellsPerHour)), inline: true },
+            { name: '🎲\nDice/Hr', value: formatNumberForDisplay(parseNumberInput(stats.dicePerHour)), inline: true },
             { name: getDisplayFieldName('type'), value: formattedType, inline: true },
             { name: getDisplayFieldName('run#'), value: String(typeCount || 'N/A'), inline: true },
             { name: getDisplayFieldName('date'), value: `${lastRun.date || 'Unknown'} ${lastRun.time || ''}`.trim(), inline: true }
@@ -135,10 +150,12 @@ function createInitialEmbed(lastRun = null, userId = null, runCount = 0, runType
     }
 
     embed.addFields(
-        { name: '📤 Upload', value: 'Upload a screenshot of your Battle Report for automatic run extraction.', inline: true },
-        { name: '� Paste from Clipboard', value: 'Paste the Battle Report text copied from the game for fast, accurate parsing. You can also attach a screenshot for verification.', inline: true },
-        { name: '�📝 Manual Entry', value: 'Manually enter all run details if you prefer not to use screenshots or OCR.', inline: true },
+        { name: '📋 Paste', value: 'Paste the Battle Report text copied from the game for fast, accurate parsing.', inline: true },
+        { name: '📤 Upload', value: 'Upload a screenshot of your Battle Report for automatic data extraction.', inline: true },
+        { name: '📝 Manual Entry', value: 'Manually enter all run details if you prefer not to use paste or OCR.', inline: true },
         { name: '✏️ Edit Last', value: 'Edit the most recent run you logged. Lets you quickly fix mistakes or update notes.', inline: true },
+        { name: '📢 Share Last Run', value: 'Share your last logged run with others in the channel.', inline: true },
+        { name: '📈 View Runs', value: 'View and analyze your previous runs with charts, tables, and filters.', inline: true },
         { name: '🔗 Web Tracker', value: 'Open your personal tracker website to view, edit, and analyze your runs.', inline: true },
         { name: '⚙️ Settings', value: 'Configure tracker options such as scan language, timezone, and more.', inline: true },
         { name: '❌ Cancel', value: 'Close the tracker menu.', inline: true }
@@ -209,8 +226,8 @@ function createDataReviewEmbed(data, type = 'Extracted', isDuplicate = false, de
                 formatted = formatDuration(value);
             } else if (['coins', 'cells', 'dice'].includes(key)) {
                 formatted = formatNumberForDisplay(parseNumberInput(value), decimalPreference);
-            } else if (key === 'date') {
-                formatted = value; // Date is already a formatted string
+            } else if (key === 'date' || key === 'killedBy') {
+                formatted = value; // Date and killedBy are strings
             } else {
                 formatted = formatNumberForDisplay(value, decimalPreference);
             }
@@ -304,9 +321,9 @@ function createFinalEmbed(data, stats, hasScreenshot = false, isUpdate = false, 
         .setDescription(description)
         .setURL('https://the-tower-run-tracker.com/')
         .addFields(
-            { name: getDisplayFieldName('tier') + '|Wave', value: formatNumberForDisplay(data.tier) + ' | ' + formatNumberForDisplay(data.wave), inline: true },
+            { name: getDisplayFieldName('tier') + '|Wave', value: formatNumberForDisplay(data.tier) + ' | ' + String(data.wave), inline: true },
             { name: getDisplayFieldName('duration'), value: formatDuration(data.roundDuration || data.duration), inline: true },
-            { name: getDisplayFieldName('killedBy'), value: formatNumberForDisplay(data.killedBy), inline: true },
+            { name: getDisplayFieldName('killedBy'), value: data.killedBy, inline: true },
             { name: getDisplayFieldName('coins'), value: formatNumberForDisplay(parseNumberInput(data.totalCoins || data.coins)), inline: true },
             { name: getDisplayFieldName('cells'), value: formatNumberForDisplay(parseNumberInput(data.totalCells || data.cells)), inline: true },
             { name: getDisplayFieldName('dice'), value: formatNumberForDisplay(parseNumberInput(data.totalDice || data.rerollShards || data.dice)), inline: true },
@@ -364,12 +381,13 @@ function createShareEmbed(displayName, runData, runCount, webLink, hasScreenshot
         .setTitle(title)
         .setDescription(
             (shareSettings.includeTier !== false ? `🔢 Tier: **${formatNumberForDisplay(runData.tier, decimalPreference)}**\n ` : '') +
-            (shareSettings.includeWave !== false ? `🌊 Wave: **${formatNumberForDisplay(runData.wave, decimalPreference)}**\n` : '') +
+            (shareSettings.includeWave !== false ? `🌊 Wave: **${String(runData.wave)}**\n` : '') +
             (shareSettings.includeDuration !== false ? `⏱️ Duration: **${formatDuration(runData.duration || runData.roundDuration)}**\n` : '') +
+            (shareSettings.includeKilledBy !== false ? `💀 Killed By: **${runData.killedBy}**\n` : '') +
             (shareSettings.includeTotalCoins !== false ? `🪙 Total Coins: **${formatNumberForDisplay(parseNumberInput(runData.totalCoins || runData.coins), decimalPreference)}**\n` : '') +
             (shareSettings.includeTotalCells !== false ? `🔋 Total Cells: **${formatNumberForDisplay(parseNumberInput(runData.totalCells || runData.cells), decimalPreference)}**\n` : '') +
             (shareSettings.includeTotalDice !== false ? `🎲 Total Dice: **${formatNumberForDisplay(parseNumberInput(runData.totalDice || runData.rerollShards || runData.dice), decimalPreference)}**\n` : '') +
-            ((shareSettings.includeCoinsPerHour !== false || shareSettings.includeCellsPerHour !== false || shareSettings.includeDicePerHour !== false) ? `### **Earnings per Hour**` : '')
+            ((shareSettings.includeCoinsPerHour !== false || shareSettings.includeCellsPerHour !== false || shareSettings.includeDicePerHour !== false) ? `### **📈 Earnings per Hour**` : '')
         )
         .setColor(Colors.Gold)
         .setThumbnail('https://i.postimg.cc/pTVP1MPh/Screenshot-2025-05-04-124710.png')

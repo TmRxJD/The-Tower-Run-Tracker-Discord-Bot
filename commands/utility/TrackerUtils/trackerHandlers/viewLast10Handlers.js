@@ -4,13 +4,67 @@ const { calculateHourlyRates, formatNumberForDisplay, formatRateWithNotation, pa
 const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 const { createCanvas } = require('canvas');
 const { trackerEmitter } = require('./sharedState');
+const { loadSetting, saveSetting, loadAllSettings, saveMultipleSettings } = require('./settingsDB');
 
 // --- Notation and average helpers (shared) ---
 
-async function renderViewRuns(interaction, runs, count, userId, selectedTypes) {
-    // Filter runs by selected types
-    const filteredRuns = runs.filter(run => selectedTypes.includes(run.type || 'Farming'));
-    const selectedRuns = filteredRuns.slice(0, count);
+async function renderViewRuns(interaction, runs, count, userId, selectedTypes, selectedColumns, selectedTiers, session, offset) {
+    // Define available columns
+    const allColumns = {
+        'Tier': { width: 70, getValue: (run) => formatNumberForDisplay(run.tier ?? 0) },
+        'Wave': { width: 70, getValue: (run) => String(run.wave ?? 0) },
+        'Duration': { width: 90, getValue: (run) => run.duration || run.roundDuration || 0 },
+        'Killed By': { width: 120, getValue: (run) => run.killedBy ?? '' },
+        'Coins': { width: 90, getValue: (run) => formatNumberForDisplay(parseNumberInput(run.totalCoins ?? run.coins ?? 0)) },
+        'Cells': { width: 90, getValue: (run) => formatNumberForDisplay(parseNumberInput(run.totalCells ?? run.cells ?? 0)) },
+        'Dice': { width: 90, getValue: (run) => formatNumberForDisplay(parseNumberInput(run.totalDice ?? run.rerollShards ?? run.dice ?? 0)) },
+        'Coins/Hr': { width: 90, getValue: (run) => {
+            const val = calculateHourlyRates(run.duration || run.roundDuration, run).coinsPerHour || '';
+            let d = val; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d;
+        }},
+        'Cells/Hr': { width: 90, getValue: (run) => {
+            const val = calculateHourlyRates(run.duration || run.roundDuration, run).cellsPerHour || '';
+            let d = val; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d;
+        }},
+        'Dice/Hr': { width: 90, getValue: (run) => {
+            const val = calculateHourlyRates(run.duration || run.roundDuration, run).dicePerHour || '';
+            let d = val; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d;
+        }},
+        'Date': { width: 120, getValue: (run) => run.date || (run.timestamp ? new Date(run.timestamp).toLocaleDateString() : '') }
+    };
+
+    // Compute available options based on current selections
+    const availableTypes = [...new Set(runs.filter(run => selectedTiers.includes('All') || selectedTiers.includes(String(run.tier))).map(run => run.type || 'Farming'))].sort();
+    selectedTypes = selectedTypes.filter(t => availableTypes.includes(t));
+    if (selectedTypes.length === 0) selectedTypes = availableTypes;
+    if (session) session.viewRunsSelectedTypes = selectedTypes;
+
+    const availableTiers = [...new Set(runs.filter(run => selectedTypes.includes(run.type || 'Farming') && run.tier !== undefined && run.tier !== null).map(run => String(run.tier)))].sort((a, b) => parseInt(a) - parseInt(b));
+    selectedTiers = selectedTiers.filter(t => t === 'All' || availableTiers.includes(t));
+    if (!selectedTiers.includes('All') && selectedTiers.length === 0) selectedTiers = ['All'];
+    if (session) session.viewRunsSelectedTiers = selectedTiers;
+
+    // Filter runs by selected types and tiers
+    const filteredRuns = runs.filter(run => selectedTypes.includes(run.type || 'Farming') && (selectedTiers.includes('All') || selectedTiers.includes(String(run.tier))));
+    // Sort filtered runs by dropdown order: types first, then tiers descending, then date descending
+    const typeOrder = ['Farming', 'Overnight', 'Tournament', 'Milestone'];
+    filteredRuns.sort((a, b) => {
+        const aTypeIndex = typeOrder.indexOf(a.type || 'Farming');
+        const bTypeIndex = typeOrder.indexOf(b.type || 'Farming');
+        if (aTypeIndex !== bTypeIndex) return aTypeIndex - bTypeIndex;
+        const aTier = parseInt(a.tier) || 0;
+        const bTier = parseInt(b.tier) || 0;
+        if (aTier !== bTier) return bTier - aTier; // descending tier
+        const aDate = new Date(a.date || a.timestamp || 0);
+        const bDate = new Date(b.date || b.timestamp || 0);
+        return bDate - aDate; // descending date
+    });
+    // Adjust offset if necessary
+    if (offset >= filteredRuns.length) {
+        offset = Math.max(0, filteredRuns.length - count);
+        if (session) session.viewRunsOffset = offset;
+    }
+    const selectedRuns = filteredRuns.slice(offset, offset + count);
     if (selectedRuns.length === 0) {
         const embed = new EmbedBuilder()
             .setTitle('No Runs Found')
@@ -39,8 +93,8 @@ async function renderViewRuns(interaction, runs, count, userId, selectedTypes) {
     const cellsHr = selectedRuns.map(run => calculateHourlyRates(run.duration || run.roundDuration, run).cellsPerHour || 0);
     const diceHr = selectedRuns.map(run => calculateHourlyRates(run.duration || run.roundDuration, run).dicePerHour || 0);
     // Calculate averages
-    const avgTiers = formatNumberForDisplay(avg(selectedRuns.map(run => run.tier || 0)));
-    const avgWaves = formatNumberForDisplay(avg(selectedRuns.map(run => run.wave || 0)));
+    const avgTiers = formatNumberForDisplay(avg(selectedRuns.map(run => parseInt(run.tier || 0, 10))));
+    const avgWaves = Math.round(avg(selectedRuns.map(run => parseInt(run.wave || 0, 10)))).toString();
     const avgDuration = selectedRuns[0].duration || selectedRuns[0].roundDuration || 'N/A';
     const avgCoins = formatNumberForDisplay(avg(selectedRuns.map(run => parseNumberInput(run.totalCoins || run.coins || 0))));
     const avgCells = formatNumberForDisplay(avg(selectedRuns.map(run => parseNumberInput(run.totalCells || run.cells || 0))));
@@ -53,8 +107,8 @@ async function renderViewRuns(interaction, runs, count, userId, selectedTypes) {
     const timelineChartAttachment = new AttachmentBuilder(timelineChartBuffer, { name: 'runs_timeline_chart.png' });
 
     // Table
-    const headers = ['Tier', 'Wave', 'Duration', 'Killed By', 'Coins', 'Cells', 'Dice', 'Coins/Hr', 'Cells/Hr', 'Dice/Hr', 'Date'];
-    const colWidths = [70, 70, 90, 120, 90, 90, 90, 90, 90, 90, 120];
+    const headers = selectedColumns;
+    const colWidths = selectedColumns.map(col => allColumns[col].width);
     const tableWidth = colWidths.reduce((a, b) => a + b, 0);
     const rowHeight = 38;
     const headerHeight = 44;
@@ -88,27 +142,7 @@ async function renderViewRuns(interaction, runs, count, userId, selectedTypes) {
         ctx.font = '16px Segoe UI, Arial';
         let x = 0;
         const run = selectedRuns[r];
-        const duration = run.duration || run.roundDuration || 0;
-        const coinsHrVal = calculateHourlyRates(run.duration || run.roundDuration, run).coinsPerHour || '';
-        const cellsHrVal = calculateHourlyRates(run.duration || run.roundDuration, run).cellsPerHour || '';
-        const diceHrVal = calculateHourlyRates(run.duration || run.roundDuration, run).dicePerHour || '';
-        const date = run.date || (run.timestamp ? new Date(run.timestamp).toLocaleDateString() : '');
-        const coinsHrDisplay = (() => { let d = coinsHrVal; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d; })();
-        const cellsHrDisplay = (() => { let d = cellsHrVal; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d; })();
-        const diceHrDisplay = (() => { let d = diceHrVal; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d; })();
-        const values = [
-            formatNumberForDisplay(run.tier ?? 0),
-            formatNumberForDisplay(run.wave ?? 0),
-            duration,
-            run.killedBy ?? '',
-            formatNumberForDisplay(parseNumberInput(run.totalCoins ?? run.coins ?? 0)),
-            formatNumberForDisplay(parseNumberInput(run.totalCells ?? run.cells ?? 0)),
-            formatNumberForDisplay(parseNumberInput(run.totalDice ?? run.rerollShards ?? run.dice ?? 0)),
-            coinsHrDisplay,
-            cellsHrDisplay,
-            diceHrDisplay,
-            date
-        ];
+        const values = selectedColumns.map(col => allColumns[col].getValue(run));
         for (let c = 0; c < values.length; c++) {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -144,7 +178,7 @@ async function renderViewRuns(interaction, runs, count, userId, selectedTypes) {
         .setTitle(`View Runs`)
         .setDescription(`View your previous runs and their details.
 
-Below are the averages for the last ${count} runs of selected types (${selectedTypes.join(', ')}).`)
+Below are the averages for the last ${count} runs of selected types (${selectedTypes.join(', ')}) and tiers (${selectedTiers.includes('All') ? 'All' : selectedTiers.join(', ')}).`)
         .setColor('#23272A')
         .setImage('attachment://runs_table.png')
         .setThumbnail('attachment://runs_timeline_chart.png')
@@ -160,30 +194,69 @@ Below are the averages for the last ${count} runs of selected types (${selectedT
             { name: '🎲\nDice/Hr', value: avgDiceHr, inline: true }
         );
     // Select menus
+    const typeOptions = availableTypes.map(type => ({
+        label: type,
+        value: type,
+        default: selectedTypes.includes(type)
+    }));
     const typeSelectMenu = new StringSelectMenuBuilder()
         .setCustomId('tracker_viewruns_types')
         .setPlaceholder('Select run types to display')
         .setMinValues(1)
-        .setMaxValues(4)
-        .addOptions([
-            { label: 'Farming', value: 'Farming', default: selectedTypes.includes('Farming') },
-            { label: 'Overnight', value: 'Overnight', default: selectedTypes.includes('Overnight') },
-            { label: 'Tournament', value: 'Tournament', default: selectedTypes.includes('Tournament') },
-            { label: 'Milestone', value: 'Milestone', default: selectedTypes.includes('Milestone') },
-        ]);
+        .setMaxValues(availableTypes.length)
+        .addOptions(typeOptions);
+    const columnsSelectMenu = new StringSelectMenuBuilder()
+        .setCustomId('tracker_viewruns_columns')
+        .setPlaceholder('Select columns to display')
+        .setMinValues(1)
+        .setMaxValues(Object.keys(allColumns).length)
+        .addOptions(Object.keys(allColumns).map(col => ({
+            label: col,
+            value: col,
+            default: selectedColumns.includes(col)
+        })));
     const countSelectMenu = new StringSelectMenuBuilder()
         .setCustomId('tracker_viewruns_select')
-        .setPlaceholder(`Viewing last ${count} runs`)
+        .setPlaceholder(`Showing ${offset + 1}-${Math.min(offset + count, filteredRuns.length)} of ${filteredRuns.length} runs`)
         .addOptions([
-            { label: 'Showing Last 5 Runs', value: '5', default: count === 5 },
-            { label: 'Showing Last 10 Runs', value: '10', default: count === 10 },
-            { label: 'Showing Last 20 Runs', value: '20', default: count === 20 },
-            { label: 'Showing Last 35 Runs', value: '35', default: count === 35 },
-            { label: 'Showing Last 50 Runs', value: '50', default: count === 50 },
+            { label: 'Show 5 runs per page', value: '5', default: count === 5 },
+            { label: 'Show 10 runs per page', value: '10', default: count === 10 },
+            { label: 'Show 20 runs per page', value: '20', default: count === 20 },
+            { label: 'Show 35 runs per page', value: '35', default: count === 35 },
+            { label: 'Show 50 runs per page', value: '50', default: count === 50 },
         ]);
-    const row1 = new ActionRowBuilder().addComponents(typeSelectMenu);
-    const row2 = new ActionRowBuilder().addComponents(countSelectMenu);
-    const row3 = new ActionRowBuilder().addComponents(
+    const uniqueTiers = availableTiers;
+    const tierOptions = [
+        { label: 'All Tiers', value: 'All', default: selectedTiers.includes('All') },
+        ...uniqueTiers.map(tier => ({
+            label: `Tier ${tier}`,
+            value: String(tier),
+            default: selectedTiers.includes(String(tier))
+        }))
+    ];
+    const tierSelectMenu = new StringSelectMenuBuilder()
+        .setCustomId('tracker_viewruns_tiers')
+        .setPlaceholder('Select tiers to display')
+        .setMinValues(1)
+        .setMaxValues(uniqueTiers.length + 1)
+        .addOptions(tierOptions);
+    const row1 = new ActionRowBuilder().addComponents(columnsSelectMenu);
+    const row2 = new ActionRowBuilder().addComponents(typeSelectMenu);
+    const row3 = new ActionRowBuilder().addComponents(tierSelectMenu);
+    const row4 = new ActionRowBuilder().addComponents(countSelectMenu);
+    const row5 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('tracker_viewruns_prev')
+            .setLabel('Previous')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('⬅️')
+            .setDisabled(offset + count >= filteredRuns.length),
+        new ButtonBuilder()
+            .setCustomId('tracker_viewruns_next')
+            .setLabel('Next')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('➡️')
+            .setDisabled(offset === 0),
         /*
         new ButtonBuilder()
             .setCustomId('tracker_share_runs')
@@ -193,11 +266,11 @@ Below are the averages for the last ${count} runs of selected types (${selectedT
         */
         new ButtonBuilder()
             .setCustomId('tracker_main_menu')
-            .setLabel('Return to Main Menu')
+            .setLabel('Main Menu')
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('🏠')
     );
-    await interaction.editReply({ embeds: [embed], components: [row1, row2, row3], files: [tableAttachment, timelineChartAttachment] });
+    await interaction.editReply({ embeds: [embed], components: [row1, row2, row3, row4, row5], files: [tableAttachment, timelineChartAttachment] });
 }
 
 async function handleViewRuns(interaction, commandInteractionId) {
@@ -210,27 +283,53 @@ async function handleViewRuns(interaction, commandInteractionId) {
         const bDate = new Date(b.date || b.timestamp || 0);
         return bDate - aDate;
     });
-    // Initialize selected types and count from session or defaults
-    let selectedTypes = session.viewRunsSelectedTypes || ['Farming', 'Overnight', 'Tournament', 'Milestone'];
-    let count = session.viewRunsCount || 10;
+    // Initialize selected types, columns and count from DB or defaults
+    let selectedTypes = JSON.parse(loadSetting(userId, 'viewRunsSelectedTypes', '["Farming","Overnight","Tournament","Milestone"]'));
+    let selectedColumns = JSON.parse(loadSetting(userId, 'viewRunsSelectedColumns', '["Tier","Wave","Duration","Killed By","Coins","Cells","Dice","Coins/Hr","Cells/Hr","Dice/Hr","Date"]'));
+    let selectedTiers = JSON.parse(loadSetting(userId, 'viewRunsSelectedTiers', '["All"]'));
+    if (selectedTiers.includes('All') && selectedTiers.length > 1) {
+        selectedTiers = ['All'];
+    }
+    session.viewRunsSelectedTiers = selectedTiers;
+    let count = parseInt(loadSetting(userId, 'viewRunsCount', '10'), 10);
+    let offset = parseInt(loadSetting(userId, 'viewRunsOffset', '0'), 10);
     // Handle select menu interaction (fix for Discord.js v14+)
-    if (interaction.isStringSelectMenu?.() || interaction.isSelectMenu?.()) {
+    if (interaction.isStringSelectMenu?.()) {
         if (interaction.customId === 'tracker_viewruns_types' && interaction.values) {
             selectedTypes = interaction.values;
-            session.viewRunsSelectedTypes = selectedTypes;
+            saveSetting(userId, 'viewRunsSelectedTypes', JSON.stringify(selectedTypes));
+        } else if (interaction.customId === 'tracker_viewruns_columns' && interaction.values) {
+            selectedColumns = interaction.values;
+            saveSetting(userId, 'viewRunsSelectedColumns', JSON.stringify(selectedColumns));
+        } else if (interaction.customId === 'tracker_viewruns_tiers' && interaction.values) {
+            let newSelected = interaction.values;
+            if (newSelected.includes('All') && newSelected.length > 1) {
+                selectedTiers = newSelected.filter(t => t !== 'All');
+            } else if (newSelected.includes('All')) {
+                selectedTiers = ['All'];
+            } else {
+                selectedTiers = newSelected;
+            }
+            saveSetting(userId, 'viewRunsSelectedTiers', JSON.stringify(selectedTiers));
+            session.viewRunsSelectedTiers = selectedTiers;
         } else if (interaction.customId === 'tracker_viewruns_select' && interaction.values && interaction.values[0]) {
             count = parseInt(interaction.values[0], 10) || 10;
-            session.viewRunsCount = count;
+            saveSetting(userId, 'viewRunsCount', count.toString());
         }
     }
-    console.log('[DEBUG] commandInteractionId in handleViewRuns:', commandInteractionId);
-    await renderViewRuns(interaction, runs, count, userId, selectedTypes);
+
+    // Render the initial viewRuns UI
+    await renderViewRuns(interaction, runs, count, userId, selectedTypes, selectedColumns, selectedTiers, session, offset);
 
     const message = await interaction.fetchReply();
     const collector = message.createMessageComponentCollector({
         filter: i => [
             'tracker_viewruns_types',
+            'tracker_viewruns_columns',
+            'tracker_viewruns_tiers',
             'tracker_viewruns_select',
+            'tracker_viewruns_prev',
+            'tracker_viewruns_next',
             'tracker_share_runs',
             'tracker_main_menu'
         ].includes(i.customId) && i.user.id === userId,
@@ -240,8 +339,28 @@ async function handleViewRuns(interaction, commandInteractionId) {
         await i.deferUpdate();
         if (i.customId === 'tracker_viewruns_types') {
             selectedTypes = i.values;
-            session.viewRunsSelectedTypes = selectedTypes;
-            await renderViewRuns(i, runs, count, userId, selectedTypes);
+            saveSetting(userId, 'viewRunsSelectedTypes', JSON.stringify(selectedTypes));
+            offset = 0;
+            saveSetting(userId, 'viewRunsOffset', '0');
+            await renderViewRuns(i, runs, count, userId, selectedTypes, selectedColumns, selectedTiers, session, offset);
+        } else if (i.customId === 'tracker_viewruns_columns') {
+            selectedColumns = i.values;
+            saveSetting(userId, 'viewRunsSelectedColumns', JSON.stringify(selectedColumns));
+            await renderViewRuns(i, runs, count, userId, selectedTypes, selectedColumns, selectedTiers, session, offset);
+        } else if (i.customId === 'tracker_viewruns_tiers') {
+            let newSelected = i.values;
+            if (newSelected.includes('All') && newSelected.length > 1) {
+                selectedTiers = newSelected.filter(t => t !== 'All');
+            } else if (newSelected.includes('All')) {
+                selectedTiers = ['All'];
+            } else {
+                selectedTiers = newSelected;
+            }
+            saveSetting(userId, 'viewRunsSelectedTiers', JSON.stringify(selectedTiers));
+            session.viewRunsSelectedTiers = selectedTiers;
+            offset = 0;
+            saveSetting(userId, 'viewRunsOffset', '0');
+            await renderViewRuns(i, runs, count, userId, selectedTypes, selectedColumns, selectedTiers, session, offset);
         } else if (i.customId === 'tracker_viewruns_select') {
             // Update count and re-render UI in-place, do not recurse
             let newCount = 10;
@@ -249,8 +368,22 @@ async function handleViewRuns(interaction, commandInteractionId) {
                 newCount = parseInt(i.values[0], 10) || 10;
             }
             count = newCount;
-            session.viewRunsCount = count;
-            await renderViewRuns(i, runs, count, userId, selectedTypes);
+            saveSetting(userId, 'viewRunsCount', count.toString());
+            offset = 0;
+            saveSetting(userId, 'viewRunsOffset', '0');
+            await renderViewRuns(i, runs, count, userId, selectedTypes, selectedColumns, selectedTiers, session, offset);
+        } else if (i.customId === 'tracker_viewruns_prev') {
+            offset += count;
+            saveSetting(userId, 'viewRunsOffset', offset.toString());
+            await renderViewRuns(i, runs, count, userId, selectedTypes, selectedColumns, selectedTiers, session, offset);
+        } else if (i.customId === 'tracker_viewruns_next') {
+            if (offset >= count) {
+                offset -= count;
+            } else {
+                offset = 0;
+            }
+            saveSetting(userId, 'viewRunsOffset', offset.toString());
+            await renderViewRuns(i, runs, count, userId, selectedTypes, selectedColumns, selectedTiers, session, offset);
         } else if (i.customId === 'tracker_main_menu') {
             collector.stop();
             trackerEmitter.emit(`navigate_${commandInteractionId}`, 'mainMenu', i);

@@ -133,31 +133,30 @@ async function handleSettingsFlow(interaction, commandInteractionId = interactio
         // Create settings buttons with decimal preference toggle
         const settingsButtonsRow = new ActionRowBuilder().addComponents(   
             new ButtonBuilder()
-                .setCustomId('tracker_setting_duplicates')
-                .setLabel(`${currentSettings.autoDetectDuplicates ? '✅' : '❌'} duplicate detection`)
-                .setStyle(currentSettings.autoDetectDuplicates ? ButtonStyle.Success : ButtonStyle.Danger),
+                .setCustomId('tracker_setting_confirm')
+                .setLabel(`${currentSettings.confirmBeforeSubmit ? '✅' : '❌'} Confirmation`)
+                .setStyle(currentSettings.confirmBeforeSubmit ? ButtonStyle.Success : ButtonStyle.Danger),
                 
             new ButtonBuilder()
-                .setCustomId('tracker_setting_confirm')
-                .setLabel(`${currentSettings.confirmBeforeSubmit ? '✅' : '❌'} confirmation`)
-                .setStyle(currentSettings.confirmBeforeSubmit ? ButtonStyle.Success : ButtonStyle.Danger),
-
-                new ButtonBuilder()
-                .setCustomId('tracker_share_settings')
-                .setLabel('Share Settings')
-                .setStyle(ButtonStyle.Primary)
+                .setCustomId('tracker_setting_duplicates')
+                .setLabel(`${currentSettings.autoDetectDuplicates ? '✅' : '❌'} Duplicate Detection`)
+                .setStyle(currentSettings.autoDetectDuplicates ? ButtonStyle.Success : ButtonStyle.Danger)
         );
         
         // Create back button row with import button before it
         const backButtonRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-                .setCustomId('tracker_import')
-                .setLabel('Import')
-                .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
                 .setCustomId('tracker_back')
                 .setLabel('Back to Main Menu')
-                .setStyle(ButtonStyle.Secondary)
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('tracker_share_settings')
+                .setLabel('Share Settings')
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId('tracker_import')
+                .setLabel('Import')
+                .setStyle(ButtonStyle.Primary)
         );
         
         // Show the settings (Edit the reply)
@@ -303,24 +302,28 @@ async function handleSettingsFlow(interaction, commandInteractionId = interactio
 
                     const updatedSettingsButtonsRow = new ActionRowBuilder().addComponents(
                          new ButtonBuilder()
-                             .setCustomId('tracker_setting_duplicates')
-                             .setLabel(`${latestSettings.autoDetectDuplicates ? '✅' : '❌'} duplicate detection`)
-                             .setStyle(latestSettings.autoDetectDuplicates ? ButtonStyle.Success : ButtonStyle.Danger),
-                         new ButtonBuilder()
                              .setCustomId('tracker_setting_confirm')
-                             .setLabel(`${latestSettings.confirmBeforeSubmit ? '✅' : '❌'} confirmation`)
-                             .setStyle(latestSettings.confirmBeforeSubmit ? ButtonStyle.Success : ButtonStyle.Danger)
+                             .setLabel(`${latestSettings.confirmBeforeSubmit ? '✅' : '❌'} Confirmation`)
+                             .setStyle(latestSettings.confirmBeforeSubmit ? ButtonStyle.Success : ButtonStyle.Danger),
+                         new ButtonBuilder()
+                             .setCustomId('tracker_setting_duplicates')
+                             .setLabel(`${latestSettings.autoDetectDuplicates ? '✅' : '❌'} Duplicate Detection`)
+                             .setStyle(latestSettings.autoDetectDuplicates ? ButtonStyle.Success : ButtonStyle.Danger)
                      );
 
                     const updatedBackButtonRow = new ActionRowBuilder().addComponents(
                          new ButtonBuilder()
-                             .setCustomId('tracker_import')
-                             .setLabel('Import')
-                             .setStyle(ButtonStyle.Primary),
-                         new ButtonBuilder()
                              .setCustomId('tracker_back')
                              .setLabel('Back to Main Menu')
-                             .setStyle(ButtonStyle.Secondary)
+                             .setStyle(ButtonStyle.Secondary),
+                         new ButtonBuilder()
+                             .setCustomId('tracker_share_settings')
+                             .setLabel('Share Settings')
+                             .setStyle(ButtonStyle.Primary),
+                         new ButtonBuilder()
+                             .setCustomId('tracker_import')
+                             .setLabel('Import')
+                             .setStyle(ButtonStyle.Primary)
                      );
                      // --- End Re-render ---
 
