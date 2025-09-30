@@ -1,50 +1,16 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, AttachmentBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { userSessions } = require('./sharedState');
-const { calculateHourlyRates } = require('./trackerHelpers');
+const { calculateHourlyRates, formatNumberForDisplay, formatRateWithNotation, parseNumberInput, NOTATIONS, avg } = require('./trackerHelpers');
 const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 const { createCanvas } = require('canvas');
 const { trackerEmitter } = require('./sharedState');
 
 // --- Notation and average helpers (shared) ---
-const NOTATIONS = {
-    K: 1e3, M: 1e6, B: 1e9, T: 1e12, q: 1e15, Q: 1e18, s: 1e21, S: 1e24, O: 1e27, N: 1e30, D: 1e33,
-    AA: 1e36, AB: 1e39, AC: 1e42, AD: 1e45, AE: 1e48, AF: 1e51, AG: 1e54, AH: 1e57, AI: 1e60, AJ: 1e63
-};
-function parseNumberInput(input) {
-    if (typeof input === 'number') return input;
-    const inputStr = String(input).replace(/,/g, '').trim();
-    const match = inputStr.match(/^(\d+|\d*\.\d+)([KMBTqQsSOND]|A[A-J])?$/);
-    if (!match) {
-        const number = parseFloat(inputStr);
-        if (!isNaN(number)) return number;
-        return 0;
-    }
-    const [_, numberPart, notation] = match;
-    const number = parseFloat(numberPart);
-    if (isNaN(number)) return 0;
-    if (!notation) return number;
-    const multiplier = NOTATIONS[notation];
-    if (!multiplier) return number;
-    return number * multiplier;
-}
-function avg(arr) {
-    if (!arr.length) return 0;
-    return arr.reduce((a, b) => a + parseNumberInput(b), 0) / arr.length;
-}
-function formatNumberOutput(number, precision = 2) {
-    if (typeof number !== 'number' || isNaN(number)) return String(number);
-    if (number < 1000) return Math.round(number).toString();
-    const notationEntries = Object.entries(NOTATIONS).reverse();
-    for (const [notation, value] of notationEntries) {
-        if (number >= value) {
-            return (number / value).toFixed(precision) + notation;
-        }
-    }
-    return number.toString();
-}
 
-async function renderViewRuns(interaction, runs, count, userId) {
-    const selectedRuns = runs.slice(0, count);
+async function renderViewRuns(interaction, runs, count, userId, selectedTypes) {
+    // Filter runs by selected types
+    const filteredRuns = runs.filter(run => selectedTypes.includes(run.type || 'Farming'));
+    const selectedRuns = filteredRuns.slice(0, count);
     if (selectedRuns.length === 0) {
         const embed = new EmbedBuilder()
             .setTitle('No Runs Found')
@@ -73,15 +39,15 @@ async function renderViewRuns(interaction, runs, count, userId) {
     const cellsHr = selectedRuns.map(run => calculateHourlyRates(run.duration || run.roundDuration, run).cellsPerHour || 0);
     const diceHr = selectedRuns.map(run => calculateHourlyRates(run.duration || run.roundDuration, run).dicePerHour || 0);
     // Calculate averages
-    const avgTiers = formatNumberOutput(avg(selectedRuns.map(run => run.tier || 0)));
-    const avgWaves = formatNumberOutput(avg(selectedRuns.map(run => run.wave || 0)));
+    const avgTiers = formatNumberForDisplay(avg(selectedRuns.map(run => run.tier || 0)));
+    const avgWaves = formatNumberForDisplay(avg(selectedRuns.map(run => run.wave || 0)));
     const avgDuration = selectedRuns[0].duration || selectedRuns[0].roundDuration || 'N/A';
-    const avgCoins = formatNumberOutput(avg(selectedRuns.map(run => run.totalCoins || run.coins || 0)));
-    const avgCells = formatNumberOutput(avg(selectedRuns.map(run => run.totalCells || run.cells || 0)));
-    const avgDice = formatNumberOutput(avg(selectedRuns.map(run => run.totalDice || run.rerollShards || run.dice || 0)));
-    const avgCoinsHr = formatNumberOutput(avg(selectedRuns.map(run => calculateHourlyRates(run.duration || run.roundDuration, run).coinsPerHour || 0)));
-    const avgCellsHr = formatNumberOutput(avg(selectedRuns.map(run => calculateHourlyRates(run.duration || run.roundDuration, run).cellsPerHour || 0)));
-    const avgDiceHr = formatNumberOutput(avg(selectedRuns.map(run => calculateHourlyRates(run.duration || run.roundDuration, run).dicePerHour || 0)));
+    const avgCoins = formatNumberForDisplay(avg(selectedRuns.map(run => parseNumberInput(run.totalCoins || run.coins || 0))));
+    const avgCells = formatNumberForDisplay(avg(selectedRuns.map(run => parseNumberInput(run.totalCells || run.cells || 0))));
+    const avgDice = formatNumberForDisplay(avg(selectedRuns.map(run => parseNumberInput(run.totalDice || run.rerollShards || run.dice || 0))));
+    const avgCoinsHr = formatRateWithNotation(avg(selectedRuns.map(run => parseNumberInput(calculateHourlyRates(run.duration || run.roundDuration, run).coinsPerHour || 0))), 1);
+    const avgCellsHr = formatRateWithNotation(avg(selectedRuns.map(run => parseNumberInput(calculateHourlyRates(run.duration || run.roundDuration, run).cellsPerHour || 0))), 1);
+    const avgDiceHr = formatRateWithNotation(avg(selectedRuns.map(run => parseNumberInput(calculateHourlyRates(run.duration || run.roundDuration, run).dicePerHour || 0))), 1);
     // Chart
     const timelineChartBuffer = await generateTimelineChart(selectedRuns);
     const timelineChartAttachment = new AttachmentBuilder(timelineChartBuffer, { name: 'runs_timeline_chart.png' });
@@ -127,17 +93,20 @@ async function renderViewRuns(interaction, runs, count, userId) {
         const cellsHrVal = calculateHourlyRates(run.duration || run.roundDuration, run).cellsPerHour || '';
         const diceHrVal = calculateHourlyRates(run.duration || run.roundDuration, run).dicePerHour || '';
         const date = run.date || (run.timestamp ? new Date(run.timestamp).toLocaleDateString() : '');
+        const coinsHrDisplay = (() => { let d = coinsHrVal; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d; })();
+        const cellsHrDisplay = (() => { let d = cellsHrVal; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d; })();
+        const diceHrDisplay = (() => { let d = diceHrVal; if (!/[KMBTqQsSOND]|A[A-J]/.test(d)) d += 'K'; return d; })();
         const values = [
-            formatNumberOutput(run.tier ?? 0),
-            formatNumberOutput(run.wave ?? 0),
+            formatNumberForDisplay(run.tier ?? 0),
+            formatNumberForDisplay(run.wave ?? 0),
             duration,
             run.killedBy ?? '',
-            formatNumberOutput(run.totalCoins ?? run.coins ?? 0),
-            formatNumberOutput(run.totalCells ?? run.cells ?? 0),
-            formatNumberOutput(run.totalDice ?? run.rerollShards ?? run.dice ?? 0),
-            coinsHrVal ? formatNumberOutput(coinsHrVal, 1) : '',
-            cellsHrVal ? formatNumberOutput(cellsHrVal, 1) : '',
-            diceHrVal ? formatNumberOutput(diceHrVal, 1) : '',
+            formatNumberForDisplay(parseNumberInput(run.totalCoins ?? run.coins ?? 0)),
+            formatNumberForDisplay(parseNumberInput(run.totalCells ?? run.cells ?? 0)),
+            formatNumberForDisplay(parseNumberInput(run.totalDice ?? run.rerollShards ?? run.dice ?? 0)),
+            coinsHrDisplay,
+            cellsHrDisplay,
+            diceHrDisplay,
             date
         ];
         for (let c = 0; c < values.length; c++) {
@@ -175,7 +144,7 @@ async function renderViewRuns(interaction, runs, count, userId) {
         .setTitle(`View Runs`)
         .setDescription(`View your previous runs and their details.
 
-Below are the averages for the last ${count} runs.`)
+Below are the averages for the last ${count} runs of selected types (${selectedTypes.join(', ')}).`)
         .setColor('#23272A')
         .setImage('attachment://runs_table.png')
         .setThumbnail('attachment://runs_timeline_chart.png')
@@ -190,8 +159,19 @@ Below are the averages for the last ${count} runs.`)
             { name: '🔋\nCells/Hr', value: avgCellsHr, inline: true },
             { name: '🎲\nDice/Hr', value: avgDiceHr, inline: true }
         );
-    // Select menu and buttons
-    const selectMenu = new StringSelectMenuBuilder()
+    // Select menus
+    const typeSelectMenu = new StringSelectMenuBuilder()
+        .setCustomId('tracker_viewruns_types')
+        .setPlaceholder('Select run types to display')
+        .setMinValues(1)
+        .setMaxValues(4)
+        .addOptions([
+            { label: 'Farming', value: 'Farming', default: selectedTypes.includes('Farming') },
+            { label: 'Overnight', value: 'Overnight', default: selectedTypes.includes('Overnight') },
+            { label: 'Tournament', value: 'Tournament', default: selectedTypes.includes('Tournament') },
+            { label: 'Milestone', value: 'Milestone', default: selectedTypes.includes('Milestone') },
+        ]);
+    const countSelectMenu = new StringSelectMenuBuilder()
         .setCustomId('tracker_viewruns_select')
         .setPlaceholder(`Viewing last ${count} runs`)
         .addOptions([
@@ -201,8 +181,9 @@ Below are the averages for the last ${count} runs.`)
             { label: 'Showing Last 35 Runs', value: '35', default: count === 35 },
             { label: 'Showing Last 50 Runs', value: '50', default: count === 50 },
         ]);
-    const row1 = new ActionRowBuilder().addComponents(selectMenu);
-    const row2 = new ActionRowBuilder().addComponents(
+    const row1 = new ActionRowBuilder().addComponents(typeSelectMenu);
+    const row2 = new ActionRowBuilder().addComponents(countSelectMenu);
+    const row3 = new ActionRowBuilder().addComponents(
         /*
         new ButtonBuilder()
             .setCustomId('tracker_share_runs')
@@ -216,7 +197,7 @@ Below are the averages for the last ${count} runs.`)
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('🏠')
     );
-    await interaction.editReply({ embeds: [embed], components: [row1, row2], files: [tableAttachment, timelineChartAttachment] });
+    await interaction.editReply({ embeds: [embed], components: [row1, row2, row3], files: [tableAttachment, timelineChartAttachment] });
 }
 
 async function handleViewRuns(interaction, commandInteractionId) {
@@ -229,20 +210,26 @@ async function handleViewRuns(interaction, commandInteractionId) {
         const bDate = new Date(b.date || b.timestamp || 0);
         return bDate - aDate;
     });
-    // Default to 10 if not specified
-    let count = 10;
+    // Initialize selected types and count from session or defaults
+    let selectedTypes = session.viewRunsSelectedTypes || ['Farming', 'Overnight', 'Tournament', 'Milestone'];
+    let count = session.viewRunsCount || 10;
     // Handle select menu interaction (fix for Discord.js v14+)
     if (interaction.isStringSelectMenu?.() || interaction.isSelectMenu?.()) {
-        if (interaction.values && interaction.values[0]) {
+        if (interaction.customId === 'tracker_viewruns_types' && interaction.values) {
+            selectedTypes = interaction.values;
+            session.viewRunsSelectedTypes = selectedTypes;
+        } else if (interaction.customId === 'tracker_viewruns_select' && interaction.values && interaction.values[0]) {
             count = parseInt(interaction.values[0], 10) || 10;
+            session.viewRunsCount = count;
         }
     }
     console.log('[DEBUG] commandInteractionId in handleViewRuns:', commandInteractionId);
-    await renderViewRuns(interaction, runs, count, userId);
+    await renderViewRuns(interaction, runs, count, userId, selectedTypes);
 
     const message = await interaction.fetchReply();
     const collector = message.createMessageComponentCollector({
         filter: i => [
+            'tracker_viewruns_types',
             'tracker_viewruns_select',
             'tracker_share_runs',
             'tracker_main_menu'
@@ -251,13 +238,19 @@ async function handleViewRuns(interaction, commandInteractionId) {
     });
     collector.on('collect', async i => {
         await i.deferUpdate();
-        if (i.customId === 'tracker_viewruns_select') {
+        if (i.customId === 'tracker_viewruns_types') {
+            selectedTypes = i.values;
+            session.viewRunsSelectedTypes = selectedTypes;
+            await renderViewRuns(i, runs, count, userId, selectedTypes);
+        } else if (i.customId === 'tracker_viewruns_select') {
             // Update count and re-render UI in-place, do not recurse
             let newCount = 10;
             if (i.values && i.values[0]) {
                 newCount = parseInt(i.values[0], 10) || 10;
             }
-            await renderViewRuns(i, runs, newCount, userId);
+            count = newCount;
+            session.viewRunsCount = count;
+            await renderViewRuns(i, runs, count, userId, selectedTypes);
         } else if (i.customId === 'tracker_main_menu') {
             collector.stop();
             trackerEmitter.emit(`navigate_${commandInteractionId}`, 'mainMenu', i);
@@ -361,7 +354,7 @@ function generateTimelineChart(selectedRuns) {
                     callbacks: {
                         label: function(context) {
                             const value = context.raw;
-                            return `${context.dataset.label}: ${formatNumberOutput(value)}`;
+                            return `${context.dataset.label}: ${formatNumberForDisplay(value)}`;
                         }
                     }
                 }
@@ -378,7 +371,7 @@ function generateTimelineChart(selectedRuns) {
                     ticks: {
                         color: '#54a2eb',
                         callback: function(value) {
-                            return formatNumberOutput(value);
+                            return formatNumberForDisplay(value);
                         }
                     },
                     grid: { color: 'rgba(80,80,80,0.3)' },
@@ -392,7 +385,7 @@ function generateTimelineChart(selectedRuns) {
                     ticks: {
                         color: '#4bc0c0',
                         callback: function(value) {
-                            return formatNumberOutput(value);
+                            return formatNumberForDisplay(value);
                         }
                     },
                     grid: { drawOnChartArea: false },
@@ -407,7 +400,7 @@ function generateTimelineChart(selectedRuns) {
                     ticks: {
                         color: '#9966ff',
                         callback: function(value) {
-                            return formatNumberOutput(value);
+                            return formatNumberForDisplay(value);
                         }
                     },
                     grid: { drawOnChartArea: false },
@@ -422,7 +415,7 @@ function generateTimelineChart(selectedRuns) {
                     ticks: {
                         color: '#ff9f40',
                         callback: function(value) {
-                            return formatNumberOutput(value);
+                            return formatNumberForDisplay(value);
                         }
                     },
                     grid: { drawOnChartArea: false },

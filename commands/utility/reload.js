@@ -17,10 +17,10 @@ module.exports = {
 			return interaction.reply(`There is no command with name \`${commandName}\`!`);
 		}
 
-		delete require.cache[require.resolve(`../${command.category}/${command.data.name}.js`)];
+		delete require.cache[require.resolve(command.filePath)];
 
 		try {
-	        const newCommand = require(`../${command.category}/${command.data.name}.js`);
+	        const newCommand = require(command.filePath);
 	        interaction.client.commands.set(newCommand.data.name, newCommand);
 	        await interaction.reply(`Command \`${newCommand.data.name}\` was reloaded!`);
 		} catch (error) {

@@ -3,7 +3,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
 const { token } = require('./config.json');
-const { startGithubRelay } = require('./github-to-discord');
 
 const client = new Client({ intents: [
 	GatewayIntentBits.Guilds,
@@ -34,7 +33,6 @@ for (const folder of commandFolders) {
 }
 
 client.once(Events.ClientReady, c => {
-	startGithubRelay();
 	console.log('Github relay started.');
 	console.log(`Ready! Logged in as ${c.user.tag}`);
 });

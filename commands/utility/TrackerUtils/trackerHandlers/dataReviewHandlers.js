@@ -7,6 +7,7 @@ const { handleError } = require('./errorHandlers.js');
 const { calculateHourlyRates, formatDuration } = require('./trackerHelpers.js');
 const logHandlers = require('./logHandlers.js');
 const sheetHandlers = require('./sheetHandlers.js');
+const analyticsDB = require('../analyticsDB');
 const { run } = require('googleapis/build/src/apis/run/index.js');
 
 /**
@@ -40,6 +41,11 @@ async function handleDataReview(interaction) {
                 .setLabel(data?.notes && data.notes.length ? 'Edit Note' : 'Add Note')
                 .setStyle(ButtonStyle.Secondary)
         );
+
+        // If run type was specified in command, override the data type
+        if (session.runTypeFromCommand) {
+            session.data.type = session.uploadType;
+        }
         
         console.log('[DataReview] Editing reply to show review screen...');
         // Ensure interaction channel exists before editing
@@ -280,11 +286,13 @@ async function handleDataSubmission(interaction) {
             if (isUpdate) {
                 if (trackerType === 'Spreadsheet') {
                     await sheetHandlers.updateRunInSheet(username, apiData);
+                    analyticsDB.logRunUpload(userId, null);
                 } else {
                     if (!apiData.runId) throw new Error('Cannot update run - missing run ID');
                     console.log(`[SUBMIT] Updating run ${apiData.runId}`);
                     result = await trackerAPI.editRun(userId, username, apiData, {}, screenshotBuffer, screenshotName);
                     runId = apiData.runId;
+                    analyticsDB.logRunUpload(userId, runId);
                 }
             } else {
                 delete apiData.runId;
@@ -292,11 +300,13 @@ async function handleDataSubmission(interaction) {
 
                 if (trackerType === 'Spreadsheet') {
                     await sheetHandlers.setupSheetsAndLogData(interaction, apiData);
+                    analyticsDB.logRunUpload(userId, null);
                 } else {
                     result = await trackerAPI.logRun(userId, username, apiData, {}, screenshotBuffer, screenshotName);
                     runId = result?.runId;
                     if (!runId) throw new Error('Failed to get runId after logging run.');
                     console.log(`[SUBMIT] New run logged. ID: ${runId}`);
+                    analyticsDB.logRunUpload(userId, runId);
                 }
 
                 const newRunEntry = { ...apiData, id: runId, runId: runId, timestamp: new Date().toISOString() };

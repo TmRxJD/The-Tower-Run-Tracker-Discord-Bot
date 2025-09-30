@@ -4,6 +4,7 @@ const { userSessions, trackerEmitter } = require('./sharedState.js'); // Added t
 const { handleError } = require('./errorHandlers.js');
 const { calculateHourlyRates, getNumberSuffix } = require('./trackerHelpers.js'); // Use current helpers
 const { createShareEmbed } = require('../trackerUI/trackerUIEmbeds.js');
+const { loadShareSettings } = require('./shareSettingsHandlers.js');
 
 /**
  * Handles the sharing of a completed run to the current channel.
@@ -56,6 +57,8 @@ async function handleShare(interaction) {
             return;
         }
         const user = interaction.user;
+        // Load share settings
+        const shareSettings = await loadShareSettings(userId);
         // Calculate stats and create the embed to share
         const stats = calculateHourlyRates(runData.duration || runData.roundDuration, runData);
         const shareEmbed = createShareEmbed(
@@ -67,8 +70,7 @@ async function handleShare(interaction) {
             userSessions.get(userId)?.settings?.decimalPreference || 'Period (.)',
             runTypeCounts,
             user,
-            // Default to false if not set, but always pass a boolean
-            Boolean(userSessions.get(userId)?.settings?.shareNotes) // Pass shareNotes setting as boolean
+            shareSettings // Pass share settings object
         );
         const shareOptions = { embeds: [shareEmbed] };
         const hasScreenshot = !!session.screenshotAttachment;

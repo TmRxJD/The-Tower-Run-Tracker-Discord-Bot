@@ -1,6 +1,31 @@
-// File: d:\Projects\chad-bot\commands\utility\trackerHelpers.js
-const { Colors } = require('discord.js');
-const sharp = require('sharp'); // Used for image preprocessing
+// Shared constants and functions
+const NOTATIONS = {
+    K: 1e3, M: 1e6, B: 1e9, T: 1e12, q: 1e15, Q: 1e18, s: 1e21, S: 1e24, O: 1e27, N: 1e30, D: 1e33,
+    AA: 1e36, AB: 1e39, AC: 1e42, AD: 1e45, AE: 1e48, AF: 1e51, AG: 1e54, AH: 1e57, AI: 1e60, AJ: 1e63
+};
+
+function parseNumberInput(input) {
+    if (typeof input === 'number') return input;
+    const inputStr = String(input).replace(/,/g, '').trim();
+    const match = inputStr.match(/^(\d+|\d*\.\d+)([KMBTqQsSOND]|A[A-J])?$/);
+    if (!match) {
+        const number = parseFloat(inputStr);
+        if (!isNaN(number)) return number;
+        return 0;
+    }
+    const [_, numberPart, notation] = match;
+    const number = parseFloat(numberPart);
+    if (isNaN(number)) return 0;
+    if (!notation) return number;
+    const multiplier = NOTATIONS[notation];
+    if (!multiplier) return number;
+    return number * multiplier;
+}
+
+function avg(arr) {
+    if (!arr.length) return 0;
+    return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
 
 /**
  * Standardizes number notation (uppercase except 'q')
@@ -23,6 +48,52 @@ function standardizeNotation(value) {
         return number + notation;
     }
     return value;
+}
+
+/**
+ * Formats numbers for display with notation if large, and handles decimal preference.
+ * Ensures coefficient is always >= 1 for notation (e.g., 500K instead of 0.5M).
+ */
+function formatNumberForDisplay(value, decimalPreference = 'Period (.)') {
+    if (value === null || value === undefined || value === 'N/A') return 'N/A'; // Handle null/undefined
+    if (typeof value === 'string' && value.trim() === '') return '';
+    let num = value;
+    if (typeof value === 'string') {
+        // Try to parse if it's a string
+        num = parseFloat(value.replace(/,/g, ''));
+        if (isNaN(num)) return value; // If not a number, return as is
+    }
+    if (typeof num !== 'number' || isNaN(num)) return String(value);
+
+    // Notation constants
+    const NOTATIONS = {
+        K: 1e3, M: 1e6, B: 1e9, T: 1e12, q: 1e15, Q: 1e18, s: 1e21, S: 1e24, O: 1e27, N: 1e30, D: 1e33,
+        AA: 1e36, AB: 1e39, AC: 1e42, AD: 1e45, AE: 1e48, AF: 1e51, AG: 1e54, AH: 1e57, AI: 1e60, AJ: 1e63
+    };
+
+    if (num < 1000) {
+        let str = Math.round(num).toString();
+        if (decimalPreference === 'Comma (,)' && str.includes('.')) {
+            str = str.replace(/\./g, ',');
+        }
+        return str;
+    }
+
+    const notationEntries = Object.entries(NOTATIONS).reverse();
+    for (const [notation, multiplier] of notationEntries) {
+        if (num >= multiplier) {
+            let formatted = (num / multiplier).toFixed(2) + notation;
+            if (decimalPreference === 'Comma (,)' && formatted.includes('.')) {
+                formatted = formatted.replace(/\./g, ',');
+            }
+            return formatted;
+        }
+    }
+    let str = num.toString();
+    if (decimalPreference === 'Comma (,)' && str.includes('.')) {
+        str = str.replace(/\./g, ',');
+    }
+    return str;
 }
 
 /**
@@ -683,8 +754,20 @@ function calculateHourlyRates(duration, amounts) {
  * @param {number} hours - Duration in hours
  * @returns {string} - Formatted rate
  */
+/**
+ * Format rate with appropriate notation
+ * @param {string|number} amount - Amount, possibly with notation
+ * @param {number} hours - Duration in hours
+ * @returns {string} - Formatted rate
+ */
 function formatRateWithNotation(amount, hours) {
     if (!amount || hours <= 0) return '0';
+    
+    // Notation constants
+    const NOTATIONS = {
+        K: 1e3, M: 1e6, B: 1e9, T: 1e12, q: 1e15, Q: 1e18, s: 1e21, S: 1e24, O: 1e27, N: 1e30, D: 1e33,
+        AA: 1e36, AB: 1e39, AC: 1e42, AD: 1e45, AE: 1e48, AF: 1e51, AG: 1e54, AH: 1e57, AI: 1e60, AJ: 1e63
+    };
     
     // Extract numeric value and notation
     let numericValue;
@@ -697,6 +780,12 @@ function formatRateWithNotation(amount, hours) {
         if (match) {
             numericValue = parseFloat(match[1]);
             notation = match[2];
+            if (notation) {
+                const multiplier = NOTATIONS[notation];
+                if (multiplier) {
+                    numericValue *= multiplier;
+                }
+            }
         } else {
             numericValue = parseFloat(amount);
         }
@@ -704,23 +793,62 @@ function formatRateWithNotation(amount, hours) {
     
     if (isNaN(numericValue)) return '0';
     
-    // Calculate rate and format with same notation
+    // Calculate rate
     const rate = numericValue / hours;
     
-    // Format with appropriate precision
-    let formatted;
-    if (rate >= 100) {
-        formatted = Math.round(rate).toString();
-    } else if (rate >= 10) {
-        formatted = rate.toFixed(1);
-    } else {
-        formatted = rate.toFixed(2);
+    const notationEntries = Object.entries(NOTATIONS).reverse();
+    for (const [not, multiplier] of notationEntries) {
+        if (rate >= multiplier) {
+            let formatted = (rate / multiplier).toFixed(2) + not;
+            if (formatted.startsWith('0.')) {
+                let shiftedRate = rate * 1000;
+                let shiftedFormatted = shiftedRate.toFixed(2);
+                if (shiftedFormatted.endsWith('.00')) {
+                    shiftedFormatted = shiftedFormatted.slice(0, -3);
+                } else if (shiftedFormatted.endsWith('0')) {
+                    shiftedFormatted = shiftedFormatted.slice(0, -1);
+                }
+                if (not === 'K') {
+                    return shiftedFormatted + 'K';
+                } else if (not === 'M') {
+                    return shiftedFormatted + 'M';
+                } else if (not === 'B') {
+                    return shiftedFormatted + 'B';
+                } else if (not === 'T') {
+                    return shiftedFormatted + 'T';
+                } else if (not === 'q') {
+                    return shiftedFormatted + 'q';
+                } else if (not === 'Q') {
+                    return shiftedFormatted + 'Q';
+                } else if (not === 's') {
+                    return shiftedFormatted + 's';
+                } else if (not === 'S') {
+                    return shiftedFormatted + 'S';
+                } else if (not === 'O') {
+                    return shiftedFormatted + 'O';
+                } else if (not === 'N') {
+                    return shiftedFormatted + 'N';
+                } else if (not === 'D') {
+                    return shiftedFormatted + 'D';
+                } else if (not === 'AA') {
+                    return shiftedFormatted + 'AA';
+                } // Add more if needed
+                else {
+                    return shiftedFormatted + not; // Fallback
+                }
+            }
+            // Remove unnecessary trailing zeros
+            if (formatted.endsWith('.00')) {
+                formatted = formatted.slice(0, -3);
+            } else if (formatted.endsWith('0')) {
+                formatted = formatted.slice(0, -1);
+            }
+            return formatted;
+        }
     }
-    
-    // Remove trailing zeros after decimal point
-    formatted = formatted.replace(/\.0+$/, '');
-    
-    return formatted + notation;
+    // If rate < 1000, return with K
+    let formatted = Math.round(rate).toString() + 'K';
+    return formatted;
 }
 
 /**
@@ -825,5 +953,10 @@ module.exports = {
     findPotentialDuplicateRun,
     getDecimalForLanguage,
     ocrFieldTranslations,
-    getTierAndWave
+    getTierAndWave,
+    formatNumberForDisplay,
+    formatRateWithNotation,
+    NOTATIONS,
+    parseNumberInput,
+    avg
 };

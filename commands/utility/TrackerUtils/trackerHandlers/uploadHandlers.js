@@ -439,7 +439,7 @@ module.exports = {
  */
 function parseRunDataFromText(rawText) {
     if (typeof rawText !== 'string') rawText = String(rawText || '');
-    const text = rawText.replace(/\r/g, '').trim();
+    const text = rawText.replace(/,/g, '.').replace(/\r/g, '').trim();
     const lines = text.split(/\n+/);
     // Whole-text matcher to handle flattened input (labels and values separated by multiple spaces)
     const getFromText = (labelPattern, valueRegex) => {

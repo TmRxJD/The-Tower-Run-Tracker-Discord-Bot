@@ -1,15 +1,5 @@
 const { EmbedBuilder, Colors } = require('discord.js');
-const { calculateHourlyRates, formatDate, formatTime, getNumberSuffix } = require('../trackerHandlers/trackerHelpers.js');
-
-// Helper function to format numbers for display based on preference
-function formatNumberForDisplay(value, decimalPreference = 'Period (.)') {
-    if (value === null || value === undefined) return 'N/A'; // Handle null/undefined
-    let strValue = String(value);
-    if (decimalPreference === 'Comma (,)') {
-        strValue = strValue.replace(/\./g, ','); // Replace all periods with commas
-    }
-    return strValue;
-}
+const { calculateHourlyRates, formatDate, formatTime, getNumberSuffix, formatNumberForDisplay, parseNumberInput, formatDuration } = require('../trackerHandlers/trackerHelpers.js');
 
 // Helper functions
 function toTitleCase(str) {
@@ -214,7 +204,16 @@ function createDataReviewEmbed(data, type = 'Extracted', isDuplicate = false, de
     };
     const addFieldToEmbed = (key, value, inline = true) => {
         if (value !== undefined && value !== null && String(value).trim() !== '' && value !== 'N/A') {
-            const formatted = formatNumberForDisplay(value, decimalPreference);
+            let formatted;
+            if (key === 'duration') {
+                formatted = formatDuration(value);
+            } else if (['coins', 'cells', 'dice'].includes(key)) {
+                formatted = formatNumberForDisplay(parseNumberInput(value), decimalPreference);
+            } else if (key === 'date') {
+                formatted = value; // Date is already a formatted string
+            } else {
+                formatted = formatNumberForDisplay(value, decimalPreference);
+            }
             embed.addFields({ name: getDisplayFieldName(key), value: clamp1024(formatted), inline });
         }
     };
@@ -306,15 +305,15 @@ function createFinalEmbed(data, stats, hasScreenshot = false, isUpdate = false, 
         .setURL('https://the-tower-run-tracker.com/')
         .addFields(
             { name: getDisplayFieldName('tier') + '|Wave', value: formatNumberForDisplay(data.tier) + ' | ' + formatNumberForDisplay(data.wave), inline: true },
-            { name: getDisplayFieldName('duration'), value: formatNumberForDisplay(data.roundDuration || data.duration), inline: true },
+            { name: getDisplayFieldName('duration'), value: formatDuration(data.roundDuration || data.duration), inline: true },
             { name: getDisplayFieldName('killedBy'), value: formatNumberForDisplay(data.killedBy), inline: true },
-            { name: getDisplayFieldName('coins'), value: formatNumberForDisplay(data.totalCoins || data.coins), inline: true },
-            { name: getDisplayFieldName('cells'), value: formatNumberForDisplay(data.totalCells || data.cells), inline: true },
-            { name: getDisplayFieldName('dice'), value: formatNumberForDisplay(data.totalDice || data.rerollShards || data.dice), inline: true },
-            { name: '🪙\nCoins/Hr', value: formatNumberForDisplay(stats.coinsPerHour), inline: true },
-            { name: '🔋\nCells/Hr', value: formatNumberForDisplay(stats.cellsPerHour), inline: true },
-            { name: '🎲\nDice/Hr', value: formatNumberForDisplay(stats.dicePerHour), inline: true },
-            { name: getDisplayFieldName('date'), value: formatNumberForDisplay(dateTime), inline: true },
+            { name: getDisplayFieldName('coins'), value: formatNumberForDisplay(parseNumberInput(data.totalCoins || data.coins)), inline: true },
+            { name: getDisplayFieldName('cells'), value: formatNumberForDisplay(parseNumberInput(data.totalCells || data.cells)), inline: true },
+            { name: getDisplayFieldName('dice'), value: formatNumberForDisplay(parseNumberInput(data.totalDice || data.rerollShards || data.dice)), inline: true },
+            { name: '🪙\nCoins/Hr', value: formatNumberForDisplay(parseNumberInput(stats.coinsPerHour)), inline: true },
+            { name: '🔋\nCells/Hr', value: formatNumberForDisplay(parseNumberInput(stats.cellsPerHour)), inline: true },
+            { name: '🎲\nDice/Hr', value: formatNumberForDisplay(parseNumberInput(stats.dicePerHour)), inline: true },
+            { name: getDisplayFieldName('date'), value: dateTime, inline: true },
             { name: getDisplayFieldName('type'), value: formatNumberForDisplay(formattedType), inline: true },
             { name: getDisplayFieldName('run#'), value: formatNumberForDisplay(typeCount), inline: true },
         )
@@ -336,7 +335,7 @@ function createFinalEmbed(data, stats, hasScreenshot = false, isUpdate = false, 
 }
 
 // Accepts interaction for avatar extraction
-function createShareEmbed(displayName, runData, runCount, webLink, hasScreenshot, decimalPreference = 'Period (.)', runTypeCounts = {}, user, shareNotes = false) {
+function createShareEmbed(displayName, runData, runCount, webLink, hasScreenshot, decimalPreference = 'Period (.)', runTypeCounts = {}, user, shareSettings = {}) {
     if (!runData) return new EmbedBuilder().setTitle('Error').setDescription('Missing run data for sharing.');
 
     // Use runType count for this type, and show a simple, clear title
@@ -364,29 +363,48 @@ function createShareEmbed(displayName, runData, runCount, webLink, hasScreenshot
         .setAuthor({ name: user.username + ' Shared a Run', iconURL: user.displayAvatarURL() })
         .setTitle(title)
         .setDescription(
-            `🔢 Tier: **${formatNumberForDisplay(runData.tier, decimalPreference)}**\n ` +
-            `🌊 Wave: **${formatNumberForDisplay(runData.wave, decimalPreference)}**\n` +
-            `⏱️ Duration: **${formatNumberForDisplay(runData.duration || runData.roundDuration, decimalPreference)}**\n` +
-            `### **Earnings per Hour**`)
-        .addFields(
-            { name: '🪙\nCoins', value: formatNumberForDisplay(stats.coinsPerHour, decimalPreference), inline: true },
-            { name: '🔋\nCells', value: formatNumberForDisplay(stats.cellsPerHour, decimalPreference), inline: true },
-            { name: '🎲\nDice', value: formatNumberForDisplay(stats.dicePerHour, decimalPreference), inline: true }
+            (shareSettings.includeTier !== false ? `🔢 Tier: **${formatNumberForDisplay(runData.tier, decimalPreference)}**\n ` : '') +
+            (shareSettings.includeWave !== false ? `🌊 Wave: **${formatNumberForDisplay(runData.wave, decimalPreference)}**\n` : '') +
+            (shareSettings.includeDuration !== false ? `⏱️ Duration: **${formatDuration(runData.duration || runData.roundDuration)}**\n` : '') +
+            (shareSettings.includeTotalCoins !== false ? `🪙 Total Coins: **${formatNumberForDisplay(parseNumberInput(runData.totalCoins || runData.coins), decimalPreference)}**\n` : '') +
+            (shareSettings.includeTotalCells !== false ? `🔋 Total Cells: **${formatNumberForDisplay(parseNumberInput(runData.totalCells || runData.cells), decimalPreference)}**\n` : '') +
+            (shareSettings.includeTotalDice !== false ? `🎲 Total Dice: **${formatNumberForDisplay(parseNumberInput(runData.totalDice || runData.rerollShards || runData.dice), decimalPreference)}**\n` : '') +
+            ((shareSettings.includeCoinsPerHour !== false || shareSettings.includeCellsPerHour !== false || shareSettings.includeDicePerHour !== false) ? `### **Earnings per Hour**` : '')
         )
         .setColor(Colors.Gold)
         .setThumbnail('https://i.postimg.cc/pTVP1MPh/Screenshot-2025-05-04-124710.png')
-        .setFooter({ text: `📊 Tracked with The Tower Run Tracker\nUse /track to log a run\n\nUse Creator Code "JDEVO" to Support The Tower Run Tracker!` });
+        .setFooter({ text: `📊 Tracked with The Tower Run Tracker\nUse /track to log a run` });
+
+    if(shareSettings.includeCoinsPerHour !== false || shareSettings.includeCellsPerHour !== false || shareSettings.includeDicePerHour !== false) {
+        const fields = [];
+    if(shareSettings.includeCoinsPerHour !== false) {
+        let value = formatNumberForDisplay(parseNumberInput(stats.coinsPerHour), decimalPreference);
+        if (!/[KMBTqQsSOND]|A[A-J]/.test(value)) value += 'K';
+        fields.push({ name: '🪙\nCoins', value, inline: true });
+    }
+    if(shareSettings.includeCellsPerHour !== false) {
+        let value = formatNumberForDisplay(parseNumberInput(stats.cellsPerHour), decimalPreference);
+        if (!/[KMBTqQsSOND]|A[A-J]/.test(value)) value += 'K';
+        fields.push({ name: '🔋\nCells', value, inline: true });
+    }
+    if(shareSettings.includeDicePerHour !== false) {
+        let value = formatNumberForDisplay(parseNumberInput(stats.dicePerHour), decimalPreference);
+        if (!/[KMBTqQsSOND]|A[A-J]/.test(value)) value += 'K';
+        fields.push({ name: '🎲\nDice', value, inline: true });
+    }
+        shareEmbed.addFields(fields);
+    }
 
     if(webLink) {
         shareEmbed.setURL(webLink);
     }
 
     const noteText = runData.notes || runData.note;
-    if (shareNotes && noteText && noteText.trim() !== '' && noteText !== 'N/A') {
+    if (shareSettings.includeNotes && noteText && noteText.trim() !== '' && noteText !== 'N/A') {
         shareEmbed.addFields({ name: getDisplayFieldName('notes'), value: formatNumberForDisplay(noteText, decimalPreference) });
     }
 
-    if (hasScreenshot) {
+    if (shareSettings.includeScreenshot && hasScreenshot) {
         shareEmbed.setImage('attachment://screenshot.png');
     }
 

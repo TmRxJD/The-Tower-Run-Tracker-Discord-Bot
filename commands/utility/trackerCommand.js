@@ -9,15 +9,16 @@ const {
     ButtonStyle
 } = require('discord.js');
 const trackerApi = require('./TrackerUtils/trackerHandlers/trackerAPI.js');
-const trackerUI = require('./TrackerUtils/trackerUI');
+const trackerUI = require('./TrackerUtils/trackerUI/index.js');
 const menuHandlers = require('./TrackerUtils/trackerHandlers/menuHandlers.js');
-const { handleShareLastRun } = require('./TrackerUtils/trackerHandlers/menuHandlers');
+const { handleShareLastRun } = require('./TrackerUtils/trackerHandlers/menuHandlers.js');
 const uploadHandlers = require('./TrackerUtils/trackerHandlers/uploadHandlers.js');
 const manualEntryHandlers = require('./TrackerUtils/trackerHandlers/manualEntryHandlers.js');
 const settingsHandlers = require('./TrackerUtils/trackerHandlers/settingsHandlers.js');
 const editHandlers = require('./TrackerUtils/trackerHandlers/editHandlers.js');
 const dataReviewHandlers = require('./TrackerUtils/trackerHandlers/dataReviewHandlers.js');
 const shareHandlers = require('./TrackerUtils/trackerHandlers/shareHandlers.js');
+const shareSettingsHandlers = require('./TrackerUtils/trackerHandlers/shareSettingsHandlers.js');
 const errorHandlers = require('./TrackerUtils/trackerHandlers/errorHandlers.js');
 const { userSessions, trackerEmitter } = require('./TrackerUtils/trackerHandlers/sharedState.js');
 const trackerHelpers = require('./TrackerUtils/trackerHandlers/trackerHelpers.js');
@@ -26,6 +27,7 @@ const shareRunsHandlers = require('./TrackerUtils/trackerHandlers/shareRunsHandl
 const { getSpreadsheetLink, getSheetData } = require('./TrackerUtils/trackerHandlers/sheetHandlers.js');
 // Import migration helper for initial sheet import
 const { migrateUserData } = require('./TrackerUtils/trackerHandlers/migrateToNewTracker.js');
+const analyticsDB = require('./TrackerUtils/analyticsDB');
 
 // Set up session cleanup to prevent memory leaks
 const SESSION_TIMEOUT = 3600000; // 1 hour in milliseconds
@@ -62,9 +64,23 @@ module.exports = {
             option.setName('note')
                 .setDescription('Optional note to attach to this run')
                 .setRequired(false))
+        .addStringOption(option =>
+            option.setName('type')
+                .setDescription('Run Type for this entry')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'Farming', value: 'Farming' },
+                    { name: 'Overnight', value: 'Overnight' },
+                    { name: 'Tournament', value: 'Tournament' },
+                    { name: 'Milestone', value: 'Milestone' }
+                ))
         .addAttachmentOption(option => 
             option.setName('screenshot')
                 .setDescription('Screenshot of your Tower run results')
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('settings')
+                .setDescription('Open the settings menu')
                 .setRequired(false))        
         ,
         
@@ -81,7 +97,18 @@ module.exports = {
         activeInteractions.add(commandInteractionId);
 
         // Defer reply early to allow for multiple editReply calls
-        await interaction.deferReply({ ephemeral: true });
+        try {
+            await interaction.deferReply({ ephemeral: true });
+        } catch (error) {
+            if (error.code === 10062) {
+                console.log('Ignoring unknown interaction (likely expired)');
+                return;
+            }
+            throw error;
+        }
+
+        // Log command usage
+        analyticsDB.logCommandUsage(userId, 'track');
 
         // --- Central Event Listeners --- 
         // Define listener functions ONCE for this command instance
@@ -106,7 +133,9 @@ module.exports = {
                          trackerEmitter.removeListener(`navigate_${commandInteractionId}`, handleNavigate);
                          trackerEmitter.removeListener(`dispatch_${commandInteractionId}`, handleDispatch);
                         break;
-                    // Add other potential navigation targets if needed
+                    case 'settings':
+                        await settingsHandlers.handleSettingsFlow(eventInteraction, commandInteractionId);
+                        break;
                 }
             } catch (navError) {
                 console.error(`[Emitter] Error handling navigation to ${destination}:`, navError);
@@ -133,6 +162,9 @@ module.exports = {
                         break;
                     case 'settingsFlow':
                         await settingsHandlers.handleSettingsFlow(eventInteraction, ...args);
+                        break;
+                    case 'shareSettings':
+                        await shareSettingsHandlers.handleShareSettingsFlow(eventInteraction, commandInteractionId);
                         break;
                 case 'editLast': // Example
                     await menuHandlers.handleEditLast(eventInteraction, commandInteractionId, ...args);
@@ -252,6 +284,13 @@ module.exports = {
             const attachment = interaction.options.getAttachment('screenshot');
             const pastedText = interaction.options.getString('paste');
             const preNote = interaction.options.getString('note');
+            const runType = interaction.options.getString('run_type');
+            const settings = interaction.options.getBoolean('settings');
+            
+            if (settings) {
+                await settingsHandlers.handleSettingsFlow(interaction, commandInteractionId);
+                return;
+            }
             
             // --- Default Settings (used if API fetch fails or user is new) ---
             const defaultSettings = { 
@@ -288,6 +327,12 @@ module.exports = {
                 session.lastActivity = Date.now();
                 session.settings = { ...defaultSettings, ...(session.settings || {}) }; 
                 session.uploadType = session.settings.defaultRunType || defaultSettings.defaultRunType;
+            }
+            
+            // Set run type from command
+            if (runType) {
+                session.uploadType = runType;
+                session.runTypeFromCommand = true;
             }
             
             // ALWAYS Fetch fresh data (runs/settings)
@@ -363,6 +408,10 @@ module.exports = {
             session.cachedRunData = dataFetchResult.cachedRunData;
             session.settings = dataFetchResult.settings;
             session.uploadType = session.settings.defaultRunType || defaultSettings.defaultRunType;
+
+            if (runType) {
+                session.uploadType = runType;
+            }
 
             // One-time import of old runs on first use when no data is present
             if (!session.hasImported) {

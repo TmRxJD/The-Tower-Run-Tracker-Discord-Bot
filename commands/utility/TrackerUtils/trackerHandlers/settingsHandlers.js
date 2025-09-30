@@ -11,9 +11,11 @@ const trackerApi = require('./trackerAPI.js');
  * NOTE: This function now ONLY prepares the UI content and sets up its collector.
  * Navigation is handled by emitting events.
  */
-async function handleSettingsFlow(interaction) {
-    const commandInteractionId = interaction.id;
+async function handleSettingsFlow(interaction, commandInteractionId = interaction.id) {
     try {
+        if (!interaction.deferred) {
+            await interaction.deferReply({ ephemeral: true });
+        }
         const userId = interaction.user.id;
         
         // Fetch latest settings from API
@@ -43,7 +45,7 @@ async function handleSettingsFlow(interaction) {
                  { name: 'Tracker', value: 'Select between the web-based or spreadsheet tracker.\n**' + (currentSettings.defaultTracker || 'Web') + '**', inline: true },
                  { name: 'Auto-detect duplicates', value: 'Enable/disable automatic duplicate run detection.\n**' + (currentSettings.autoDetectDuplicates ? 'Enabled ✅' : 'Disabled ❌') + '**', inline: true },
                  { name: 'Confirm before submit', value: 'Require confirmation before saving a run.\n**' + (currentSettings.confirmBeforeSubmit ? 'Enabled ✅' : 'Disabled ❌') + '**', inline: true },
-                 { name: 'Share Notes', value: 'Include notes when sharing runs.\n**' + (currentSettings.shareNotes ? 'Enabled ✅' : 'Disabled ❌') + '**', inline: true },
+                 { name: 'Share Settings', value: 'Configure what elements appear in your share messages.', inline: true },
                  { name: 'Import', value: 'Import your previous runs from the old spreadsheet', inline: true }
              )
             .setColor(Colors.Blue)
@@ -141,9 +143,9 @@ async function handleSettingsFlow(interaction) {
                 .setStyle(currentSettings.confirmBeforeSubmit ? ButtonStyle.Success : ButtonStyle.Danger),
 
                 new ButtonBuilder()
-                .setCustomId('tracker_share_notes')
-                .setLabel(`${currentSettings.shareNotes ? '✅' : '❌'} share notes`)
-                .setStyle(currentSettings.shareNotes ? ButtonStyle.Success : ButtonStyle.Danger)
+                .setCustomId('tracker_share_settings')
+                .setLabel('Share Settings')
+                .setStyle(ButtonStyle.Primary)
         );
         
         // Create back button row with import button before it
@@ -181,7 +183,7 @@ async function handleSettingsFlow(interaction) {
                 'tracker_language_select', 
                 'tracker_timezone_select',
                 'tracker_tracker_select',
-                'tracker_share_notes',
+                'tracker_share_settings',
                 'tracker_import'
              ].includes(i.customId) && i.user.id === userId,
              time: 300000 
@@ -220,9 +222,10 @@ async function handleSettingsFlow(interaction) {
                 } else if (i.customId === 'tracker_setting_confirm') {
                     latestSettings.confirmBeforeSubmit = !latestSettings.confirmBeforeSubmit;
                     settingChanged = true;
-                } else if (i.customId === 'tracker_share_notes') {
-                    latestSettings.shareNotes = !latestSettings.shareNotes;
-                    settingChanged = true;
+                } else if (i.customId === 'tracker_share_settings') {
+                    collector.stop('shareSettings');
+                    trackerEmitter.emit(`dispatch_${commandInteractionId}`, 'shareSettings', i);
+                    return;
                 } else if (i.customId === 'tracker_language_select') {
                     if (i.isStringSelectMenu()) { // Ensure it's a select menu interaction
                         latestSettings.scanLanguage = i.values[0];
@@ -257,7 +260,7 @@ async function handleSettingsFlow(interaction) {
                              { name: 'Tracker', value: 'Select between the web-based or spreadsheet tracker.\n**' + (latestSettings.defaultTracker || 'Web') + '**', inline: true },
                              { name: 'Auto-detect duplicates', value: 'Enable/disable automatic duplicate run detection.\n**' + (latestSettings.autoDetectDuplicates ? 'Enabled ✅' : 'Disabled ❌') + '**', inline: true },
                              { name: 'Confirm before submit', value: 'Require confirmation before saving a run.\n**' + (latestSettings.confirmBeforeSubmit ? 'Enabled ✅' : 'Disabled ❌') + '**', inline: true },
-                             { name: 'Share Notes', value: 'Include notes when sharing runs.\n**' + (latestSettings.shareNotes ? 'Enabled ✅' : 'Disabled ❌') + '**', inline: true },
+                             { name: 'Share Settings', value: 'Configure what elements appear in your share messages.', inline: true },
                              { name: 'Import', value: 'Import your previous runs from the old spreadsheet', inline: true }
                          )
                          .setColor(Colors.Blue)
@@ -306,11 +309,7 @@ async function handleSettingsFlow(interaction) {
                          new ButtonBuilder()
                              .setCustomId('tracker_setting_confirm')
                              .setLabel(`${latestSettings.confirmBeforeSubmit ? '✅' : '❌'} confirmation`)
-                             .setStyle(latestSettings.confirmBeforeSubmit ? ButtonStyle.Success : ButtonStyle.Danger),
-                         new ButtonBuilder()
-                             .setCustomId('tracker_share_notes')
-                             .setLabel(`${latestSettings.shareNotes ? '✅' : '❌'} share notes`)
-                             .setStyle(latestSettings.shareNotes ? ButtonStyle.Success : ButtonStyle.Danger)
+                             .setStyle(latestSettings.confirmBeforeSubmit ? ButtonStyle.Success : ButtonStyle.Danger)
                      );
 
                     const updatedBackButtonRow = new ActionRowBuilder().addComponents(
