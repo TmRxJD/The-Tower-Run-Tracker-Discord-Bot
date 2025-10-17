@@ -53,6 +53,7 @@ async function robustProcessImage({
                 killedBy: backendData.killedBy ?? null,
                 date: extractedData.runDateTime?.date ?? null,
                 time: extractedData.runDateTime?.time ?? null,
+                type: backendData.type ?? null,
                 notes: backendData.notes ?? ''
             };
             if (isValidData(processedData)) {
@@ -79,6 +80,7 @@ async function robustProcessImage({
                 killedBy: backendData.killedBy ?? null,
                 date: extractedData.runDateTime?.date ?? null,
                 time: extractedData.runDateTime?.time ?? null,
+                type: backendData.type ?? null,
                 notes: backendData.notes ?? ''
             };
             if (isValidData(processedData)) {
@@ -439,64 +441,97 @@ module.exports = {
  */
 function parseRunDataFromText(rawText) {
     if (typeof rawText !== 'string') rawText = String(rawText || '');
-    const text = rawText.replace(/,/g, '.').replace(/\r/g, '').trim();
-    const lines = text.split(/\n+/);
-    // Whole-text matcher to handle flattened input (labels and values separated by multiple spaces)
-    const getFromText = (labelPattern, valueRegex) => {
-        try {
-            const re = new RegExp(`${labelPattern}\\s*[:|-]?\\s*(${valueRegex.source})`, 'i');
-            const m = text.match(re);
-            return m ? (m[1] || '').trim() : '';
-        } catch {
-            return '';
+
+    const cleanedText = rawText.replace(/\r/g, '').trim();
+    const sanitizedText = cleanedText.replace(/,/g, '.');
+    const originalLines = cleanedText ? cleanedText.split(/\n+/) : [];
+    const sanitizedLines = sanitizedText ? sanitizedText.split(/\n+/) : [];
+
+    const knownSections = new Set([
+        'Battle Report',
+        'Combat',
+        'Utility',
+        'Enemies Destroyed',
+        'Bots',
+        'Guardian'
+    ]);
+
+    const sectionStats = {};
+    const flatStats = {};
+    let currentSection = 'Battle Report';
+
+    const ensureSection = (sectionName) => {
+        if (!sectionStats[sectionName]) {
+            sectionStats[sectionName] = {};
         }
     };
-    // Line-based fallback when actual newlines exist
-    const getLine = (label) => {
-        const re = new RegExp(`^\\s*${label}\\s*[:|-]?\\s*(.*)$`, 'i');
-        for (const line of lines) {
-            const m = line.match(re);
-            if (m) return (m[1] || '').trim();
+
+    for (let idx = 0; idx < sanitizedLines.length; idx += 1) {
+        const sanitizedLine = sanitizedLines[idx]?.trim();
+        const originalLine = originalLines[idx]?.trim();
+        if (!sanitizedLine) continue;
+
+        if (knownSections.has(sanitizedLine)) {
+            currentSection = sanitizedLine;
+            ensureSection(currentSection);
+            continue;
         }
-        return '';
-    };
-    const get = (label, pattern) => {
-        const fromWhole = getFromText(label, pattern);
-        if (fromWhole) return fromWhole;
-        const source = getLine(label) || '';
-        if (!source) return '';
-        const m = String(source).match(pattern);
-        return m ? m[0] : '';
-    };
-    // Fields per user instruction
-    const tierRaw = get('Tier', /\d+/);
-    const waveRaw = get('Wave', /\d+/);
-    const durationRaw = get('Real\\s*Time', /[\dhms :]+/);
-    const coinsRaw = get('Coins\\s*Earned', /[\d,\.a-zA-Z$]+/);
-    const cellsRaw = get('Cells\\s*Earned', /[\d,\.a-zA-Z]+/);
-    const rerollShardsRaw = get('Reroll\\s*Shards\\s*Earned', /[\d,\.a-zA-Z]+/);
-    // Killed By: capture only the first word token after the label
-    let killedByRaw = '';
-    {
-        const km = text.match(/Killed\s*By\s*[:|-]?\s*([A-Za-z][A-Za-z'-]*)/i);
-        killedByRaw = km ? km[1] : '';
-        if (!killedByRaw) {
-            const fallback = get('Killed\s*By', /[A-Za-z][A-Za-z'-]*/);
-            killedByRaw = fallback || '';
+
+        const spacingMatch = sanitizedLine.match(/^(.+?)\s{2,}(.+)$/);
+        const colonMatch = sanitizedLine.match(/^(.+?)\s*[:|-]\s*(.+)$/);
+        let label = '';
+        let value = '';
+
+        if (spacingMatch) {
+            label = spacingMatch[1].trim();
+            const originalSpacing = originalLine?.match(/^(.+?)\s{2,}(.+)$/);
+            value = (originalSpacing && originalSpacing[2]) || spacingMatch[2];
+        } else if (colonMatch) {
+            label = colonMatch[1].trim();
+            const originalColon = originalLine?.match(/^(.+?)\s*[:|-]\s*(.+)$/);
+            value = (originalColon && originalColon[2]) || colonMatch[2];
+        }
+
+        if (!label || !value) continue;
+
+        ensureSection(currentSection);
+        const storedValue = value.trim();
+        sectionStats[currentSection][label] = storedValue;
+        const flatKey = currentSection === 'Battle Report' ? label : `${currentSection} ${label}`;
+        flatStats[flatKey] = storedValue;
+    }
+
+    const getStat = (sectionName, label) => sectionStats[sectionName]?.[label] || '';
+    const sanitizeNumeric = (value) => String(value || '').replace(/,/g, '.').trim();
+
+    const tierRaw = getStat('Battle Report', 'Tier');
+    const waveRaw = getStat('Battle Report', 'Wave');
+    const durationRaw = getStat('Battle Report', 'Real Time') || getStat('Battle Report', 'Game Time');
+    const coinsRaw = getStat('Battle Report', 'Coins earned') || getStat('Battle Report', 'Coins Earned');
+    const cellsRaw = getStat('Battle Report', 'Cells Earned');
+    const rerollShardsRaw = getStat('Battle Report', 'Reroll Shards Earned') || getStat('Guardian', 'Reroll Shards');
+    const killedByRaw = getStat('Battle Report', 'Killed By');
+    const battleDateRaw = getStat('Battle Report', 'Battle Date');
+
+    const isTournament = tierRaw && tierRaw.includes('+');
+    const tier = tierRaw ? parseInt(tierRaw.replace(/[^0-9]/g, ''), 10) || 'Unknown' : 'Unknown';
+    const wave = waveRaw ? parseInt(waveRaw.replace(/[^0-9]/g, ''), 10) || 'Unknown' : 'Unknown';
+    const roundDuration = formatDuration(String(durationRaw || '').trim());
+    const totalCoins = sanitizeNumeric(coinsRaw) || '0';
+    const totalCells = sanitizeNumeric(cellsRaw) || '0';
+    const totalDice = sanitizeNumeric(rerollShardsRaw) || '0';
+    const killedBy = String(killedByRaw || '').trim() || 'Apathy';
+
+    let runDate = formatDate(new Date());
+    let runTime = formatTime(new Date());
+    if (battleDateRaw) {
+        const parsed = new Date(battleDateRaw);
+        if (!Number.isNaN(parsed.getTime())) {
+            runDate = formatDate(parsed);
+            runTime = formatTime(parsed);
         }
     }
 
-    // Normalize
-    const tier = tierRaw ? parseInt(tierRaw, 10) : 'Unknown';
-    const wave = waveRaw ? parseInt(waveRaw, 10) : 'Unknown';
-    const duration = durationRaw ? durationRaw.trim() : '';
-    const roundDuration = formatDuration(duration);
-    const totalCoins = coinsRaw || '0';
-    const totalCells = cellsRaw || '0';
-    const totalDice = rerollShardsRaw || '0';
-    const killedBy = (killedByRaw || '').trim() || 'Apathy';
-
-    const now = new Date();
     return {
         tier,
         wave,
@@ -505,9 +540,13 @@ function parseRunDataFromText(rawText) {
         totalCells,
         totalDice,
         killedBy,
-        date: formatDate(now),
-        time: formatTime(now),
-        notes: ''
+        date: runDate,
+        time: runTime,
+        type: isTournament ? 'Tournament' : undefined,
+        notes: '',
+        rawBattleReport: cleanedText,
+        sectionStats,
+        flatStats
     };
 }
 

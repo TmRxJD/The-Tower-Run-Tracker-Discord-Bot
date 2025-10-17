@@ -92,6 +92,16 @@ async function logRun(userId, username, runData, settings = {}, screenshotBuffer
         formData.append('runTime', formatTimeTo24h(runData.runTime || runData.time || time));
         formData.append('note', String(runData.notes || ''));
 
+        if (runData.rawBattleReport) {
+            formData.append('rawBattleReport', runData.rawBattleReport);
+        }
+        if (runData.sectionStats && Object.keys(runData.sectionStats).length > 0) {
+            formData.append('sectionStats', JSON.stringify(runData.sectionStats));
+        }
+        if (runData.flatStats && Object.keys(runData.flatStats).length > 0) {
+            formData.append('flatStats', JSON.stringify(runData.flatStats));
+        }
+
         // Attach screenshot if provided (Buffer, filename)
         if (screenshotBuffer && screenshotName) {
             formData.append('file', screenshotBuffer, { filename: screenshotName });
@@ -264,6 +274,15 @@ async function editRun(userId, username, runData, settings = {}) {
             if (settings && Object.keys(settings).length > 0) {
                 formData.append('settings', JSON.stringify(settings));
             }
+            if (runData.rawBattleReport) {
+                formData.append('rawBattleReport', runData.rawBattleReport);
+            }
+            if (runData.sectionStats && Object.keys(runData.sectionStats).length > 0) {
+                formData.append('sectionStats', JSON.stringify(runData.sectionStats));
+            }
+            if (runData.flatStats && Object.keys(runData.flatStats).length > 0) {
+                formData.append('flatStats', JSON.stringify(runData.flatStats));
+            }
             const response = await axios.patch(
                 `${API_URL}/run`,
                 formData,
@@ -295,6 +314,15 @@ async function editRun(userId, username, runData, settings = {}) {
                 runTime: runTime,
                 note: String(runData.notes || ''),
             };
+            if (runData.rawBattleReport) {
+                payload.rawBattleReport = runData.rawBattleReport;
+            }
+            if (runData.sectionStats && Object.keys(runData.sectionStats).length > 0) {
+                payload.sectionStats = runData.sectionStats;
+            }
+            if (runData.flatStats && Object.keys(runData.flatStats).length > 0) {
+                payload.flatStats = runData.flatStats;
+            }
             console.log("[API] editRun Payload:", JSON.stringify(payload, null, 2));
             const response = await axios({
                 url: `${API_URL}/run`,

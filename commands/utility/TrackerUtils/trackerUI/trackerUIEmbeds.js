@@ -338,7 +338,7 @@ function createFinalEmbed(data, stats, hasScreenshot = false, isUpdate = false, 
 
     const noteText = data.notes || data.note;
     if (noteText && noteText.trim() !== '' && noteText !== 'N/A') {
-        embed.addFields({ name: getDisplayFieldName('notes'), value: formatNumberForDisplay(noteText), inline: false });
+        embed.addFields({ name: getDisplayFieldName('notes'), value: noteText, inline: false });
     }
 
     if (hasScreenshot) {

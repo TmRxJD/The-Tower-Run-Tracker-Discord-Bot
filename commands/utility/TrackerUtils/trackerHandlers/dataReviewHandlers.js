@@ -32,8 +32,14 @@ async function handleDataReview(interaction) {
             throw new Error('Session data missing for review.');
         }
 
+        // Set uploadType if not set, preferring detected type
+        if (!session.uploadType) {
+            session.uploadType = data.type || session.settings?.defaultRunType || 'farming';
+            userSessions.set(userId, session);
+        }
+
         const reviewEmbed = trackerUI.createDataReviewEmbed(data, session.status === 'reviewing_manual' ? 'Manual' : 'Extracted', session.isDuplicateRun, session.settings?.decimalPreference);
-        const typeRow = trackerUI.createTypeSelectionRow(session.uploadType || session.settings?.defaultRunType || 'farming');
+        const typeRow = session.runTypeFromCommand ? null : trackerUI.createTypeSelectionRow(session.uploadType || session.settings?.defaultRunType || 'farming');
         const confirmButtons = trackerUI.createConfirmationButtons(); // Accept, Edit, Cancel
         const noteRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -126,6 +132,10 @@ async function handleDataReview(interaction) {
                 // Acknowledgment handled by subsequent handler's update/reply/defer
                 
                 if (i.customId === 'tracker_type_select') {
+                    if (session.runTypeFromCommand) {
+                        await i.reply({ content: 'Run type was specified in the command and cannot be changed.', ephemeral: true });
+                        return;
+                    }
                     console.log('[DataReview Component Collector] Processing type select...');
                     session.uploadType = i.values[0];
                     session.data.type = i.values[0]; 

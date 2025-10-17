@@ -34,7 +34,12 @@ const insertRunStmt = db.prepare('INSERT INTO run_uploads (user_id, run_id) VALU
 
 const getCommandsStmt = db.prepare('SELECT COUNT(*) as count FROM command_usage WHERE DATE(timestamp) = ?');
 const getUniqueUsersStmt = db.prepare('SELECT COUNT(DISTINCT user_id) as count FROM command_usage WHERE DATE(timestamp) = ?');
-const getNewUsersStmt = db.prepare('SELECT COUNT(*) as count FROM users WHERE DATE(first_seen) = ?');
+const getNewUsersStmt = db.prepare(`
+    SELECT COUNT(DISTINCT cu.user_id) as count
+    FROM command_usage cu
+    LEFT JOIN run_uploads ru ON cu.user_id = ru.user_id
+    WHERE ru.user_id IS NULL AND DATE(cu.timestamp) = ?
+`);
 const getRunsStmt = db.prepare('SELECT COUNT(*) as count FROM run_uploads WHERE DATE(timestamp) = ?');
 
 function logCommandUsage(userId, commandName) {
@@ -60,7 +65,8 @@ function getAnalytics(days) {
 
         results.push({ date: dateStr, commands, uniqueUsers, newUsers, runs });
     }
-    return results;
+    // Filter out days with no data
+    return results.filter(day => day.commands > 0 || day.uniqueUsers > 0 || day.newUsers > 0 || day.runs > 0);
 }
 
 module.exports = {

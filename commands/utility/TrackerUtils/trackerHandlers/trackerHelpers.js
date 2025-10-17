@@ -569,8 +569,7 @@ function formatOCRExtraction(gutenyeResult, dateTimeInfo, notes, decimalIndicato
     // Extract tier and wave values
     // Remove duplicate declaration of tier and wave
     const tierWave = getTierAndWave(lines);
-    let tier = tierWave.tier;
-    let wave = tierWave.wave;
+    let { tier, wave, isTournament } = tierWave;
 
     // Extract field value from OCR text lines
     const getField = (lines, expectedField) => {
@@ -701,6 +700,7 @@ function formatOCRExtraction(gutenyeResult, dateTimeInfo, notes, decimalIndicato
         killedBy: killedBy,
         date: date,
         time: time,
+        type: isTournament ? 'Tournament' : undefined,
         notes: notes
     };
 
@@ -926,15 +926,19 @@ function findPotentialDuplicateRun(extractedData, existingRuns) {
 function getTierAndWave(lines) {
     let tier = 'Unknown';
     let wave = 'Unknown';
+    let isTournament = false;
     for (const line of lines) {
-        if (/Tier\s*(\d+)/i.test(line)) {
-            tier = parseInt(line.match(/Tier\s*(\d+)/i)[1], 10);
+        if (/Tier\s*(\d+\+?)/i.test(line)) {
+            const match = line.match(/Tier\s*(\d+\+?)/i);
+            const tierStr = match[1];
+            isTournament = tierStr.includes('+');
+            tier = parseInt(tierStr.replace('+', ''), 10);
         }
         if (/Wave\s*(\d+)/i.test(line)) {
             wave = parseInt(line.match(/Wave\s*(\d+)/i)[1], 10);
         }
     }
-    return { tier, wave };
+    return { tier, wave, isTournament };
 }
 
 module.exports = {

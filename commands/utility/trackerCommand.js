@@ -284,7 +284,7 @@ module.exports = {
             const attachment = interaction.options.getAttachment('screenshot');
             const pastedText = interaction.options.getString('paste');
             const preNote = interaction.options.getString('note');
-            const runType = interaction.options.getString('run_type');
+            const runType = interaction.options.getString('type');
             const settings = interaction.options.getBoolean('settings');
             
             if (settings) {
