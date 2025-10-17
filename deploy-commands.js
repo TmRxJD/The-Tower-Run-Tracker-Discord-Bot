@@ -44,5 +44,8 @@ const rest = new REST().setToken(token);
     } catch (error) {
         // Catch and log any errors
         console.error(error);
+    } finally {
+        console.log('Finished refreshing application (/) commands.');
+        process.exit(0);
     }
 })();

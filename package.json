@@ -4,7 +4,8 @@
   "main": "tracker-bot.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node TrackerBot.js"
+    "start": "node TrackerBot.js",
+    "deploy-commands": "node deploy-commands.js"
   },
   "keywords": [],
   "author": "",
