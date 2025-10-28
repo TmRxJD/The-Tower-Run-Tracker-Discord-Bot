@@ -8,6 +8,7 @@ const { calculateHourlyRates, formatDuration } = require('./trackerHelpers.js');
 const logHandlers = require('./logHandlers.js');
 const sheetHandlers = require('./sheetHandlers.js');
 const analyticsDB = require('../analyticsDB');
+const uploadHandlers = require('./uploadHandlers.js');
 const { run } = require('googleapis/build/src/apis/run/index.js');
 
 /**
@@ -32,8 +33,15 @@ async function handleDataReview(interaction) {
             throw new Error('Session data missing for review.');
         }
 
+        // Ensure run type is populated before rendering; preserve Tournament auto-detect
+        if (!data.type) {
+            data.type = session.uploadType || session.settings?.defaultRunType || 'Farming';
+            session.data = data;
+            userSessions.set(userId, session);
+        }
+
         const reviewEmbed = trackerUI.createDataReviewEmbed(data, session.status === 'reviewing_manual' ? 'Manual' : 'Extracted', session.isDuplicateRun, session.settings?.decimalPreference);
-        const typeRow = trackerUI.createTypeSelectionRow(session.uploadType || session.settings?.defaultRunType || 'farming');
+        const typeRow = trackerUI.createTypeSelectionRow((session.data?.type || session.uploadType || session.settings?.defaultRunType || 'Farming'));
         const confirmButtons = trackerUI.createConfirmationButtons(); // Accept, Edit, Cancel
         const noteRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -260,6 +268,18 @@ async function handleDataSubmission(interaction) {
                 isUpdate = false;
             }
 
+            const normalizedKilledBy = String(apiData.killedBy ?? '').trim();
+            if (normalizedKilledBy && normalizedKilledBy.toLowerCase() !== 'unknown') {
+                apiData.killedBy = normalizedKilledBy;
+            } else {
+                const canonicalKilledBy = String(
+                    session.runData?.['Killed By'] ??
+                    session.runData?.killedBy ??
+                    ''
+                ).trim();
+                apiData.killedBy = canonicalKilledBy || 'Apathy';
+            }
+
             apiData.type = apiData.type
                 ? apiData.type.charAt(0).toUpperCase() + apiData.type.slice(1)
                 : 'Farming';
@@ -290,7 +310,7 @@ async function handleDataSubmission(interaction) {
                 } else {
                     if (!apiData.runId) throw new Error('Cannot update run - missing run ID');
                     console.log(`[SUBMIT] Updating run ${apiData.runId}`);
-                    result = await trackerAPI.editRun(userId, username, apiData, {}, screenshotBuffer, screenshotName);
+                    result = await trackerAPI.editRun(userId, username, apiData, session.runData, {}, screenshotBuffer, screenshotName);
                     runId = apiData.runId;
                     analyticsDB.logRunUpload(userId, runId);
                 }
@@ -302,7 +322,7 @@ async function handleDataSubmission(interaction) {
                     await sheetHandlers.setupSheetsAndLogData(interaction, apiData);
                     analyticsDB.logRunUpload(userId, null);
                 } else {
-                    result = await trackerAPI.logRun(userId, username, apiData, {}, screenshotBuffer, screenshotName);
+                    result = await trackerAPI.logRun(userId, username, apiData, session.runData, {}, screenshotBuffer, screenshotName);
                     runId = result?.runId;
                     if (!runId) throw new Error('Failed to get runId after logging run.');
                     console.log(`[SUBMIT] New run logged. ID: ${runId}`);
@@ -381,14 +401,17 @@ async function handleDataSubmission(interaction) {
             session.lastRunId = runId;
             userSessions.set(userId, session);
             
-            const stats = calculateHourlyRates(apiData.duration || apiData.roundDuration, apiData);
+            const stats = calculateHourlyRates(apiData.duration || apiData.roundDuration, apiData, session.runData);
             const hasScreenshot = !!session.screenshotAttachment;
             // Get runTypeCounts from session cache if available
             const runTypeCounts = session?.cachedRunData?.runTypeCounts || {};
             // Pass runTypeCounts to logSuccessfulRun for accurate embed
             await logHandlers.logSuccessfulRun(interaction, apiData, currentRunCount, trackerLink, session.screenshotAttachment, runTypeCounts);
 
-            const finalEmbed = trackerUI.createFinalEmbed(apiData, stats, hasScreenshot, isUpdate, runTypeCounts);
+            // Load share settings for coverage display
+            const { loadShareSettings } = require('./shareSettingsHandlers.js');
+            const shareSettings = await loadShareSettings(userId);
+            const finalEmbed = trackerUI.createFinalEmbed(apiData, stats, hasScreenshot, isUpdate, runTypeCounts, session.runData, shareSettings);
             // Use the UPDATED count for buttons
             const buttons = trackerUI.createSuccessButtons(username, runId, currentRunCount, trackerType, trackerLink); 
             
@@ -413,10 +436,10 @@ async function handleDataSubmission(interaction) {
                         collector.stop('editlast');
                         const runId = session.lastRunId || session.data?.runId;
                         trackerEmitter.emit(`dispatch_${originalCommandId}`, 'editCurrentRun', i, runId);
-                    } else if (i.customId === 'tracker_upload_another') {
-                        await i.deferUpdate();
-                        collector.stop('upload_another');
-                        trackerEmitter.emit(`dispatch_${originalCommandId}`, 'uploadFlow', i);
+                    } else if (i.customId === 'tracker_upload_another' || i.customId === 'tracker_addrun') {
+                        // Do not defer for addRunFlow since it shows a modal
+                        collector.stop('add_run');
+                        uploadHandlers.handleAddRunFlow(i);
                     } else if (i.customId === 'tracker_main_menu') {                        
                         await i.deferUpdate();
                         collector.stop('main_menu');
@@ -459,7 +482,11 @@ async function handleDataSubmission(interaction) {
             console.error('Error submitting data to API/DB:', dbError);
              trackerEmitter.emit(`error_${commandInteractionId}`, interaction, dbError); // Emit error
             // Show error with buttons to retry/edit/menu
-            const errorEmbed = trackerUI.createErrorEmbed(`Failed to log run data: ${dbError.message}`);
+            let errorMessage = `Failed to log run data: ${dbError.message}`;
+            if (dbError.response?.status === 500) {
+                errorMessage = "Server error (500). Please try again later or contact support if the issue persists.";
+            }
+            const errorEmbed = trackerUI.createErrorEmbed(errorMessage);
             // Pass retryId to error recovery buttons
             const errorButtons = createErrorRecoveryButtons('submit_error_edit', 'submit_error_main', 'tracker_retry_submit'); 
              await interaction.editReply({ content:null, embeds: [errorEmbed], components: errorButtons, files:[] });

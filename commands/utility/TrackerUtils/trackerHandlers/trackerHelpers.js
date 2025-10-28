@@ -82,7 +82,13 @@ function formatNumberForDisplay(value, decimalPreference = 'Period (.)') {
     const notationEntries = Object.entries(NOTATIONS).reverse();
     for (const [notation, multiplier] of notationEntries) {
         if (num >= multiplier) {
-            let formatted = (num / multiplier).toFixed(2) + notation;
+            let num_str = (num / multiplier).toFixed(2);
+            if (num_str.endsWith('.00')) {
+                num_str = num_str.slice(0, -3);
+            } else if (num_str.endsWith('0')) {
+                num_str = num_str.slice(0, -1);
+            }
+            let formatted = num_str + notation;
             if (decimalPreference === 'Comma (,)' && formatted.includes('.')) {
                 formatted = formatted.replace(/\./g, ',');
             }
@@ -471,12 +477,20 @@ function getFieldExactOrFuzzy(lines, fieldKeys) {
             if (normalizedLine.startsWith(key)) {
                 // Extract value after the key
                 const valuePart = line.slice(line.toLowerCase().indexOf(key) + key.length).trim();
-                const match = valuePart.match(/([\d.,]+[a-zA-Z]*)/);
-                if (match) return match[1];
+                const match = valuePart.match(/(\d[\d.,]*\s*\+|\d[\d.,]*)([a-zA-Z]*)/);
+                if (match) {
+                    const numericPortion = match[1] ? match[1].replace(/\s+/g, '') : '';
+                    const suffix = match[2] || '';
+                    return numericPortion + suffix;
+                }
             }
             if (normalizedLine.includes(key)) {
-                const match = line.match(/([\d.,]+[a-zA-Z]*)/);
-                if (match) return match[1];
+                const match = line.match(/(\d[\d.,]*\s*\+|\d[\d.,]*)([a-zA-Z]*)/);
+                if (match) {
+                    const numericPortion = match[1] ? match[1].replace(/\s+/g, '') : '';
+                    const suffix = match[2] || '';
+                    return numericPortion + suffix;
+                }
             }
         }
     }
@@ -491,8 +505,12 @@ function getFieldExactOrFuzzy(lines, fieldKeys) {
         }
     }
     if (bestMatch.score > 0.8) {
-        const match = bestMatch.line.match(/([\d.,]+[a-zA-Z]*)/);
-        if (match) return match[1];
+        const match = bestMatch.line.match(/(\d[\d.,]*\s*\+|\d[\d.,]*)([a-zA-Z]*)/);
+        if (match) {
+            const numericPortion = match[1] ? match[1].replace(/\s+/g, '') : '';
+            const suffix = match[2] || '';
+            return numericPortion + suffix;
+        }
     }
     return null;
 }
@@ -571,6 +589,8 @@ function formatOCRExtraction(gutenyeResult, dateTimeInfo, notes, decimalIndicato
     const tierWave = getTierAndWave(lines);
     let tier = tierWave.tier;
     let wave = tierWave.wave;
+    let tierDisplay = tierWave.tierRaw || (typeof tier === 'number' && !Number.isNaN(tier) ? String(tier) : null);
+    let tierHasPlus = tierDisplay ? tierDisplay.includes('+') : false;
 
     // Extract field value from OCR text lines
     const getField = (lines, expectedField) => {
@@ -669,8 +689,27 @@ function formatOCRExtraction(gutenyeResult, dateTimeInfo, notes, decimalIndicato
 
     // Tier
     let fuzzyTier = getFieldExactOrFuzzy(lines, allTranslations('tier'));
-    if ((tier === 'Unknown' || tier === 0) && fuzzyTier && fuzzyTier !== '0' && fuzzyTier !== 'Unknown') {
-        tier = parseInt(fuzzyTier, 10);
+
+    const tierCandidates = [tierWave.tierRaw, fuzzyTier, tier];
+    for (const candidate of tierCandidates) {
+        const { numeric, hasPlus, display } = parseTierString(candidate);
+        if (numeric !== null && !Number.isNaN(numeric)) {
+            const tierIsUnset = typeof tier !== 'number' || Number.isNaN(tier) || tier <= 0 || tier === 'Unknown';
+            if (tierIsUnset) {
+                tier = numeric;
+            }
+            if (!tierDisplay || hasPlus) {
+                tierDisplay = display;
+            }
+            if (hasPlus) {
+                tierHasPlus = true;
+                break;
+            }
+        }
+    }
+
+    if (!tierDisplay && typeof tier === 'number' && !Number.isNaN(tier)) {
+        tierDisplay = String(tier);
     }
     // Wave
     let fuzzyWave = getFieldExactOrFuzzy(lines, allTranslations('wave'));
@@ -701,7 +740,15 @@ function formatOCRExtraction(gutenyeResult, dateTimeInfo, notes, decimalIndicato
         killedBy: killedBy,
         date: date,
         time: time,
-        notes: notes
+        notes: notes,
+    tierDisplay: tierDisplay,
+    tierHasPlus: tierHasPlus,
+        // Add coverage data for sharing (will be populated from parsed battle report)
+        totalEnemies: null,
+        destroyedByOrbs: null,
+        taggedByDeathWave: null,
+        destroyedInSpotlight: null,
+        destroyedInGoldenBot: null
     };
 
     console.log("[DEBUG] Final extracted data:", extractedData);
@@ -712,39 +759,80 @@ function formatOCRExtraction(gutenyeResult, dateTimeInfo, notes, decimalIndicato
  * Calculate hourly rates based on duration and amounts
  * @param {string} duration - Duration string (1h30m45s format)
  * @param {Object} amounts - Object with amount fields
+ * @param {Object} [rawData] - Optional raw/canonical data (e.g., parsed battle report)
  * @returns {Object} - Calculated rates
  */
-function calculateHourlyRates(duration, amounts) {
-    // Parse duration to hours
+function calculateHourlyRates(duration, amounts = {}, rawData = null) {
+    const rates = {
+        coinsPerHour: '0',
+        cellsPerHour: '0',
+        dicePerHour: '0'
+    };
+
+    const sources = [amounts, rawData].filter(source => !!source);
+
+    const getFirstValue = (keys) => {
+        for (const source of sources) {
+            for (const key of keys) {
+                if (source[key] !== undefined && source[key] !== null) {
+                    const value = String(source[key]).trim();
+                    if (value && !/^n\/?a$/i.test(value)) {
+                        return value;
+                    }
+                }
+            }
+        }
+        return null;
+    };
+
+    const normalizeRateValue = (value) => {
+        if (value === null || value === undefined) return null;
+        const trimmed = String(value).trim();
+        if (!trimmed || /^n\/?a$/i.test(trimmed)) return null;
+        const standardized = standardizeNotation(trimmed);
+        const parsed = parseNumberInput(standardized);
+        if (!isNaN(parsed) && parsed > 0) {
+            return formatNumberForDisplay(parsed);
+        }
+        if (parsed === 0) {
+            return '0';
+        }
+        return standardized;
+    };
+
+    const directCoinRate = normalizeRateValue(getFirstValue(['coinsPerHour', 'Coins per hour']));
+    if (directCoinRate !== null) {
+        rates.coinsPerHour = directCoinRate;
+    }
+
+    const directCellRate = normalizeRateValue(getFirstValue(['cellsPerHour', 'Cells per hour']));
+    if (directCellRate !== null) {
+        rates.cellsPerHour = directCellRate;
+    }
+
+    const directDiceRate = normalizeRateValue(getFirstValue(['dicePerHour', 'Dice per hour']));
+    if (directDiceRate !== null) {
+        rates.dicePerHour = directDiceRate;
+    }
+
     const durationHours = parseDurationToHours(duration);
-    if (durationHours <= 0) return { coinsPerHour: '0', cellsPerHour: '0', dicePerHour: '0' };
-    
-    const rates = {};
-    
-    // Calculate coins per hour
-    if (amounts.totalCoins || amounts.coins) {
-        const coinsValue = amounts.totalCoins || amounts.coins || '0';
-        rates.coinsPerHour = formatRateWithNotation(coinsValue, durationHours);
-    } else {
-        rates.coinsPerHour = '0';
+    if (durationHours > 0) {
+        if (rates.coinsPerHour === '0') {
+            const coinsValue = getFirstValue(['totalCoins', 'coins', 'Coins earned']) || '0';
+            rates.coinsPerHour = formatRateWithNotation(standardizeNotation(coinsValue), durationHours);
+        }
+
+        if (rates.cellsPerHour === '0') {
+            const cellsValue = getFirstValue(['totalCells', 'cells', 'Cells Earned']) || '0';
+            rates.cellsPerHour = formatRateWithNotation(standardizeNotation(cellsValue), durationHours);
+        }
+
+        if (rates.dicePerHour === '0') {
+            const diceValue = getFirstValue(['totalDice', 'rerollShards', 'dice', 'Reroll Shards Earned']) || '0';
+            rates.dicePerHour = formatRateWithNotation(standardizeNotation(diceValue), durationHours);
+        }
     }
-    
-    // Calculate cells per hour
-    if (amounts.totalCells || amounts.cells) {
-        const cellsValue = amounts.totalCells || amounts.cells || '0';
-        rates.cellsPerHour = formatRateWithNotation(cellsValue, durationHours);
-    } else {
-        rates.cellsPerHour = '0';
-    }
-    
-    // Calculate dice per hour
-    if (amounts.totalDice || amounts.rerollShards || amounts.dice) {
-        const diceValue = amounts.totalDice || amounts.rerollShards || amounts.dice || '0';
-        rates.dicePerHour = formatRateWithNotation(diceValue, durationHours);
-    } else {
-        rates.dicePerHour = '0';
-    }
-    
+
     return rates;
 }
 
@@ -799,7 +887,13 @@ function formatRateWithNotation(amount, hours) {
     const notationEntries = Object.entries(NOTATIONS).reverse();
     for (const [not, multiplier] of notationEntries) {
         if (rate >= multiplier) {
-            let formatted = (rate / multiplier).toFixed(2) + not;
+            let formatted_num = (rate / multiplier).toFixed(2);
+            if (formatted_num.endsWith('.00')) {
+                formatted_num = formatted_num.slice(0, -3);
+            } else if (formatted_num.endsWith('0')) {
+                formatted_num = formatted_num.slice(0, -1);
+            }
+            let formatted = formatted_num + not;
             if (formatted.startsWith('0.')) {
                 let shiftedRate = rate * 1000;
                 let shiftedFormatted = shiftedRate.toFixed(2);
@@ -837,17 +931,14 @@ function formatRateWithNotation(amount, hours) {
                     return shiftedFormatted + not; // Fallback
                 }
             }
-            // Remove unnecessary trailing zeros
-            if (formatted.endsWith('.00')) {
-                formatted = formatted.slice(0, -3);
-            } else if (formatted.endsWith('0')) {
-                formatted = formatted.slice(0, -1);
-            }
             return formatted;
         }
     }
-    // If rate < 1000, return with K
-    let formatted = Math.round(rate).toString() + 'K';
+    // If rate < 1000, return with K and 1 decimal place
+    let formatted = rate.toFixed(1) + 'K';
+    if (formatted.endsWith('.0K')) {
+        formatted = formatted.slice(0, -3) + 'K';
+    }
     return formatted;
 }
 
@@ -926,15 +1017,111 @@ function findPotentialDuplicateRun(extractedData, existingRuns) {
 function getTierAndWave(lines) {
     let tier = 'Unknown';
     let wave = 'Unknown';
+    let tierRaw = null;
+
     for (const line of lines) {
-        if (/Tier\s*(\d+)/i.test(line)) {
-            tier = parseInt(line.match(/Tier\s*(\d+)/i)[1], 10);
+        const tierMatch = line.match(/Tier\s*[:|-]?\s*(\d+)(\s*\+)?/i);
+        if (tierMatch) {
+            tier = parseInt(tierMatch[1], 10);
+            tierRaw = tierMatch[2] ? `${tierMatch[1]}+` : tierMatch[1];
         }
-        if (/Wave\s*(\d+)/i.test(line)) {
-            wave = parseInt(line.match(/Wave\s*(\d+)/i)[1], 10);
+        const waveMatch = line.match(/Wave\s*[:|-]?\s*(\d+)/i);
+        if (waveMatch) {
+            wave = parseInt(waveMatch[1], 10);
         }
     }
-    return { tier, wave };
+
+    return { tier, wave, tierRaw };
+}
+
+function parseTierString(rawTier) {
+    if (rawTier === null || rawTier === undefined) {
+        return { numeric: null, hasPlus: false, display: null };
+    }
+
+    const str = String(rawTier).trim();
+    if (!str) {
+        return { numeric: null, hasPlus: false, display: null };
+    }
+
+    const normalizeDigits = (value) => {
+        const cleaned = value.replace(/[^0-9]/g, '');
+        return cleaned ? parseInt(cleaned, 10) : null;
+    };
+
+    const plusMatch = str.match(/(\d[\d.,]*)\s*\+/);
+    if (plusMatch) {
+        const numeric = normalizeDigits(plusMatch[1]);
+        if (numeric !== null && !Number.isNaN(numeric)) {
+            return { numeric, hasPlus: true, display: `${numeric}+` };
+        }
+    }
+
+    const numberMatch = str.match(/(\d[\d.,]*)/);
+    if (numberMatch) {
+        const numeric = normalizeDigits(numberMatch[1]);
+        if (numeric !== null && !Number.isNaN(numeric)) {
+            return { numeric, hasPlus: false, display: String(numeric) };
+        }
+    }
+
+    return { numeric: null, hasPlus: false, display: null };
+}
+
+function applyTierMetadata(target, rawTierCandidates = []) {
+    if (!target || typeof target !== 'object') return target;
+
+    const candidates = [];
+    if (target.tierDisplay) candidates.push(target.tierDisplay);
+    if (target.tier !== undefined && target.tier !== null) candidates.push(target.tier);
+
+    const extras = Array.isArray(rawTierCandidates) ? rawTierCandidates : [rawTierCandidates];
+    for (const value of extras) {
+        if (value !== undefined && value !== null && value !== '') {
+            candidates.push(value);
+        }
+    }
+
+    let bestInfo = null;
+
+    if (target.tierHasPlus && (target.tierDisplay || target.tier !== undefined)) {
+        const existingInfo = parseTierString(target.tierDisplay || target.tier);
+        if (existingInfo.numeric !== null && !Number.isNaN(existingInfo.numeric)) {
+            bestInfo = { ...existingInfo, hasPlus: true };
+        }
+    }
+
+    for (const candidate of candidates) {
+        const info = parseTierString(candidate);
+        if (info.numeric === null || Number.isNaN(info.numeric)) {
+            continue;
+        }
+
+        if (!bestInfo || (info.hasPlus && !bestInfo.hasPlus)) {
+            bestInfo = info;
+        }
+    }
+
+    if (bestInfo && bestInfo.numeric !== null && !Number.isNaN(bestInfo.numeric)) {
+        target.tier = bestInfo.numeric;
+        target.tierDisplay = bestInfo.display || String(bestInfo.numeric);
+        target.tierHasPlus = bestInfo.hasPlus;
+    } else {
+        if (typeof target.tier === 'number' && !Number.isNaN(target.tier)) {
+            target.tierDisplay = target.tierDisplay || String(target.tier);
+        }
+        target.tierHasPlus = !!target.tierHasPlus;
+    }
+
+    return target;
+}
+
+function hasPlusTier(target, rawTierCandidates = []) {
+    if (!target || typeof target !== 'object') return false;
+    applyTierMetadata(target, rawTierCandidates);
+    if (target.tierHasPlus) return true;
+    const info = parseTierString(target.tierDisplay ?? target.tier);
+    return info.hasPlus;
 }
 
 module.exports = {
@@ -954,9 +1141,12 @@ module.exports = {
     getDecimalForLanguage,
     ocrFieldTranslations,
     getTierAndWave,
+    applyTierMetadata,
+    hasPlusTier,
     formatNumberForDisplay,
     formatRateWithNotation,
     NOTATIONS,
     parseNumberInput,
-    avg
+    avg,
+    parseTierString
 };

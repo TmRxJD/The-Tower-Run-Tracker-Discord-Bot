@@ -2,9 +2,12 @@ const { ActionRowBuilder, SelectMenuBuilder } = require('discord.js');
 const { getDisplayFieldName } = require('./trackerUIEmbeds.js');
 
 function createFieldSelectionRow(data) {
+    // Define the editable fields (original set that can be modified)
+    const editableFields = ['tier', 'wave', 'totalCoins', 'totalCells', 'totalDice', 'roundDuration', 'killedBy', 'type', 'date', 'time', 'notes'];
+    
     const options = Object.keys(data)
-        // Filter out internal/unwanted fields if necessary
-        .filter(key => !['_id', 'userId', '__v', 'settings', 'runId', 'id'].includes(key)) 
+        // Filter to only include editable fields
+        .filter(key => editableFields.includes(key))
         .map(key => ({
             label: getDisplayFieldName(key), 
             value: key, 

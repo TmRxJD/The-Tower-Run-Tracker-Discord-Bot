@@ -3,15 +3,10 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 function createMainMenuButtons(trackerType = 'Web', trackerLink = 'https://the-tower-run-tracker.com/', shareState = {}) {
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId('tracker_paste')
-            .setLabel('Paste')
+            .setCustomId('tracker_addrun')
+            .setLabel('Add Run')
             .setStyle(ButtonStyle.Success)
-            .setEmoji('📋'),
-        new ButtonBuilder()
-            .setCustomId('tracker_upload')
-            .setLabel('Upload')
-            .setStyle(ButtonStyle.Primary)
-            .setEmoji('📤'),
+            .setEmoji('➕'),
         new ButtonBuilder()
             .setCustomId('tracker_manual')
             .setLabel('Manual Entry')
@@ -119,10 +114,10 @@ function createSuccessButtons(username, runId, runCount, trackerType = 'Web', tr
     );
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId('tracker_upload_another')
-            .setLabel('Upload Another')
+            .setCustomId('tracker_addrun')
+            .setLabel('Add Another')
             .setStyle(ButtonStyle.Success)
-            .setEmoji('📤'),
+            .setEmoji('➕'),
         new ButtonBuilder()
             .setLabel(trackerType === 'Spreadsheet' ? 'View Spreadsheet' : 'View Tracker')
             .setStyle(ButtonStyle.Link)

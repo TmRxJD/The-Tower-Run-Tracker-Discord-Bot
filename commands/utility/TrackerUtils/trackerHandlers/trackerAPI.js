@@ -1,7 +1,7 @@
-
 require('dotenv').config();
 const axios = require('axios');
 const FormData = require('form-data');
+const { standardizeNotation } = require('./trackerHelpers');
 
 const API_URL = process.env.TRACKER_API_URL;
 const API_KEY = process.env.TRACKER_API_KEY;
@@ -66,16 +66,41 @@ function formatTimeTo24h(timeStr) {
  * @param {string} userId - Discord user ID
  * @param {string} username - Discord username
  * @param {Object} runData - Run data to log
+ * @param {Object} canonicalRunData - The canonical runData from parsing (optional)
  * @param {Object} [settings] - Optional user settings to save alongside run
  * @param {Buffer|string} [screenshotBuffer] - Buffer or path to screenshot file
  * @param {string} [screenshotName] - Screenshot filename
  * @returns {Promise<Object>} - API response
  */
-async function logRun(userId, username, runData, settings = {}, screenshotBuffer = null, screenshotName = null) {
+async function logRun(userId, username, runData, canonicalRunData, settings = {}, screenshotBuffer = null, screenshotName = null) {
     try {
         console.log(`[API] Logging run for user ${userId}:`, runData);
 
+        // If canonicalRunData is provided, use the new submitRunSummary endpoint
+        if (canonicalRunData) {
+            // Start with the canonical runData and update editable fields
+            const finalData = { ...canonicalRunData };
+            // Update only the editable fields using canonical keys
+            if (runData.tier !== undefined) finalData.Tier = runData.tier;
+            if (runData.wave !== undefined) finalData.Wave = runData.wave;
+            if (runData.totalCoins !== undefined) finalData['Coins earned'] = runData.totalCoins;
+            if (runData.totalCells !== undefined) finalData['Cells Earned'] = runData.totalCells;
+            if (runData.totalDice !== undefined) finalData['Reroll Shards Earned'] = runData.totalDice;
+            if (runData.roundDuration !== undefined) finalData['Real Time'] = runData.roundDuration;
+            if (runData.killedBy !== undefined) finalData['Killed By'] = String(runData.killedBy || '').trim() || 'Apathy';
+            if (runData.type !== undefined) finalData.type = runData.type;
+            // For date/time, update the combined Battle Date field
+            if (runData.runDate !== undefined || runData.runTime !== undefined) {
+                const dateStr = runData.runDate || runData.date || date;
+                const timeStr = runData.runTime || runData.time || time;
+                finalData['Battle Date'] = `${dateStr} ${timeStr}`;
+            }
+            if (runData.notes !== undefined) finalData.notes = runData.notes;
 
+            return await submitRunSummary(userId, username, finalData, runData.notes || '', screenshotBuffer, screenshotName);
+        }
+
+        // Fallback to old endpoint for backward compatibility
         // Prepare form data for multipart upload (Node.js FormData)
         const formData = new FormData();
         formData.append('userId', userId);
@@ -230,12 +255,16 @@ async function editUserSettings(userId, settings) {
  * Edit an existing run
  * @param {string} userId - Discord user ID
  * @param {Object} runData - Run data including runId
+ * @param {Object} canonicalRunData - The canonical runData (optional, for new parsing)
  * @param {Object} [settings] - Optional user settings to save
  * @returns {Promise<boolean>} - Success/failure
  */
-async function editRun(userId, username, runData, settings = {}) {
+async function editRun(userId, username, runData, canonicalRunData, settings = {}) {
     try {
         console.log(`[API] Editing run ${runData.runId} for user ${userId}`);
+
+        // If fullRunData is present, use the new submitRunSummary endpoint (but this is for editing, so maybe not)
+        // For now, keep using the old endpoint for edits
         // Use the values directly, just format
         const runDate = formatDateToISO(runData.runDate || runData.date || date);
         const runTime = formatTimeTo24h(runData.runTime || runData.time || time);
@@ -502,6 +531,116 @@ async function runOCR(buffer, filename, contentType) {
     }
 }
 
+/**
+ * Parse battle report text using the new API endpoint
+ * @param {string} battleReport - Raw battle report text
+ * @returns {Promise<Object>} - Parsed runData object with all stats
+ */
+async function parseBattleReport(battleReport) {
+    try {
+        console.log(`[API] Parsing battle report (${battleReport.length} chars)`);
+        const response = await axios.post(
+            `${API_URL}/parse-battle-report`,
+            { battleReport },
+            {
+                headers: getHeaders(),
+                timeout: 10000
+            }
+        );
+        const result = response.data;
+        console.log(`[API] Battle report parsed successfully:`, result);
+        // Normalize decimal separators in the parsed data
+        const normalizedResult = normalizeDecimalSeparators(result);
+        return normalizedResult;
+    } catch (error) {
+        console.error('[API] Error parsing battle report:', error);
+        throw error;
+    }
+}
+
+/**
+ * Normalize decimal separators in run data from comma to period and standardize notations
+ * @param {Object} data - The run data object
+ * @returns {Object} - Normalized data
+ */
+function normalizeDecimalSeparators(data) {
+    const normalized = {};
+    for (const [key, value] of Object.entries(data)) {
+        if (typeof value === 'string') {
+            // Replace comma with period in numeric strings (e.g., "321,27T" -> "321.27T")
+            let normalizedValue = value.replace(/(\d),(\d)/g, '$1.$2');
+            // Standardize notation to uppercase (e.g., "7.60aa" -> "7.60AA")
+            normalizedValue = standardizeNotation(normalizedValue);
+            normalized[key] = normalizedValue;
+        } else if (typeof value === 'object' && value !== null) {
+            // Recursively normalize nested objects
+            normalized[key] = normalizeDecimalSeparators(value);
+        } else {
+            normalized[key] = value;
+        }
+    }
+    return normalized;
+}
+
+/**
+ * Submit run summary using the new API endpoint
+ * @param {string} userId - Discord user ID
+ * @param {string} username - Discord username
+ * @param {Object} runData - Full run data object with all stats
+ * @param {string} note - Optional note
+ * @param {Buffer} [screenshotBuffer] - Optional screenshot buffer
+ * @param {string} [screenshotName] - Optional screenshot filename
+ * @returns {Promise<Object>} - API response
+ */
+async function submitRunSummary(userId, username, runData, note = '', screenshotBuffer = null, screenshotName = null) {
+    try {
+        console.log(`[API] Submitting run summary for user ${userId}:`, runData);
+        // Normalize decimal separators before sending
+        const normalizedRunData = normalizeDecimalSeparators(runData);
+        console.log(`[API] Normalized run data:`, normalizedRunData);
+        // Convert numbers to strings for API compatibility
+        const stringifiedRunData = {};
+        for (const [key, value] of Object.entries(normalizedRunData)) {
+            if (typeof value === 'number') {
+                stringifiedRunData[key] = String(value);
+            } else {
+                stringifiedRunData[key] = value;
+            }
+        }
+        console.log(`[API] Stringified run data:`, stringifiedRunData);
+
+        const formData = new FormData();
+        formData.append('runData', JSON.stringify(stringifiedRunData));
+        formData.append('userId', userId);
+        formData.append('username', username);
+        formData.append('note', note);
+
+        // Attach screenshot if provided
+        if (screenshotBuffer && screenshotName) {
+            formData.append('file', screenshotBuffer, { filename: screenshotName });
+        }
+
+        const response = await axios.post(
+            `${API_URL}/run-summary`,
+            formData,
+            {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                    Authorization: API_KEY,
+                },
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity
+            }
+        );
+        const result = response.data;
+        console.log(`[API] Run summary submitted successfully:`, result);
+        return result;
+    } catch (error) {
+        console.error('[API] Error submitting run summary:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     logRun,
     getLastRun,
@@ -512,5 +651,7 @@ module.exports = {
     clearUserRuns,
     editRun,
     getUserStats,
-    runOCR
+    runOCR,
+    parseBattleReport,
+    submitRunSummary
 };

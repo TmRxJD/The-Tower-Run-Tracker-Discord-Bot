@@ -1,11 +1,31 @@
 // Upload flow handlers for the tracker
 const { EmbedBuilder, Colors, ComponentType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const Builders = require('@discordjs/builders');
 const trackerApi = require('./trackerAPI.js');
 const trackerUI = require('../trackerUI');
 const { userSessions, trackerEmitter } = require('./sharedState.js');
 const { handleError, logError } = require('./errorHandlers.js');
-const { preprocessImage, extractTextFromImage, formatOCRExtraction, getDecimalForLanguage, extractDateTimeFromImage, findPotentialDuplicateRun, formatDate, formatTime, formatDuration } = require('./trackerHelpers.js');
+const { preprocessImage, extractTextFromImage, formatOCRExtraction, getDecimalForLanguage, extractDateTimeFromImage, findPotentialDuplicateRun, formatDate, formatTime, formatDuration, parseTierString, applyTierMetadata, hasPlusTier } = require('./trackerHelpers.js');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args)); // Import node-fetch
+
+function autoAssignTournament(session, processedData, rawTierCandidates = []) {
+    if (!session || !processedData) return;
+
+    applyTierMetadata(processedData, rawTierCandidates);
+
+    if (hasPlusTier(processedData, rawTierCandidates)) {
+        processedData.tierHasPlus = true;
+        if (!processedData.tierDisplay && typeof processedData.tier === 'number' && !Number.isNaN(processedData.tier)) {
+            processedData.tierDisplay = `${processedData.tier}+`;
+        } else if (processedData.tierDisplay && !processedData.tierDisplay.trim().endsWith('+')) {
+            const numericInfo = parseTierString(processedData.tierDisplay);
+            const normalized = numericInfo.numeric !== null ? `${numericInfo.numeric}+` : `${processedData.tierDisplay.trim()}+`;
+            processedData.tierDisplay = normalized;
+        }
+        processedData.type = 'Tournament';
+        session.uploadType = 'Tournament';
+    }
+}
 
 // Helper to robustly process an image buffer with backend and local OCR fallback
 async function robustProcessImage({
@@ -53,11 +73,19 @@ async function robustProcessImage({
                 killedBy: backendData.killedBy ?? null,
                 date: extractedData.runDateTime?.date ?? null,
                 time: extractedData.runDateTime?.time ?? null,
-                notes: backendData.notes ?? ''
+                notes: backendData.notes ?? '',
+                // Add coverage data for sharing
+                totalEnemies: backendData.totalEnemies ?? null,
+                destroyedByOrbs: backendData.destroyedByOrbs ?? null,
+                taggedByDeathWave: backendData.taggedByDeathWave ?? null,
+                destroyedInSpotlight: backendData.destroyedInSpotlight ?? null,
+                destroyedInGoldenBot: backendData.destroyedInGoldenBot ?? null
             };
+            const tierCandidates = [backendData.tier, backendData.Tier, extractedData?.tierDisplay, extractedData?.runData?.Tier, extractedData?.runData?.tier];
+            applyTierMetadata(processedData, tierCandidates);
             if (isValidData(processedData)) {
                 usedBackend = true;
-                return { processedData, extractedData, usedBackend };
+                return { processedData, extractedData, usedBackend, tierCandidates };
             }
         }
     } catch (err) {
@@ -79,11 +107,19 @@ async function robustProcessImage({
                 killedBy: backendData.killedBy ?? null,
                 date: extractedData.runDateTime?.date ?? null,
                 time: extractedData.runDateTime?.time ?? null,
-                notes: backendData.notes ?? ''
+                notes: backendData.notes ?? '',
+                // Add coverage data for sharing
+                totalEnemies: backendData.totalEnemies ?? null,
+                destroyedByOrbs: backendData.destroyedByOrbs ?? null,
+                taggedByDeathWave: backendData.taggedByDeathWave ?? null,
+                destroyedInSpotlight: backendData.destroyedInSpotlight ?? null,
+                destroyedInGoldenBot: backendData.destroyedInGoldenBot ?? null
             };
+            const tierCandidates = [backendData.tier, backendData.Tier, extractedData?.tierDisplay, extractedData?.runData?.Tier, extractedData?.runData?.tier];
+            applyTierMetadata(processedData, tierCandidates);
             if (isValidData(processedData)) {
                 usedBackend = true;
-                return { processedData, extractedData, usedBackend };
+                return { processedData, extractedData, usedBackend, tierCandidates };
             }
         }
     } catch (err) {
@@ -103,9 +139,11 @@ async function robustProcessImage({
             getDecimalForLanguage(scanLanguage),
             scanLanguage
         );
+        const tierCandidates = [processedData.tierDisplay, processedData.tier];
+        applyTierMetadata(processedData, tierCandidates);
         if (isValidData(processedData)) {
             usedBackend = false;
-            return { processedData, extractedData: ocrText, usedBackend };
+            return { processedData, extractedData: ocrText, usedBackend, tierCandidates };
         }
     } catch (localErr) {
         backendError = localErr;
@@ -131,7 +169,7 @@ async function handleDirectAttachment(interaction, attachment, preNote = null) {
     // Assume this is called after deferReply or similar initial reply
     const userId = interaction.user.id;
     const username = interaction.user.username; // Get username
-    const commandInteractionId = interaction.id; // Use the direct interaction ID
+    const commandInteractionId = interaction.message?.interaction?.id || interaction.id; // Ensure we emit on the original command interaction
     const session = userSessions.get(userId);
 
     if (!session) {
@@ -207,10 +245,24 @@ async function handleDirectAttachment(interaction, attachment, preNote = null) {
             });
             return;
         }
-        const { processedData } = result;
+    const { processedData, tierCandidates = [] } = result;
         // If a note was provided via slash option, prefer it
         if (preNote && typeof processedData === 'object') {
             processedData.notes = preNote;
+        }
+
+        // Ensure date and time default to current if not detected or invalid
+        if (!processedData.date || processedData.date === 'NaN' || isNaN(new Date(processedData.date))) {
+            processedData.date = new Date().toLocaleDateString('en-US');
+        }
+        if (!processedData.time || processedData.time === 'NaN') {
+            processedData.time = new Date().toLocaleTimeString('en-US', { hour12: false });
+        }
+
+    autoAssignTournament(session, processedData, tierCandidates);
+        // If tournament wasn't auto-detected, honor the selected/default run type
+        if (!processedData.type) {
+            processedData.type = session.uploadType || session.settings?.defaultRunType || 'Farming';
         }
 
         // 3. Duplicate Check Logic
@@ -328,7 +380,7 @@ async function handleUploadFlow(interaction) {
                 });
                 if (!result) {
                     const errorEmbed = trackerUI.createErrorEmbed("Unable to read image. Try cropping or check your device's image quality settings.");
-                    const errorButtons = createErrorRecoveryButtons('upload_ocr_manual', 'upload_ocr_main', 'upload_ocr_cancel');
+                    const errorButtons = trackerUI.createErrorRecoveryButtons('upload_ocr_manual', 'upload_ocr_main', 'upload_ocr_cancel');
                     await interaction.editReply({
                         embeds: [errorEmbed],
                         components: errorButtons
@@ -356,10 +408,11 @@ async function handleUploadFlow(interaction) {
                     });
                     return;
                 }
-                const { processedData } = result;
+                const { processedData, tierCandidates = [] } = result;
                 // Get session again before modifying
                 const sessionForDuplicateCheck = userSessions.get(userId);
                 if (!sessionForDuplicateCheck) throw new Error("Session lost before duplicate check.");
+                autoAssignTournament(sessionForDuplicateCheck, processedData, tierCandidates);
                 // Duplicate check logic
                 if (sessionForDuplicateCheck.settings?.autoDetectDuplicates !== false) {
                     console.log('[UploadFlow] Checking for potential duplicates...');
@@ -379,6 +432,15 @@ async function handleUploadFlow(interaction) {
                     sessionForDuplicateCheck.isDuplicateRun = false;
                     sessionForDuplicateCheck.editingRunId = null;
                 }
+
+                // Ensure date and time default to current if not detected or invalid
+                if (!processedData.date || processedData.date === 'NaN' || isNaN(new Date(processedData.date))) {
+                    processedData.date = new Date().toLocaleDateString('en-US');
+                }
+                if (!processedData.time || processedData.time === 'NaN') {
+                    processedData.time = new Date().toLocaleTimeString('en-US', { hour12: false });
+                }
+
                 sessionForDuplicateCheck.data = processedData;
                 sessionForDuplicateCheck.screenshotAttachment = tempAttachmentInfo;
                 userSessions.set(userId, sessionForDuplicateCheck);
@@ -430,7 +492,8 @@ module.exports = {
     handleUploadFlow,
     handleDirectAttachment,
     handleDirectTextPaste,
-    handlePasteFlow
+    handlePasteFlow,
+    handleAddRunFlow
 };
 
 /**
@@ -469,7 +532,7 @@ function parseRunDataFromText(rawText) {
         return m ? m[0] : '';
     };
     // Fields per user instruction
-    const tierRaw = get('Tier', /\d+/);
+    const tierRaw = get('Tier', /\d+\+?/);
     const waveRaw = get('Wave', /\d+/);
     const durationRaw = get('Real\\s*Time', /[\dhms :]+/);
     const coinsRaw = get('Coins\\s*Earned', /[\d,\.a-zA-Z$]+/);
@@ -487,7 +550,8 @@ function parseRunDataFromText(rawText) {
     }
 
     // Normalize
-    const tier = tierRaw ? parseInt(tierRaw, 10) : 'Unknown';
+    const tierInfo = parseTierString(tierRaw);
+    const tier = tierInfo.numeric !== null ? tierInfo.numeric : 'Unknown';
     const wave = waveRaw ? parseInt(waveRaw, 10) : 'Unknown';
     const duration = durationRaw ? durationRaw.trim() : '';
     const roundDuration = formatDuration(duration);
@@ -507,7 +571,9 @@ function parseRunDataFromText(rawText) {
         killedBy,
         date: formatDate(now),
         time: formatTime(now),
-        notes: ''
+        notes: '',
+        tierDisplay: tierInfo.display || (tier !== 'Unknown' ? String(tier) : ''),
+        tierHasPlus: tierInfo.hasPlus
     };
 }
 
@@ -517,7 +583,7 @@ function parseRunDataFromText(rawText) {
  */
 async function handleDirectTextPaste(interaction, text, attachmentOrNull, preNote = null) {
     const userId = interaction.user.id;
-    const commandInteractionId = interaction.id;
+    const commandInteractionId = interaction.message?.interaction?.id || interaction.id; // Ensure we emit on the original command interaction
     let session = userSessions.get(userId) || { status: 'initial', data: {}, lastActivity: Date.now() };
     session.lastActivity = Date.now();
     if (attachmentOrNull) {
@@ -526,16 +592,73 @@ async function handleDirectTextPaste(interaction, text, attachmentOrNull, preNot
     }
     userSessions.set(userId, session);
 
-    await interaction.editReply({ embeds: [trackerUI.createLoadingEmbed('Parsing pasted text...')], components: [] });
+    // Ensure interaction is deferred
+    try {
+        await interaction.deferReply({ ephemeral: true });
+    } catch (error) {
+        if (error.code === 40060 || error.code === 'InteractionAlreadyReplied') {
+            // Already acknowledged or replied, proceed
+            console.log(`[DirectPaste] Interaction ${interaction.id} already acknowledged/replied, proceeding`);
+        } else {
+            throw error;
+        }
+    }
+
+    try {
+        await interaction.editReply({ embeds: [trackerUI.createLoadingEmbed('Parsing pasted text...')], components: [] });
+    } catch (error) {
+        if (error.code === 'InteractionNotReplied') {
+            console.log(`[DirectPaste] Interaction ${interaction.id} not deferred, deferring now`);
+            await interaction.deferReply({ ephemeral: true });
+            await interaction.editReply({ embeds: [trackerUI.createLoadingEmbed('Parsing pasted text...')], components: [] });
+        } else {
+            throw error;
+        }
+    }
 
     try {
         // Debug: log raw text before parsing
         try {
             console.log(`[Paste] Raw text (${(text || '').length} chars):`, String(text || '').slice(0, 2000));
         } catch {}
-        const processedData = parseRunDataFromText(text);
+        const parsedResponse = await trackerApi.parseBattleReport(text);
+        const runData = parsedResponse.runData || parsedResponse;
+        
+        // Extract editable fields for review
+        const processedData = {
+            tier: runData.Tier ?? runData.tier,
+            wave: runData.Wave ?? runData.wave,
+            totalCoins: runData['Coins earned'] ?? runData['Coins Earned'] ?? runData['Battle Report Coins earned'] ?? runData.totalCoins ?? runData.coins,
+            totalCells: runData['Cells Earned'] ?? runData.totalCells ?? runData.cells,
+            totalDice: runData['Reroll Shards Earned'] ?? runData.totalDice ?? runData.rerollShards,
+            roundDuration: runData['Real Time'] ?? runData.roundDuration ?? runData.duration,
+            killedBy: (runData['Killed By'] || runData.killedBy || '').toString().trim() || 'Apathy',
+            date: runData['Battle Date'] ? formatDate(new Date(runData['Battle Date'])) : formatDate(new Date()),
+            time: runData['Battle Date'] ? formatTime(new Date(runData['Battle Date'])) : formatTime(new Date()),
+            notes: preNote || '',
+            // Add coverage data for sharing
+            totalEnemies: runData['Total Enemies'] || runData.totalEnemies,
+            destroyedByOrbs: runData['Destroyed By Orbs'] || runData.destroyedByOrbs,
+            taggedByDeathWave: runData['Tagged by Deathwave'] || runData.taggedByDeathWave,
+            destroyedInSpotlight: runData['Destroyed in Spotlight'] || runData.destroyedInSpotlight,
+            destroyedInGoldenBot: runData['Destroyed in Golden Bot'] || runData.destroyedInGoldenBot
+        };
+        applyTierMetadata(processedData, [runData.Tier, runData.tier]);
+        autoAssignTournament(session, processedData, [runData.Tier, runData.tier]);
+        if (!processedData.type) {
+            processedData.type = session.uploadType || session.settings?.defaultRunType || 'Farming';
+        }
+        
         if (preNote) {
             processedData.notes = preNote;
+        }
+
+        // Ensure date and time default to current if not detected or invalid
+        if (!processedData.date || processedData.date === 'NaN' || isNaN(new Date(processedData.date))) {
+            processedData.date = new Date().toLocaleDateString('en-US');
+        }
+        if (!processedData.time || processedData.time === 'NaN') {
+            processedData.time = new Date().toLocaleTimeString('en-US', { hour12: false });
         }
         // Debug: log parsed data after parsing
         try {
@@ -554,13 +677,44 @@ async function handleDirectTextPaste(interaction, text, attachmentOrNull, preNot
         }
 
         session.data = processedData;
+        session.runData = runData; // Store canonical runData at session level
         session.status = 'reviewing_direct_text';
         userSessions.set(userId, session);
 
         // Go to review
         trackerEmitter.emit(`dispatch_${commandInteractionId}`, 'dataReview', interaction);
     } catch (err) {
-        await handleError(interaction, err, 'direct_text_paste');
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+            console.log('[Paste] API timeout, falling back to local parsing');
+            // Fallback to local parsing
+            const processedData = parseRunDataFromText(text);
+            applyTierMetadata(processedData, []);
+            autoAssignTournament(session, processedData, []);
+            if (!processedData.type) {
+                processedData.type = session.uploadType || session.settings?.defaultRunType || 'Farming';
+            }
+            if (preNote) {
+                processedData.notes = preNote;
+            }
+            // Duplicate check
+            if (session.settings?.autoDetectDuplicates !== false) {
+                const existingRuns = session.cachedRunData?.allRuns || [];
+                const duplicateResult = findPotentialDuplicateRun(processedData, existingRuns);
+                session.isDuplicateRun = !!duplicateResult.isDuplicate;
+                session.editingRunId = duplicateResult.isDuplicate ? duplicateResult.duplicateRunId : null;
+            } else {
+                session.isDuplicateRun = false;
+                session.editingRunId = null;
+            }
+            session.data = processedData;
+            session.runData = processedData; // Use processedData as runData
+            session.status = 'reviewing_direct_text';
+            userSessions.set(userId, session);
+            // Go to review
+            trackerEmitter.emit(`dispatch_${commandInteractionId}`, 'dataReview', interaction);
+        } else {
+            await logError(interaction.client, interaction.user, err, 'direct_text_paste');
+        }
     }
 }
 
@@ -568,6 +722,7 @@ async function handleDirectTextPaste(interaction, text, attachmentOrNull, preNot
  * Paste flow from main menu: prompt user to paste text; optionally allow a screenshot in same step.
  */
 async function handlePasteFlow(interaction) {
+    console.log(`[PasteFlow] Starting paste flow for interaction ${interaction.id}`);
     const commandInteractionId = interaction.message.interaction.id;
     const userId = interaction.user.id;
     let session = userSessions.get(userId) || { status: 'awaiting_paste', data: {}, lastActivity: Date.now() };
@@ -591,22 +746,70 @@ async function handlePasteFlow(interaction) {
     const row1 = new ActionRowBuilder().addComponents(textInput);
     const row2 = new ActionRowBuilder().addComponents(noteInput);
     modal.addComponents(row1, row2);
+    console.log(`[PasteFlow] Showing modal for interaction ${interaction.id}`);
     await interaction.showModal(modal);
 
     try {
+        console.log(`[PasteFlow] Awaiting modal submit for interaction ${interaction.id}`);
         const submitted = await interaction.awaitModalSubmit({
             filter: i => i.customId === 'tracker_paste_modal' && i.user.id === userId,
             time: 300000
         });
+        console.log(`[PasteFlow] Modal submitted for interaction ${submitted.id}`);
+        try {
+            await submitted.deferUpdate();
+        } catch (deferError) {
+            if (deferError.code === 40060) {
+                console.log(`[PasteFlow] Modal submit already acknowledged, proceeding without defer`);
+            } else {
+                throw deferError;
+            }
+        }
         const text = submitted.fields.getTextInputValue('tracker_paste_text');
         const preNote = submitted.fields.getTextInputValue('tracker_paste_note') || null;
         await interaction.editReply({ embeds: [trackerUI.createLoadingEmbed('Parsing pasted text...')], components: [] });
         try { console.log(`[PasteFlow] Raw text (${(text || '').length} chars):`, String(text || '').slice(0, 2000)); } catch {}
-        const processedData = parseRunDataFromText(text);
+        console.log(`[PasteFlow] Attempting API parse`);
+        const parsedResponse = await trackerApi.parseBattleReport(text);
+        const runData = parsedResponse.runData || parsedResponse;
+        
+        // Extract editable fields for review
+        const processedData = {
+            tier: runData.Tier ?? runData.tier,
+            wave: runData.Wave ?? runData.wave,
+            totalCoins: runData['Coins earned'] ?? runData['Coins Earned'] ?? runData['Battle Report Coins earned'] ?? runData.totalCoins ?? runData.coins,
+            totalCells: runData['Cells Earned'] ?? runData.totalCells ?? runData.cells,
+            totalDice: runData['Reroll Shards Earned'] ?? runData.totalDice ?? runData.rerollShards,
+            roundDuration: runData['Real Time'] ?? runData.roundDuration ?? runData.duration,
+            killedBy: (runData['Killed By'] || runData.killedBy || '').toString().trim() || 'Apathy',
+            date: runData['Battle Date'] ? formatDate(new Date(runData['Battle Date'])) : formatDate(new Date()),
+            time: runData['Battle Date'] ? formatTime(new Date(runData['Battle Date'])) : formatTime(new Date()),
+            notes: preNote || '',
+            // Add coverage data for sharing
+            totalEnemies: runData['Total Enemies'] || runData.totalEnemies,
+            destroyedByOrbs: runData['Destroyed By Orbs'] || runData.destroyedByOrbs,
+            taggedByDeathWave: runData['Tagged by Deathwave'] || runData.taggedByDeathWave,
+            destroyedInSpotlight: runData['Destroyed in Spotlight'] || runData.destroyedInSpotlight,
+            destroyedInGoldenBot: runData['Destroyed in Golden Bot'] || runData.destroyedInGoldenBot
+        };
+        
+        applyTierMetadata(processedData, [runData.Tier, runData.tier]);
         if (preNote) processedData.notes = preNote;
+
+        // Ensure date and time default to current if not detected or invalid
+        if (!processedData.date || processedData.date === 'NaN' || isNaN(new Date(processedData.date))) {
+            processedData.date = new Date().toLocaleDateString('en-US');
+        }
+        if (!processedData.time || processedData.time === 'NaN') {
+            processedData.time = new Date().toLocaleTimeString('en-US', { hour12: false });
+        }
         try { console.log('[PasteFlow] Parsed data:', processedData); } catch {}
 
-        const sessionForDup = userSessions.get(userId) || session;
+    const sessionForDup = userSessions.get(userId) || session;
+    autoAssignTournament(sessionForDup, processedData, [runData.Tier, runData.tier]);
+        if (!processedData.type) {
+            processedData.type = sessionForDup.uploadType || sessionForDup.settings?.defaultRunType || 'Farming';
+        }
         if (sessionForDup.settings?.autoDetectDuplicates !== false) {
             const existingRuns = sessionForDup.cachedRunData?.allRuns || [];
             const duplicateResult = findPotentialDuplicateRun(processedData, existingRuns);
@@ -617,15 +820,233 @@ async function handlePasteFlow(interaction) {
             sessionForDup.editingRunId = null;
         }
         sessionForDup.data = processedData;
+        sessionForDup.runData = runData; // Store canonical runData at session level
         sessionForDup.status = 'reviewing_paste';
         userSessions.set(userId, sessionForDup);
-        await submitted.deferUpdate();
         trackerEmitter.emit(`dispatch_${commandInteractionId}`, 'dataReview', interaction);
+    } catch (err) {
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+            console.log('[PasteFlow] API timeout, falling back to local parsing');
+            // Fallback to local parsing
+            const processedData = parseRunDataFromText(text);
+            applyTierMetadata(processedData, []);
+            if (preNote) processedData.notes = preNote;
+
+            // Ensure date and time default to current if not detected or invalid
+            if (!processedData.date || processedData.date === 'NaN' || isNaN(new Date(processedData.date))) {
+                processedData.date = new Date().toLocaleDateString('en-US');
+            }
+            if (!processedData.time || processedData.time === 'NaN') {
+                processedData.time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            }
+            const sessionForDup = userSessions.get(userId) || session;
+            autoAssignTournament(sessionForDup, processedData, []);
+            if (!processedData.type) {
+                processedData.type = sessionForDup.uploadType || sessionForDup.settings?.defaultRunType || 'Farming';
+            }
+            if (sessionForDup.settings?.autoDetectDuplicates !== false) {
+                const existingRuns = sessionForDup.cachedRunData?.allRuns || [];
+                const duplicateResult = findPotentialDuplicateRun(processedData, existingRuns);
+                sessionForDup.isDuplicateRun = !!duplicateResult.isDuplicate;
+                sessionForDup.editingRunId = duplicateResult.isDuplicate ? duplicateResult.duplicateRunId : null;
+            } else {
+                sessionForDup.isDuplicateRun = false;
+                sessionForDup.editingRunId = null;
+            }
+            sessionForDup.data = processedData;
+            sessionForDup.runData = processedData; // Use processedData as runData
+            sessionForDup.status = 'reviewing_paste';
+            userSessions.set(userId, sessionForDup);
+            trackerEmitter.emit(`dispatch_${commandInteractionId}`, 'dataReview', interaction);
+        } else if (String(err || '').includes('TIME')) {
+            console.log(`[PasteFlow] Modal timeout, emitting cancel`);
+            trackerEmitter.emit(`navigate_${commandInteractionId}`, 'cancel', interaction, true);
+        } else {
+            console.log(`[PasteFlow] Other error in modal flow`);
+            logError(interaction.client, interaction.user, err, 'paste_flow_modal');
+        }
+    }
+}
+
+/**
+ * Combined Add Run flow: single modal that supports optional paste text, required run type select, and optional file upload.
+ * Defaults run type to Farming.
+ */
+async function handleAddRunFlow(interaction) {
+    const commandInteractionId = interaction.message?.interaction?.id || interaction.id;
+    const userId = interaction.user.id;
+    let session = userSessions.get(userId) || { status: 'awaiting_addrun', data: {}, lastActivity: Date.now() };
+    session.status = 'awaiting_addrun';
+    session.data = {};
+    session.lastActivity = Date.now();
+    userSessions.set(userId, session);
+
+    // Build modal using new components (select + file upload) and a standard text input for paste
+    const modal = new Builders.ModalBuilder().setCustomId('tracker_addrun_modal').setTitle('Add New Run');
+
+    // Run Type select (required), default to Farming
+    const runTypeSelect = new Builders.StringSelectMenuBuilder()
+        .setCustomId('addrun_run_type')
+        .setPlaceholder('Select run type')
+        .setMinValues(1)
+        .setMaxValues(1)
+        .addOptions(
+            { label: 'Farming', value: 'Farming', default: true },
+            { label: 'Overnight', value: 'Overnight' },
+            { label: 'Tournament', value: 'Tournament' },
+            { label: 'Milestone', value: 'Milestone' }
+        );
+    const labeledRunType = new Builders.LabelBuilder().setLabel('Run Type').setStringSelectMenuComponent(runTypeSelect);
+
+    // Optional paste text input
+    const pasteInput = new TextInputBuilder()
+        .setCustomId('addrun_paste_text')
+        .setLabel('Battle Report Text')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false);
+    const pasteRow = new ActionRowBuilder().addComponents(pasteInput);
+
+    // Optional notes input
+    const noteInput = new TextInputBuilder()
+        .setCustomId('addrun_note')
+        .setLabel('Notes')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+    const noteRow = new ActionRowBuilder().addComponents(noteInput);
+
+    // Optional file upload (explicitly mark optional if supported)
+    const fileUpload = new Builders.FileUploadBuilder().setCustomId('addrun_file');
+    if (typeof fileUpload.setRequired === 'function') {
+        try { fileUpload.setRequired(false); } catch { /* ignore if not supported */ }
+    }
+    const labeledFile = new Builders.LabelBuilder().setLabel('Upload Screenshot (optional)').setFileUploadComponent(fileUpload);
+    if (typeof labeledFile.setRequired === 'function') {
+        try { labeledFile.setRequired(false); } catch { /* ignore if not supported */ }
+    }
+
+    // Order: Paste Text, Notes, Run Type, Screenshot
+    modal.addComponents(pasteRow);
+    modal.addComponents(noteRow);
+    modal.addLabelComponents(labeledRunType);
+    modal.addLabelComponents(labeledFile);
+
+    // Show modal
+    await interaction.showModal(modal);
+
+    try {
+        const submitted = await interaction.awaitModalSubmit({
+            filter: i => i.customId === 'tracker_addrun_modal' && i.user.id === userId,
+            time: 300000
+        });
+
+        // Acknowledge modal
+        try { await submitted.deferUpdate(); } catch { /* already acknowledged */ }
+
+        // Helper deep finder (from modalDemo)
+        const findByCustomIdDeep = (node, id, seen = new Set()) => {
+            if (!node) return null;
+            const t = typeof node;
+            if (t !== 'object') return null;
+            if (seen.has(node)) return null;
+            seen.add(node);
+            if (node.customId === id) return node;
+            if (Array.isArray(node)) {
+                for (const item of node) { const found = findByCustomIdDeep(item, id, seen); if (found) return found; }
+            } else {
+                for (const key of Object.keys(node)) { const found = findByCustomIdDeep(node[key], id, seen); if (found) return found; }
+            }
+            return null;
+        };
+        const toArray = (val) => {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            if (typeof val.values === 'function') { try { return Array.from(val.values()); } catch { } }
+            if (typeof Symbol !== 'undefined' && val[Symbol.iterator]) { try { return Array.from(val); } catch { } }
+            if (typeof val === 'object') { try { return Object.values(val); } catch { } }
+            return [];
+        };
+        const looksLikeFile = (f) => !!f && (typeof f === 'object') && (
+            'name' in f || 'filename' in f || 'content_type' in f || 'size' in f || 'url' in f || 'attachment' in f || 'proxy_url' in f
+        );
+
+        // Extract selected run type
+        let selectedRunType = 'Farming';
+        try {
+            const typeComp = findByCustomIdDeep(submitted.components, 'addrun_run_type');
+            let values = Array.isArray(typeComp?.values) ? typeComp.values : [];
+            if (!values.length && typeComp && typeof typeComp.value === 'string') values = [typeComp.value];
+            if (values.length) selectedRunType = values[0];
+        } catch {}
+
+        // Update session with selected run type
+        const sess = userSessions.get(userId) || session;
+        sess.uploadType = selectedRunType;
+        userSessions.set(userId, sess);
+
+    // Extract paste text
+        let pastedText = '';
+        try { pastedText = submitted.fields.getTextInputValue('addrun_paste_text') || ''; } catch { pastedText = ''; }
+
+    // Extract note
+    let preNote = null;
+    try { preNote = submitted.fields.getTextInputValue('addrun_note') || null; } catch { preNote = null; }
+
+        // Extract uploaded file (if any)
+        let uploadedFile = null;
+        try {
+            const fileComp = findByCustomIdDeep(submitted.components, 'addrun_file');
+            const primary = toArray(fileComp?.files);
+            const alt = toArray(fileComp?.attachments);
+            let candidates = primary.length ? primary : alt;
+            if (!candidates.length) {
+                const more = [submitted.files, submitted.attachments, submitted.data?.attachments, submitted.data?.resolved?.attachments];
+                for (const c of more) { const arr = toArray(c); if (arr.length && looksLikeFile(arr[0])) { candidates = arr; break; } }
+            }
+            if (!candidates.length) {
+                // shallow scan
+                const scanKeys = ['files', 'attachments'];
+                outer: for (const key of scanKeys) {
+                    for (const row of submitted.components ?? []) {
+                        const arr = toArray(row[key]);
+                        if (arr.length && looksLikeFile(arr[0])) { candidates = arr; break outer; }
+                        for (const comp of row.components ?? []) {
+                            const a2 = toArray(comp[key]);
+                            if (a2.length && looksLikeFile(a2[0])) { candidates = a2; break outer; }
+                        }
+                    }
+                }
+            }
+            if (candidates.length) {
+                const f = candidates[0];
+                // Normalize to minimal attachment object expected by handleDirectAttachment
+                const url = f.url || f.proxy_url || f.attachment || null;
+                const name = f.name || f.filename || 'screenshot.png';
+                const contentType = f.content_type || f.contentType || 'image/png';
+                if (url) uploadedFile = { url, name, contentType, id: f.id || undefined };
+            }
+        } catch {}
+
+        // Route based on inputs: prefer pasted text when present
+        if (pastedText && pastedText.trim().length > 0) {
+            // If we managed to capture an uploaded file too, pass it along
+            await handleDirectTextPaste(interaction, pastedText.trim(), uploadedFile || null, preNote);
+            return;
+        }
+
+        if (uploadedFile) {
+            await handleDirectAttachment(interaction, uploadedFile, preNote);
+            return;
+        }
+
+        // Neither text nor file provided
+        await interaction.followUp({ content: 'Please paste the Battle Report text or upload a screenshot in the modal.', ephemeral: true }).catch(() => {});
+        // Return to main menu
+        trackerEmitter.emit(`navigate_${commandInteractionId}`, 'mainMenu', interaction);
     } catch (err) {
         if (String(err || '').includes('TIME')) {
             trackerEmitter.emit(`navigate_${commandInteractionId}`, 'cancel', interaction, true);
         } else {
-            handleError(interaction, err, 'paste_flow_modal');
+            await logError(interaction.client, interaction.user, err, 'add_run_modal_flow');
         }
     }
 }

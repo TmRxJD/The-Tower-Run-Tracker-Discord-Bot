@@ -115,6 +115,7 @@ async function handleMainMenuInteraction(interaction, commandInteractionId) {
 
             // Only stop the collector for actions that should end the menu
             const shouldStopCollector = [
+                'addrun',
                 'upload',
                 'manual',
                 'import',
@@ -133,6 +134,10 @@ async function handleMainMenuInteraction(interaction, commandInteractionId) {
                     // Do NOT stop the collector, so other buttons remain active
                     break;
 
+                case 'addrun':
+                    // Do not defer; we'll show a modal immediately
+                    trackerEmitter.emit(`dispatch_${commandInteractionId}`, 'addRunFlow', i);
+                    break;
                 case 'upload':
                     await i.deferUpdate();
                     trackerEmitter.emit(`dispatch_${commandInteractionId}`, 'uploadFlow', i);

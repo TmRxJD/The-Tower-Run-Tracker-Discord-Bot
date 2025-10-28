@@ -60,7 +60,7 @@ async function handleShare(interaction) {
         // Load share settings
         const shareSettings = await loadShareSettings(userId);
         // Calculate stats and create the embed to share
-        const stats = calculateHourlyRates(runData.duration || runData.roundDuration, runData);
+    const stats = calculateHourlyRates(runData.duration || runData.roundDuration, runData, session.runData);
         const shareEmbed = createShareEmbed(
             interaction.member?.displayName || interaction.user.username,
             runData,
@@ -70,7 +70,8 @@ async function handleShare(interaction) {
             userSessions.get(userId)?.settings?.decimalPreference || 'Period (.)',
             runTypeCounts,
             user,
-            shareSettings // Pass share settings object
+            shareSettings, // Pass share settings object
+            session.runData // Pass full run data for coverage
         );
         const shareOptions = { embeds: [shareEmbed] };
         const hasScreenshot = !!session.screenshotAttachment;

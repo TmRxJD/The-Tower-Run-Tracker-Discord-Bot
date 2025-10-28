@@ -26,7 +26,8 @@ async function loadShareSettings(userId) {
                 includeCellsPerHour: settings.includeCellsPerHour === 'true',
                 includeDicePerHour: settings.includeDicePerHour === 'true',
                 includeNotes: settings.includeNotes === 'true',
-                includeScreenshot: settings.includeScreenshot === 'true'
+                includeScreenshot: settings.includeScreenshot === 'true',
+                includeCoverage: settings.includeCoverage !== 'false' // Default to true
             };
         } else {
             // Return defaults
@@ -42,7 +43,8 @@ async function loadShareSettings(userId) {
                 includeCellsPerHour: true,
                 includeDicePerHour: true,
                 includeNotes: true,
-                includeScreenshot: false
+                includeScreenshot: false,
+                includeCoverage: true // Default to true
             };
         }
     } catch (error) {
@@ -60,7 +62,8 @@ async function loadShareSettings(userId) {
             includeCellsPerHour: true,
             includeDicePerHour: true,
             includeNotes: true,
-            includeScreenshot: false
+            includeScreenshot: false,
+            includeCoverage: true // Default to true
         };
     }
 }
@@ -82,7 +85,8 @@ async function saveShareSettings(userId, settings) {
             includeCellsPerHour: settings.includeCellsPerHour ? 'true' : 'false',
             includeDicePerHour: settings.includeDicePerHour ? 'true' : 'false',
             includeNotes: settings.includeNotes ? 'true' : 'false',
-            includeScreenshot: settings.includeScreenshot ? 'true' : 'false'
+            includeScreenshot: settings.includeScreenshot ? 'true' : 'false',
+            includeCoverage: settings.includeCoverage ? 'true' : 'false'
         };
         saveMultipleSettings(userId, settingsToSave);
     } catch (error) {
@@ -180,7 +184,7 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                 .setCustomId('share_elements_select')
                 .setPlaceholder('Select elements to include')
                 .setMinValues(0)
-                .setMaxValues(12)
+                .setMaxValues(13)
                 .addOptions([
                     { label: 'Tier', value: 'tier', description: 'Include tier in share messages', default: currentSettings.includeTier },
                     { label: 'Wave', value: 'wave', description: 'Include wave in share messages', default: currentSettings.includeWave },
@@ -193,7 +197,8 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                     { label: 'Cells per Hour', value: 'cells_per_hour', description: 'Include cells per hour in earnings section', default: currentSettings.includeCellsPerHour },
                     { label: 'Dice per Hour', value: 'dice_per_hour', description: 'Include dice per hour in earnings section', default: currentSettings.includeDicePerHour },
                     { label: 'Notes', value: 'notes', description: 'Include notes in share messages', default: currentSettings.includeNotes },
-                    { label: 'Screenshot', value: 'screenshot', description: 'Include screenshot in share messages', default: currentSettings.includeScreenshot }
+                    { label: 'Screenshot', value: 'screenshot', description: 'Include screenshot in share messages', default: currentSettings.includeScreenshot },
+                    { label: 'Coverage', value: 'coverage', description: 'Include coverage visualization in share messages', default: currentSettings.includeCoverage }
                 ])
         );
 
@@ -248,6 +253,7 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                         currentSettings.includeDicePerHour = selected.includes('dice_per_hour');
                         currentSettings.includeNotes = selected.includes('notes');
                         currentSettings.includeScreenshot = selected.includes('screenshot');
+                        currentSettings.includeCoverage = selected.includes('coverage');
 
                         hasUnsavedChanges = JSON.stringify(currentSettings) !== JSON.stringify(lastSavedSettings);
 
@@ -265,7 +271,7 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                                 .setCustomId('share_elements_select')
                                 .setPlaceholder('Select elements to include')
                                 .setMinValues(0)
-                                .setMaxValues(12)
+                                .setMaxValues(13)
                                 .addOptions([
                                     { label: 'Tier', value: 'tier', description: 'Include tier in share messages', default: currentSettings.includeTier },
                                     { label: 'Wave', value: 'wave', description: 'Include wave in share messages', default: currentSettings.includeWave },
@@ -278,7 +284,8 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                                     { label: 'Cells per Hour', value: 'cells_per_hour', description: 'Include cells per hour in earnings section', default: currentSettings.includeCellsPerHour },
                                     { label: 'Dice per Hour', value: 'dice_per_hour', description: 'Include dice per hour in earnings section', default: currentSettings.includeDicePerHour },
                                     { label: 'Notes', value: 'notes', description: 'Include notes in share messages', default: currentSettings.includeNotes },
-                                    { label: 'Screenshot', value: 'screenshot', description: 'Include screenshot in share messages', default: currentSettings.includeScreenshot }
+                                    { label: 'Screenshot', value: 'screenshot', description: 'Include screenshot in share messages', default: currentSettings.includeScreenshot },
+                                    { label: 'Coverage', value: 'coverage', description: 'Include coverage visualization in share messages', default: currentSettings.includeCoverage }
                                 ])
                         );
 
@@ -317,7 +324,7 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                                 .setCustomId('share_elements_select')
                                 .setPlaceholder('Select elements to include')
                                 .setMinValues(0)
-                                .setMaxValues(12)
+                                .setMaxValues(13)
                                 .addOptions([
                                     { label: 'Tier', value: 'tier', description: 'Include tier in share messages', default: currentSettings.includeTier },
                                     { label: 'Wave', value: 'wave', description: 'Include wave in share messages', default: currentSettings.includeWave },
@@ -330,7 +337,8 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                                     { label: 'Cells per Hour', value: 'cells_per_hour', description: 'Include cells per hour in earnings section', default: currentSettings.includeCellsPerHour },
                                     { label: 'Dice per Hour', value: 'dice_per_hour', description: 'Include dice per hour in earnings section', default: currentSettings.includeDicePerHour },
                                     { label: 'Notes', value: 'notes', description: 'Include notes in share messages', default: currentSettings.includeNotes },
-                                    { label: 'Screenshot', value: 'screenshot', description: 'Include screenshot in share messages', default: currentSettings.includeScreenshot }
+                                    { label: 'Screenshot', value: 'screenshot', description: 'Include screenshot in share messages', default: currentSettings.includeScreenshot },
+                                    { label: 'Coverage', value: 'coverage', description: 'Include coverage visualization in share messages', default: currentSettings.includeCoverage }
                                 ])
                         );
 
@@ -384,7 +392,7 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                             .setCustomId('share_elements_select')
                             .setPlaceholder('Select elements to include')
                             .setMinValues(0)
-                            .setMaxValues(12)
+                            .setMaxValues(13)
                             .addOptions([
                                 { label: 'Tier', value: 'tier', description: 'Include tier in share messages', default: currentSettings.includeTier },
                                 { label: 'Wave', value: 'wave', description: 'Include wave in share messages', default: currentSettings.includeWave },
@@ -397,7 +405,8 @@ async function handleShareSettingsFlow(interaction, commandInteractionId) {
                                 { label: 'Cells per Hour', value: 'cells_per_hour', description: 'Include cells per hour in earnings section', default: currentSettings.includeCellsPerHour },
                                 { label: 'Dice per Hour', value: 'dice_per_hour', description: 'Include dice per hour in earnings section', default: currentSettings.includeDicePerHour },
                                 { label: 'Notes', value: 'notes', description: 'Include notes in share messages', default: currentSettings.includeNotes },
-                                { label: 'Screenshot', value: 'screenshot', description: 'Include screenshot in share messages', default: currentSettings.includeScreenshot }
+                                { label: 'Screenshot', value: 'screenshot', description: 'Include screenshot in share messages', default: currentSettings.includeScreenshot },
+                                { label: 'Coverage', value: 'coverage', description: 'Include coverage visualization in share messages', default: currentSettings.includeCoverage }
                             ])
                     );
 

@@ -6,7 +6,8 @@ const {
     Colors,
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    MessageFlags
 } = require('discord.js');
 const trackerApi = require('./TrackerUtils/trackerHandlers/trackerAPI.js');
 const trackerUI = require('./TrackerUtils/trackerUI/index.js');
@@ -91,33 +92,48 @@ module.exports = {
 
         // Prevent duplicate executions for the same initial interaction
         if (activeInteractions.has(commandInteractionId)) {
-            console.log(`[CMD] Ignoring duplicate execution for interaction ${commandInteractionId}`);
-            return interaction.reply({ content: "Processing your previous request...", ephemeral: true }).catch(() => {});
+            return;
         }
-        activeInteractions.add(commandInteractionId);
 
         // Defer reply early to allow for multiple editReply calls
-        try {
-            await interaction.deferReply({ ephemeral: true });
-        } catch (error) {
-            if (error.code === 10062) {
-                console.log('Ignoring unknown interaction (likely expired)');
-                return;
+        console.log(`[CMD] Checking defer for interaction ${interaction.id}: deferred=${interaction.deferred}, replied=${interaction.replied}`);
+        if (!interaction.deferred && !interaction.replied) {
+            try {
+                await interaction.deferReply({ ephemeral: true });
+                console.log(`[CMD] Defer successful for interaction ${interaction.id}`);
+            } catch (error) {
+                if (error.code === 10062 || error.code === 40060) {
+                    // Interaction expired or already acknowledged, proceed without defer
+                    console.log(`[CMD] Interaction ${interaction.id} expired or already acknowledged, proceeding without defer.`);
+                } else {
+                    console.log(`[CMD] DeferReply failed with code ${error.code}: ${error.message}`);
+                    throw error;
+                }
             }
-            throw error;
+        } else {
+            console.log(`[CMD] Interaction ${interaction.id} already acknowledged (deferred: ${interaction.deferred}, replied: ${interaction.replied}), proceeding without defer.`);
         }
+
+        // Now add to active interactions after successful defer or if already deferred
+        activeInteractions.add(commandInteractionId);
 
         // Log command usage
         analyticsDB.logCommandUsage(userId, 'track');
+        console.log(`[CMD] Analytics logged for interaction ${interaction.id}`);
 
         // --- Central Event Listeners --- 
         // Define listener functions ONCE for this command instance
         const handleNavigate = async (destination, eventInteraction) => {
+            if (!eventInteraction || !eventInteraction.user) {
+                console.warn(`[Emitter] Received navigate event '${destination}' with invalid interaction context.`);
+                return;
+            }
             console.log(`[Emitter] Received navigate event: ${destination} for user ${eventInteraction.user.id}`);
             try {
                 // Get the original command ID from the event name
-                const currentCommandId = eventInteraction.customId.startsWith('navigate_') ? 
-                    eventInteraction.customId.split('_')[1] : 
+                const customId = typeof eventInteraction.customId === 'string' ? eventInteraction.customId : '';
+                const currentCommandId = customId.startsWith('navigate_') ? 
+                    customId.split('_')[1] : 
                     commandInteractionId; // Fallback to the outer scope ID
 
                 switch (destination) {
@@ -151,6 +167,9 @@ module.exports = {
             console.log(`[Emitter] Received dispatch event: ${handlerName} for user ${eventInteraction.user.id}`);
             try {
                 switch (handlerName) {
+                    case 'addRunFlow':
+                        await uploadHandlers.handleAddRunFlow(eventInteraction, ...args);
+                        break;
                     case 'uploadFlow':
                         await uploadHandlers.handleUploadFlow(eventInteraction, ...args);
                         break;
@@ -266,6 +285,7 @@ module.exports = {
         trackerEmitter.on(`navigate_${commandInteractionId}`, handleNavigate);
         console.log('[DEBUG] Attaching listener for:', `dispatch_${commandInteractionId}`);
         trackerEmitter.on(`dispatch_${commandInteractionId}`, handleDispatch);
+        console.log(`[CMD] Listeners attached for interaction ${interaction.id}`);
 
         // Clean up listeners when the interaction might end (e.g., after timeout in handlers, or on cancel/error)
         // Note: Robust cleanup might need more thought, e.g., using interaction end events if available.
@@ -280,11 +300,13 @@ module.exports = {
 
         // --- End Listeners --- 
 
+        console.log(`[CMD] Starting main logic for interaction ${interaction.id}`);
         try {
             const attachment = interaction.options.getAttachment('screenshot');
             const pastedText = interaction.options.getString('paste');
             const preNote = interaction.options.getString('note');
-            const runType = interaction.options.getString('run_type');
+            // Respect run type passed via slash option (option name is 'type')
+            const runType = interaction.options.getString('type');
             const settings = interaction.options.getBoolean('settings');
             
             if (settings) {

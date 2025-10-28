@@ -26,6 +26,7 @@ for (const folder of commandFolders) {
 		const command = require(filePath);
 		if ('data' in command && 'execute' in command) {
 			client.commands.set(command.data.name, command);
+			console.log(`Loaded command: ${command.data.name}`);
 		} else {
 			console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
 		}
@@ -38,6 +39,11 @@ client.once(Events.ClientReady, c => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
+	console.log(`Interaction received: ${interaction.type}, command: ${interaction.commandName}, id: ${interaction.id}, deferred: ${interaction.deferred}, replied: ${interaction.replied}`);
+	if (!client.readyAt) {
+		console.log('Bot not ready, ignoring interaction');
+		return;
+	}
 	if (!interaction.isChatInputCommand()) return;
 	const command = client.commands.get(interaction.commandName);
 
@@ -62,6 +68,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
 		if (now < expirationTime) {
 			const expiredTimestamp = Math.round(expirationTime / 1000);
+			console.log(`Cooldown triggered for user ${interaction.user.id}, replying with cooldown message`);
 			return interaction.reply({ content: `Please wait, you are on a cooldown for \`${command.data.name}\`. You can use it again <t:${expiredTimestamp}:R>.`, flags: MessageFlags.Ephemeral });
 		}
 	}
@@ -70,15 +77,28 @@ client.on(Events.InteractionCreate, async interaction => {
 	setTimeout(() => timestamps.delete(interaction.user.id), cooldownAmount);
 
 	try {
+		console.log(`Executing command ${command.data.name} for interaction ${interaction.id}`);
 		await command.execute(interaction);
 	} catch (error) {
 		console.error(error);
-		if (interaction.replied || interaction.deferred) {
-			await interaction.followUp({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
-		} else {
-			await interaction.reply({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
+		try {
+			if (interaction.replied || interaction.deferred) {
+				await interaction.followUp({ content: 'There was an error while executing this command!', ephemeral: true });
+			} else {
+				await interaction.reply({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
+			}
+		} catch (replyError) {
+			console.error('Failed to send error message:', replyError);
 		}
 	}
+});
+
+process.on('uncaughtException', (err) => {
+	console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+	console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 client.login(token);

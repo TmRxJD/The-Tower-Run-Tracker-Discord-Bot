@@ -49,7 +49,7 @@ async function handleError({ client, user, error, context, ocrOutput = null, att
  * @param {string} [attachmentUrl=null] - Optional URL of the related attachment
  */
 async function logError(client, user, error, context, ocrOutput = null, attachmentUrl = null) {
-    console.error(`[DETAILED ERROR LOG] User: ${user?.id || 'Unknown'}, Context: ${context}`, error);
+    console.log(`[DETAILED ERROR LOG] User: ${user?.id || 'Unknown'}, Context: ${context}`, error);
 
     if (!ERROR_LOG_CHANNEL_ID) {
         console.error('ERROR_LOG_CHANNEL_ID is not set in .env file. Cannot log error to channel.');
