@@ -5,7 +5,70 @@ const trackerApi = require('./trackerAPI.js');
 const trackerUI = require('../trackerUI');
 const { userSessions, trackerEmitter } = require('./sharedState.js');
 const { handleError, logError } = require('./errorHandlers.js');
-const { preprocessImage, extractTextFromImage, formatOCRExtraction, getDecimalForLanguage, extractDateTimeFromImage, findPotentialDuplicateRun, formatDate, formatTime, formatDuration, parseTierString, applyTierMetadata, hasPlusTier } = require('./trackerHelpers.js');
+const { preprocessImage, extractTextFromImage, formatOCRExtraction, getDecimalForLanguage, extractDateTimeFromImage, findPotentialDuplicateRun, formatDate, formatTime, parseBattleDateTime, formatDuration, parseTierString, applyTierMetadata, hasPlusTier } = require('./trackerHelpers.js');
+function resolveBattleDateTime(...candidates) {
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        if (candidate instanceof Date && !Number.isNaN(candidate.getTime())) {
+            return candidate;
+        }
+        const parsed = parseBattleDateTime(candidate);
+        if (parsed) {
+            return parsed;
+        }
+    }
+    return null;
+}
+
+function isInvalidDateValue(value) {
+    if (!value || String(value).trim() === '' || String(value).toLowerCase() === 'nan') return true;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime());
+}
+
+function isInvalidTimeValue(value) {
+    if (!value) return true;
+    const str = String(value).trim();
+    if (!str) return true;
+    if (/nan/i.test(str)) return true;
+    if (!/\d/.test(str)) return true;
+    return false;
+}
+
+function deriveBattleDateInfoFromRun(runData) {
+    const fallback = new Date();
+    if (!runData || typeof runData !== 'object') {
+        return {
+            timestamp: fallback,
+            displayDate: formatDate(fallback),
+            displayTime: formatTime(fallback)
+        };
+    }
+    const combinedRunDate = runData?.runDate || runData?.date
+        ? `${runData.runDate || runData.date || ''} ${runData.runTime || runData.time || ''}`.trim()
+        : null;
+    const combinedRunDateTime = runData?.runDateTime
+        ? `${runData.runDateTime.date || ''} ${runData.runDateTime.time || ''}`.trim()
+        : null;
+    const timestamp = resolveBattleDateTime(
+        runData?.reportTimestamp,
+        runData?.['Battle Date'],
+        runData?.battleDate,
+        runData?.date,
+        runData?.runDate,
+        combinedRunDate,
+        runData?.runDateTime?.combined,
+        runData?.runDateTime?.full,
+        combinedRunDateTime
+    ) || fallback;
+    const explicitDate = runData?.runDateTime?.date || runData?.runDate || runData?.date;
+    const explicitTime = runData?.runDateTime?.time || runData?.runTime || runData?.time;
+    return {
+        timestamp,
+        displayDate: isInvalidDateValue(explicitDate) ? formatDate(timestamp) : explicitDate,
+        displayTime: isInvalidTimeValue(explicitTime) ? formatTime(timestamp) : explicitTime
+    };
+}
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args)); // Import node-fetch
 
 function autoAssignTournament(session, processedData, rawTierCandidates = []) {
@@ -47,7 +110,41 @@ async function robustProcessImage({
     function isValidData(data) {
         return data && data.tier && data.wave && data.roundDuration && data.tier >= 1 && data.wave >= 1;
     }
-    // 1. Try backend OCR with timeout (10s)
+    function buildProcessedData(backendData, extractionPayload) {
+        const combinedRunDateTime = extractionPayload?.runDateTime
+            ? `${extractionPayload.runDateTime.date || ''} ${extractionPayload.runDateTime.time || ''}`.trim()
+            : null;
+        const resolvedTimestamp = resolveBattleDateTime(
+            backendData['Battle Date'],
+            backendData.battleDate,
+            backendData.date,
+            extractionPayload?.runDateTime?.combined,
+            extractionPayload?.runDateTime?.full,
+            combinedRunDateTime
+        ) || new Date();
+        const explicitDate = extractionPayload?.runDateTime?.date;
+        const explicitTime = extractionPayload?.runDateTime?.time;
+        const displayDate = isInvalidDateValue(explicitDate) ? formatDate(resolvedTimestamp) : explicitDate;
+        const displayTime = isInvalidTimeValue(explicitTime) ? formatTime(resolvedTimestamp) : explicitTime;
+        return {
+            tier: backendData.tier ?? null,
+            wave: backendData.wave ?? null,
+            totalCoins: backendData.totalCoins ?? backendData.coins ?? null,
+            totalCells: backendData.totalCells ?? backendData.cells ?? null,
+            totalDice: backendData.totalDice ?? backendData.dice ?? backendData.rerollShards ?? null,
+            roundDuration: backendData.roundDuration ?? backendData.duration ?? null,
+            killedBy: backendData.killedBy ?? null,
+            date: displayDate,
+            time: displayTime,
+            reportTimestamp: resolvedTimestamp.toISOString(),
+            notes: backendData.notes ?? '',
+            totalEnemies: backendData.totalEnemies ?? null,
+            destroyedByOrbs: backendData.destroyedByOrbs ?? null,
+            taggedByDeathWave: backendData.taggedByDeathWave ?? null,
+            destroyedInSpotlight: backendData.destroyedInSpotlight ?? null,
+            destroyedInGoldenBot: backendData.destroyedInGoldenBot ?? null
+        };
+    }
     async function runBackendOCR() {
         try {
             const p = trackerApi.runOCR(imageBuffer, filename, contentType);
@@ -63,24 +160,7 @@ async function robustProcessImage({
         extractedData = await runBackendOCR();
         if (extractedData) {
             const backendData = extractedData.runData ? extractedData.runData : extractedData;
-            processedData = {
-                tier: backendData.tier ?? null,
-                wave: backendData.wave ?? null,
-                totalCoins: backendData.totalCoins ?? backendData.coins ?? null,
-                totalCells: backendData.totalCells ?? backendData.cells ?? null,
-                totalDice: backendData.totalDice ?? backendData.dice ?? backendData.rerollShards ?? null,
-                roundDuration: backendData.roundDuration ?? backendData.duration ?? null,
-                killedBy: backendData.killedBy ?? null,
-                date: extractedData.runDateTime?.date ?? null,
-                time: extractedData.runDateTime?.time ?? null,
-                notes: backendData.notes ?? '',
-                // Add coverage data for sharing
-                totalEnemies: backendData.totalEnemies ?? null,
-                destroyedByOrbs: backendData.destroyedByOrbs ?? null,
-                taggedByDeathWave: backendData.taggedByDeathWave ?? null,
-                destroyedInSpotlight: backendData.destroyedInSpotlight ?? null,
-                destroyedInGoldenBot: backendData.destroyedInGoldenBot ?? null
-            };
+            processedData = buildProcessedData(backendData, extractedData);
             const tierCandidates = [backendData.tier, backendData.Tier, extractedData?.tierDisplay, extractedData?.runData?.Tier, extractedData?.runData?.tier];
             applyTierMetadata(processedData, tierCandidates);
             if (isValidData(processedData)) {
@@ -97,24 +177,7 @@ async function robustProcessImage({
         extractedData = await runBackendOCR();
         if (extractedData) {
             const backendData = extractedData.runData ? extractedData.runData : extractedData;
-            processedData = {
-                tier: backendData.tier ?? null,
-                wave: backendData.wave ?? null,
-                totalCoins: backendData.totalCoins ?? backendData.coins ?? null,
-                totalCells: backendData.totalCells ?? backendData.cells ?? null,
-                totalDice: backendData.totalDice ?? backendData.dice ?? backendData.rerollShards ?? null,
-                roundDuration: backendData.roundDuration ?? backendData.duration ?? null,
-                killedBy: backendData.killedBy ?? null,
-                date: extractedData.runDateTime?.date ?? null,
-                time: extractedData.runDateTime?.time ?? null,
-                notes: backendData.notes ?? '',
-                // Add coverage data for sharing
-                totalEnemies: backendData.totalEnemies ?? null,
-                destroyedByOrbs: backendData.destroyedByOrbs ?? null,
-                taggedByDeathWave: backendData.taggedByDeathWave ?? null,
-                destroyedInSpotlight: backendData.destroyedInSpotlight ?? null,
-                destroyedInGoldenBot: backendData.destroyedInGoldenBot ?? null
-            };
+            processedData = buildProcessedData(backendData, extractedData);
             const tierCandidates = [backendData.tier, backendData.Tier, extractedData?.tierDisplay, extractedData?.runData?.Tier, extractedData?.runData?.tier];
             applyTierMetadata(processedData, tierCandidates);
             if (isValidData(processedData)) {
@@ -493,7 +556,8 @@ module.exports = {
     handleDirectAttachment,
     handleDirectTextPaste,
     handlePasteFlow,
-    handleAddRunFlow
+    handleAddRunFlow,
+    parseRunDataFromText
 };
 
 /**
@@ -538,6 +602,7 @@ function parseRunDataFromText(rawText) {
     const coinsRaw = get('Coins\\s*Earned', /[\d,\.a-zA-Z$]+/);
     const cellsRaw = get('Cells\\s*Earned', /[\d,\.a-zA-Z]+/);
     const rerollShardsRaw = get('Reroll\\s*Shards\\s*Earned', /[\d,\.a-zA-Z]+/);
+    const battleDateRaw = get('Battle\\s*Date', /.+/);
     // Killed By: capture only the first word token after the label
     let killedByRaw = '';
     {
@@ -561,6 +626,8 @@ function parseRunDataFromText(rawText) {
     const killedBy = (killedByRaw || '').trim() || 'Apathy';
 
     const now = new Date();
+    const battleDateTime = parseBattleDateTime(battleDateRaw);
+    const resolvedTimestamp = battleDateTime || now;
     return {
         tier,
         wave,
@@ -569,8 +636,9 @@ function parseRunDataFromText(rawText) {
         totalCells,
         totalDice,
         killedBy,
-        date: formatDate(now),
-        time: formatTime(now),
+        date: formatDate(resolvedTimestamp),
+        time: formatTime(resolvedTimestamp),
+        reportTimestamp: resolvedTimestamp.toISOString(),
         notes: '',
         tierDisplay: tierInfo.display || (tier !== 'Unknown' ? String(tier) : ''),
         tierHasPlus: tierInfo.hasPlus
@@ -625,6 +693,7 @@ async function handleDirectTextPaste(interaction, text, attachmentOrNull, preNot
         const runData = parsedResponse.runData || parsedResponse;
         
         // Extract editable fields for review
+        const { timestamp: resolvedTimestamp, displayDate, displayTime } = deriveBattleDateInfoFromRun(runData);
         const processedData = {
             tier: runData.Tier ?? runData.tier,
             wave: runData.Wave ?? runData.wave,
@@ -633,8 +702,9 @@ async function handleDirectTextPaste(interaction, text, attachmentOrNull, preNot
             totalDice: runData['Reroll Shards Earned'] ?? runData.totalDice ?? runData.rerollShards,
             roundDuration: runData['Real Time'] ?? runData.roundDuration ?? runData.duration,
             killedBy: (runData['Killed By'] || runData.killedBy || '').toString().trim() || 'Apathy',
-            date: runData['Battle Date'] ? formatDate(new Date(runData['Battle Date'])) : formatDate(new Date()),
-            time: runData['Battle Date'] ? formatTime(new Date(runData['Battle Date'])) : formatTime(new Date()),
+            date: displayDate,
+            time: displayTime,
+            reportTimestamp: resolvedTimestamp.toISOString(),
             notes: preNote || '',
             // Add coverage data for sharing
             totalEnemies: runData['Total Enemies'] || runData.totalEnemies,
@@ -774,6 +844,7 @@ async function handlePasteFlow(interaction) {
         const runData = parsedResponse.runData || parsedResponse;
         
         // Extract editable fields for review
+        const { timestamp: resolvedTimestamp, displayDate, displayTime } = deriveBattleDateInfoFromRun(runData);
         const processedData = {
             tier: runData.Tier ?? runData.tier,
             wave: runData.Wave ?? runData.wave,
@@ -782,8 +853,9 @@ async function handlePasteFlow(interaction) {
             totalDice: runData['Reroll Shards Earned'] ?? runData.totalDice ?? runData.rerollShards,
             roundDuration: runData['Real Time'] ?? runData.roundDuration ?? runData.duration,
             killedBy: (runData['Killed By'] || runData.killedBy || '').toString().trim() || 'Apathy',
-            date: runData['Battle Date'] ? formatDate(new Date(runData['Battle Date'])) : formatDate(new Date()),
-            time: runData['Battle Date'] ? formatTime(new Date(runData['Battle Date'])) : formatTime(new Date()),
+            date: displayDate,
+            time: displayTime,
+            reportTimestamp: resolvedTimestamp.toISOString(),
             notes: preNote || '',
             // Add coverage data for sharing
             totalEnemies: runData['Total Enemies'] || runData.totalEnemies,

@@ -294,6 +294,20 @@ async function handleShareLastRun(interaction, commandInteractionId) {
             // Mark last run as shared in this session
             session.lastRunShared = true;
             userSessions.set(userId, session);
+
+            // Load and merge coverage data if available
+            const { loadSetting } = require('./settingsDB.js');
+            const coverageStr = loadSetting(userId, 'lastRunCoverage');
+            if (coverageStr) {
+                try {
+                    const coverageData = JSON.parse(coverageStr);
+                    session.data = { ...session.data, ...coverageData };
+                    console.log(`[ShareLastRun] Merged coverage data for user ${userId}`);
+                } catch (e) {
+                    console.error('[ShareLastRun] Error parsing coverage data:', e);
+                }
+            }
+
             // Reuse the same share handler
             await shareHandlers.handleShare(interaction);
             // After sharing, update the main menu message to disable the Share Last Run button and show 'Shared'

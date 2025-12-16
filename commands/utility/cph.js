@@ -1,4 +1,29 @@
 const { SlashCommandBuilder } = require('discord.js');
+const {
+	parseDurationToHours,
+	standardizeNotation,
+	parseNumberInput,
+	formatNumberForDisplay,
+	formatRateWithNotation,
+	normalizeDecimalSeparator
+} = require('./TrackerUtils/trackerHandlers/trackerHelpers.js');
+
+const VALUE_PATTERN = /^(\d+|\d*\.\d+)([KMBTqQsSOND]|A[A-J])?$/i;
+
+function parseResource(rawValue) {
+	if (!rawValue) return null;
+	const cleaned = normalizeDecimalSeparator(rawValue);
+	if (!cleaned) return null;
+	if (!VALUE_PATTERN.test(cleaned)) {
+		return { error: true };
+	}
+	const normalized = standardizeNotation(cleaned);
+	const value = parseNumberInput(normalized);
+	if (!Number.isFinite(value) || value < 0) {
+		return { error: true };
+	}
+	return { value };
+}
 
 module.exports = {
 	data: new SlashCommandBuilder()
@@ -15,67 +40,64 @@ module.exports = {
 		.addStringOption(option => 
 			option.setName('cells')
 				.setDescription('Enter cells earned (e.g., 1k, 1M, 1B)')
+				.setRequired(false))
+		.addStringOption(option =>
+			option.setName('dice')
+				.setDescription('Enter dice earned (e.g., 750, 1.2K)')
 				.setRequired(false)),
 	async execute(interaction) {
 		const timeInput = interaction.options.getString('time');
 		const coinsInput = interaction.options.getString('coins');
 		const cellsInput = interaction.options.getString('cells');
+		const diceInput = interaction.options.getString('dice');
 
-		// Convert time input into total hours
-		const timeRegex = /(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/;
-		const matches = timeInput.match(timeRegex);
-		const hours = matches[1] ? parseInt(matches[1]) : 0;
-		const minutes = matches[2] ? parseInt(matches[2]) : 0;
-		const seconds = matches[3] ? parseInt(matches[3]) : 0;
-		const totalHours = hours + minutes / 60 + seconds / 3600;
-
-		// Prevent division by zero
-		if (totalHours === 0) {
-			await interaction.reply("Invalid time input! Make sure to enter at least some time.");
+		const totalHours = parseDurationToHours(timeInput);
+		if (totalHours <= 0) {
+			await interaction.reply('Invalid time input! Please include at least one valid time component (e.g., 1h30m, 45m, 1:15:00).');
 			return;
 		}
 
-		// Function to convert shorthand notation (e.g., 1k, 1M) into numbers
-		const parseNotation = (value) => {
-			if (!value) return null;
-			const notationMap = {
-				'k': 1e3, 'M': 1e6, 'B': 1e9, 'T': 1e12,
-				'q': 1e15, 'Q': 1e18, 's': 1e21, 'S': 1e24
-			};
-			const match = value.match(/^(\d*\.?\d+)([kMBTqQsS]?)$/);
-			if (!match) return null;
-			const num = parseFloat(match[1]);
-			const multiplier = notationMap[match[2]] || 1;
-			return num * multiplier;
-		};
+		const resources = [
+			{ key: 'coins', label: 'Coins', emoji: '🪙', raw: coinsInput },
+			{ key: 'cells', label: 'Cells', emoji: '🔋', raw: cellsInput },
+			{ key: 'dice', label: 'Dice', emoji: '🎲', raw: diceInput }
+		].filter(resource => resource.raw);
 
-		// Function to format numbers back into notation (e.g., 1.5M instead of 1500000)
-		const formatNotation = (num) => {
-			if (num >= 1e24) return (num / 1e24).toFixed(2) + "S";
-			if (num >= 1e21) return (num / 1e21).toFixed(2) + "s";
-			if (num >= 1e18) return (num / 1e18).toFixed(2) + "Q";
-			if (num >= 1e15) return (num / 1e15).toFixed(2) + "q";
-			if (num >= 1e12) return (num / 1e12).toFixed(2) + "T";
-			if (num >= 1e9) return (num / 1e9).toFixed(2) + "B";
-			if (num >= 1e6) return (num / 1e6).toFixed(2) + "M";
-			if (num >= 1e3) return (num / 1e3).toFixed(2) + "k";
-			return num.toFixed(2);
-		};
-
-		// Convert inputs
-		const coins = parseNotation(coinsInput);
-		const cells = parseNotation(cellsInput);
-
-		// Prepare response
-		let response = `> Game time: ${timeInput}, Coins: ${formatNotation(coins)}, Cells: ${formatNotation(cells)}\n`;
-		if (coins !== null) {
-			const coinsPerHour = coins / totalHours;
-			response += `Coins per hour: ${formatNotation(coinsPerHour)}\n`;
+		if (!resources.length) {
+			await interaction.reply('Please provide at least one resource amount (coins, cells, or dice).');
+			return;
 		}
-		if (cells !== null) {
-			const cellsPerHour = cells / totalHours;
-			response += `Cells per hour: ${formatNotation(cellsPerHour)}`;
+
+		const invalid = [];
+		const computed = [];
+		for (const resource of resources) {
+			const parsed = parseResource(resource.raw);
+			if (!parsed || parsed.error) {
+				invalid.push(resource.label);
+				continue;
+			}
+			const perHour = formatRateWithNotation(parsed.value, totalHours);
+			computed.push({
+				label: resource.label,
+				emoji: resource.emoji,
+				total: parsed.value,
+				perHour
+			});
 		}
+
+		if (invalid.length) {
+			await interaction.reply(`Invalid amount provided for: ${invalid.join(', ')}. Use notation like 1.5M or 750k.`);
+			return;
+		}
+
+		const summaryLines = computed.map(resource => {
+			const totalDisplay = formatNumberForDisplay(resource.total);
+			return `${resource.emoji} ${resource.label}: ${totalDisplay} total → ${resource.perHour}/hr`;
+		});
+
+		const durationDisplay = totalHours >= 0.01 ? totalHours.toFixed(2) : totalHours.toString();
+		const header = `> Game time: ${timeInput.trim()} (${durationDisplay}h)`;
+		const response = [header, ...summaryLines].join('\n');
 
 		await interaction.reply(response);
 	},

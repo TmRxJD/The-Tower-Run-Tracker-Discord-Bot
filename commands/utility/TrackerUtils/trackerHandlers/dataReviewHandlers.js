@@ -313,6 +313,30 @@ async function handleDataSubmission(interaction) {
                     result = await trackerAPI.editRun(userId, username, apiData, session.runData, {}, screenshotBuffer, screenshotName);
                     runId = apiData.runId;
                     analyticsDB.logRunUpload(userId, runId);
+
+                    // Update coverage data for the edited run
+                    const coverageData = {};
+                    const coverageFields = [
+                        'Total Enemies', 'totalEnemies',
+                        'Enemies Hit by Orbs', 'enemiesHitByOrbs',
+                        'Tagged by Deathwave', 'taggedByDeathWave',
+                        'Destroyed in Spotlight', 'destroyedInSpotlight',
+                        'Destroyed in Golden Bot', 'destroyedInGoldenBot',
+                        'Summoned enemies', 'summonedEnemies',
+                        'Summoned Enemies', 'summoned_enemies',
+                        'Summoned', 'summoned',
+                        'Summon', 'summon'
+                    ];
+                    coverageFields.forEach(field => {
+                        if (apiData[field] !== undefined) {
+                            coverageData[field] = apiData[field];
+                        }
+                    });
+                    if (Object.keys(coverageData).length > 0) {
+                        const { saveSetting } = require('./settingsDB.js');
+                        saveSetting(userId, 'lastRunCoverage', JSON.stringify(coverageData));
+                        console.log(`[SUBMIT] Updated coverage data for edited run ${runId}`);
+                    }
                 }
             } else {
                 delete apiData.runId;
@@ -327,6 +351,30 @@ async function handleDataSubmission(interaction) {
                     if (!runId) throw new Error('Failed to get runId after logging run.');
                     console.log(`[SUBMIT] New run logged. ID: ${runId}`);
                     analyticsDB.logRunUpload(userId, runId);
+
+                    // Save coverage data for the last run to settings DB
+                    const coverageData = {};
+                    const coverageFields = [
+                        'Total Enemies', 'totalEnemies',
+                        'Enemies Hit by Orbs', 'enemiesHitByOrbs',
+                        'Tagged by Deathwave', 'taggedByDeathWave',
+                        'Destroyed in Spotlight', 'destroyedInSpotlight',
+                        'Destroyed in Golden Bot', 'destroyedInGoldenBot',
+                        'Summoned enemies', 'summonedEnemies',
+                        'Summoned Enemies', 'summoned_enemies',
+                        'Summoned', 'summoned',
+                        'Summon', 'summon'
+                    ];
+                    coverageFields.forEach(field => {
+                        if (apiData[field] !== undefined) {
+                            coverageData[field] = apiData[field];
+                        }
+                    });
+                    if (Object.keys(coverageData).length > 0) {
+                        const { saveSetting } = require('./settingsDB.js');
+                        saveSetting(userId, 'lastRunCoverage', JSON.stringify(coverageData));
+                        console.log(`[SUBMIT] Saved coverage data for run ${runId}`);
+                    }
                 }
 
                 const newRunEntry = { ...apiData, id: runId, runId: runId, timestamp: new Date().toISOString() };
@@ -335,6 +383,27 @@ async function handleDataSubmission(interaction) {
                     session.cachedRunData.allRuns = data?.allRuns || session.cachedRunData.allRuns;
                     session.cachedRunData.lastRun = data?.lastRun || session.cachedRunData.lastRun;
                     session.cachedRunData.runTypeCounts = data?.runTypeCounts || session.cachedRunData.runTypeCounts;
+
+                    // Merge coverage fields from the full apiData into the cached lastRun
+                    if (session.cachedRunData.lastRun && apiData) {
+                        const coverageFields = [
+                            'Total Enemies', 'totalEnemies',
+                            'Enemies Hit by Orbs', 'enemiesHitByOrbs',
+                            'Tagged by Deathwave', 'taggedByDeathWave',
+                            'Destroyed in Spotlight', 'destroyedInSpotlight',
+                            'Destroyed in Golden Bot', 'destroyedInGoldenBot',
+                            'Summoned enemies', 'summonedEnemies',
+                            'Summoned Enemies', 'summoned_enemies',
+                            'Summoned', 'summoned',
+                            'Summon', 'summon'
+                        ];
+                        coverageFields.forEach(field => {
+                            if (apiData[field] !== undefined) {
+                                session.cachedRunData.lastRun[field] = apiData[field];
+                            }
+                        });
+                    }
+
                     console.log(`[SUBMIT] Updated cachedRunData.allRuns (new count: ${session.cachedRunData.allRuns.length}) and lastRun.`);
                 }
             }

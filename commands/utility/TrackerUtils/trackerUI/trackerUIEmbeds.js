@@ -419,19 +419,25 @@ function createShareEmbed(displayName, runData, runCount, webLink, hasScreenshot
     const shareEmbed = new EmbedBuilder()
         .setAuthor({ name: user.username + ' Shared a Run', iconURL: user.displayAvatarURL() })
         .setTitle(title)
-        .setDescription(
-            (shareSettings.includeTier !== false ? `🔢 Tier: **${tierValueDisplay}**\n ` : '') +
-            (shareSettings.includeWave !== false ? `🌊 Wave: **${String(runData.wave)}**\n` : '') +
-            (shareSettings.includeDuration !== false ? `⏱️ Duration: **${formatDuration(runData.duration || runData.roundDuration)}**\n` : '') +
-            (shareSettings.includeKilledBy !== false ? `💀 Killed By: **${runData.killedBy}**\n` : '') +
-            (shareSettings.includeTotalCoins !== false ? `🪙 Total Coins: **${formatNumberForDisplay(parseNumberInput(runData.totalCoins || runData.coins), decimalPreference)}**\n` : '') +
-            (shareSettings.includeTotalCells !== false ? `🔋 Total Cells: **${formatNumberForDisplay(parseNumberInput(runData.totalCells || runData.cells), decimalPreference)}**\n` : '') +
-            (shareSettings.includeTotalDice !== false ? `🎲 Total Dice: **${formatNumberForDisplay(parseNumberInput(runData.totalDice || runData.rerollShards || runData.dice), decimalPreference)}**\n` : '') +
-            ((shareSettings.includeCoinsPerHour !== false || shareSettings.includeCellsPerHour !== false || shareSettings.includeDicePerHour !== false) ? `### **📈 Earnings per Hour**` : '')
-        )
         .setColor(Colors.Gold)
         .setThumbnail('https://i.postimg.cc/pTVP1MPh/Screenshot-2025-05-04-124710.png')
         .setFooter({ text: `📊 Tracked with The Tower Run Tracker\nUse /track to log a run` });
+
+    // Build description based on settings
+    const descriptionParts = [];
+    if (shareSettings.includeTier !== false) descriptionParts.push(`🔢 Tier: **${tierValueDisplay}**`);
+    if (shareSettings.includeWave !== false) descriptionParts.push(`🌊 Wave: **${String(runData.wave)}**`);
+    if (shareSettings.includeDuration !== false) descriptionParts.push(`⏱️ Duration: **${formatDuration(runData.duration || runData.roundDuration)}**`);
+    if (shareSettings.includeKilledBy !== false) descriptionParts.push(`💀 Killed By: **${runData.killedBy}**`);
+    if (shareSettings.includeTotalCoins !== false) descriptionParts.push(`🪙 Total Coins: **${formatNumberForDisplay(parseNumberInput(runData.totalCoins || runData.coins), decimalPreference)}**`);
+    if (shareSettings.includeTotalCells !== false) descriptionParts.push(`🔋 Total Cells: **${formatNumberForDisplay(parseNumberInput(runData.totalCells || runData.cells), decimalPreference)}**`);
+    if (shareSettings.includeTotalDice !== false) descriptionParts.push(`🎲 Total Dice: **${formatNumberForDisplay(parseNumberInput(runData.totalDice || runData.rerollShards || runData.dice), decimalPreference)}**`);
+    if (shareSettings.includeCoinsPerHour !== false || shareSettings.includeCellsPerHour !== false || shareSettings.includeDicePerHour !== false) descriptionParts.push(`### **📈 Earnings per Hour**`);
+
+    const description = descriptionParts.join('\n');
+    if (description.trim() !== '') {
+        shareEmbed.setDescription(description);
+    }
 
     if(shareSettings.includeCoinsPerHour !== false || shareSettings.includeCellsPerHour !== false || shareSettings.includeDicePerHour !== false) {
         const fields = [];
@@ -548,7 +554,17 @@ function generateCoverageDescription(runData) {
         const taggedByDeathWave = parseNumberInput(runData['Tagged by Deathwave'] || runData.taggedByDeathWave || 0);
         const destroyedInSpotlight = parseNumberInput(runData['Destroyed in Spotlight'] || runData.destroyedInSpotlight || 0);
         const destroyedInGoldenBot = parseNumberInput(runData['Destroyed in Golden Bot'] || runData.destroyedInGoldenBot || 0);
-        const summonedEnemies = parseNumberInput(runData['Summoned enemies'] || runData.summonedEnemies || 0);
+        const summonedEnemies = parseNumberInput(
+            runData['Summoned enemies'] || 
+            runData.summonedEnemies || 
+            runData['Summoned Enemies'] || 
+            runData.summoned_enemies || 
+            runData.Summoned || 
+            runData.summoned || 
+            runData['Summon'] || 
+            runData.summon || 
+            0
+        );
 
         hitByOrbsPercentage = Math.min(100, Math.round((enemiesHitByOrbs / totalEnemies) * 100));
         taggedByDeathWavePercentage = Math.min(100, Math.round((taggedByDeathWave / totalEnemies) * 100));

@@ -567,6 +567,11 @@ function normalizeDecimalSeparators(data) {
     const normalized = {};
     for (const [key, value] of Object.entries(data)) {
         if (typeof value === 'string') {
+            const lowerKey = key.toLowerCase();
+            if (lowerKey.includes('date') || lowerKey.includes('time')) {
+                normalized[key] = value.trim();
+                continue;
+            }
             // Replace comma with period in numeric strings (e.g., "321,27T" -> "321.27T")
             let normalizedValue = value.replace(/(\d),(\d)/g, '$1.$2');
             // Standardize notation to uppercase (e.g., "7.60aa" -> "7.60AA")

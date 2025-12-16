@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "tracker-bot.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "import-guilds": "node ./scripts/import_guilds.js"
   },
   "keywords": [],
   "author": "",

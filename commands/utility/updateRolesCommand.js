@@ -141,10 +141,10 @@ module.exports = {
             membersToCheck = [targetUser];
             console.log(`[updateRoles] Running for specific user: ${targetUser.tag} (${targetUser.id})`);
         } else {
-            // Fetch all members (ensure cache is filled)
-            await guild.members.fetch();
-            membersToCheck = guild.members.cache.filter(m => !m.user.bot).map(m => m.user);
-            console.log(`[updateRoles] Running for all members. Total: ${membersToCheck.length}`);
+            // Bulk fetching all members requires the Guild Members privileged intent.
+            // To avoid requiring that intent, require an explicit user parameter now.
+            await interaction.editReply({ content: 'Bulk member updates are disabled to avoid requiring privileged intents. Please run this command with a `user` option: `/update-roles user:@User`', ephemeral: true });
+            return;
         }
 
         const total = membersToCheck.length;

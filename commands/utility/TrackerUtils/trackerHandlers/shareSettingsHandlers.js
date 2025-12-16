@@ -15,19 +15,19 @@ async function loadShareSettings(userId) {
         const settings = loadAllSettings(userId);
         if (Object.keys(settings).length > 0) {
             return {
-                includeTier: settings.includeTier === 'true',
-                includeWave: settings.includeWave === 'true',
-                includeDuration: settings.includeDuration === 'true',
-                includeKilledBy: settings.includeKilledBy === 'true',
-                includeTotalCoins: settings.includeTotalCoins === 'true',
-                includeTotalCells: settings.includeTotalCells === 'true',
-                includeTotalDice: settings.includeTotalDice === 'true',
-                includeCoinsPerHour: settings.includeCoinsPerHour === 'true',
-                includeCellsPerHour: settings.includeCellsPerHour === 'true',
-                includeDicePerHour: settings.includeDicePerHour === 'true',
-                includeNotes: settings.includeNotes === 'true',
-                includeScreenshot: settings.includeScreenshot === 'true',
-                includeCoverage: settings.includeCoverage !== 'false' // Default to true
+                includeTier: settings.includeTier ? settings.includeTier === 'true' : true,
+                includeWave: settings.includeWave ? settings.includeWave === 'true' : true,
+                includeDuration: settings.includeDuration ? settings.includeDuration === 'true' : true,
+                includeKilledBy: settings.includeKilledBy ? settings.includeKilledBy === 'true' : true,
+                includeTotalCoins: settings.includeTotalCoins ? settings.includeTotalCoins === 'true' : true,
+                includeTotalCells: settings.includeTotalCells ? settings.includeTotalCells === 'true' : true,
+                includeTotalDice: settings.includeTotalDice ? settings.includeTotalDice === 'true' : true,
+                includeCoinsPerHour: settings.includeCoinsPerHour ? settings.includeCoinsPerHour === 'true' : true,
+                includeCellsPerHour: settings.includeCellsPerHour ? settings.includeCellsPerHour === 'true' : true,
+                includeDicePerHour: settings.includeDicePerHour ? settings.includeDicePerHour === 'true' : true,
+                includeNotes: settings.includeNotes ? settings.includeNotes === 'true' : true,
+                includeScreenshot: settings.includeScreenshot ? settings.includeScreenshot === 'true' : false,
+                includeCoverage: settings.includeCoverage ? settings.includeCoverage === 'true' : true
             };
         } else {
             // Return defaults
@@ -122,19 +122,25 @@ function createPreviewShareEmbed(selectedElements, user) {
     const shareEmbed = new EmbedBuilder()
         .setAuthor({ name: user.username + ' Shared a Run', iconURL: user.displayAvatarURL() })
         .setTitle('Farming Run #1')
-        .setDescription(
-            (selectedElements.includeTier ? `🔢 Tier: **14**\n` : '') +
-            (selectedElements.includeWave ? `🌊 Wave: **8309**\n` : '') +
-            (selectedElements.includeDuration ? `⏱️ Duration: **7h 36m 5s**\n` : '') +
-            (selectedElements.includeKilledBy ? `💀 Killed By: **Scatter**\n` : '') +
-            (selectedElements.includeTotalCoins ? `🪙 Total Coins: **90.01q**\n` : '') +
-            (selectedElements.includeTotalCells ? `🔋 Total Cells: **810.80K**\n` : '') +
-            (selectedElements.includeTotalDice ? `🎲 Total Dice: **11.33K**\n` : '') +
-            ((selectedElements.includeCoinsPerHour || selectedElements.includeCellsPerHour || selectedElements.includeDicePerHour) ? '### **📈 Earnings per Hour**' : '')
-        )
         .setColor(Colors.Gold)
         .setThumbnail('https://i.postimg.cc/pTVP1MPh/Screenshot-2025-05-04-124710.png')
         .setFooter({ text: ' Tracked with The Tower Run Tracker\nUse /track to log a run\n\n\nUse the dropdown below to select which elements you want to include in your share messages. The display will update in real time to show how your selections will affect the appearance of your share messages.' });
+
+    // Build description based on selected elements
+    const descriptionParts = [];
+    if (selectedElements.includeTier) descriptionParts.push(`🔢 Tier: **14**`);
+    if (selectedElements.includeWave) descriptionParts.push(`🌊 Wave: **8309**`);
+    if (selectedElements.includeDuration) descriptionParts.push(`⏱️ Duration: **7h 36m 5s**`);
+    if (selectedElements.includeKilledBy) descriptionParts.push(`💀 Killed By: **Scatter**`);
+    if (selectedElements.includeTotalCoins) descriptionParts.push(`🪙 Total Coins: **90.01q**`);
+    if (selectedElements.includeTotalCells) descriptionParts.push(`🔋 Total Cells: **810.80K**`);
+    if (selectedElements.includeTotalDice) descriptionParts.push(`🎲 Total Dice: **11.33K**`);
+    if (selectedElements.includeCoinsPerHour || selectedElements.includeCellsPerHour || selectedElements.includeDicePerHour) descriptionParts.push('### **📈 Earnings per Hour**');
+
+    const description = descriptionParts.join('\n');
+    if (description.trim() !== '') {
+        shareEmbed.setDescription(description);
+    }
 
     if (selectedElements.includeCoinsPerHour || selectedElements.includeCellsPerHour || selectedElements.includeDicePerHour) {
         const fields = [];

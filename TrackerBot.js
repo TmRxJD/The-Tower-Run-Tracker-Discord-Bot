@@ -2,16 +2,29 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
-const { token } = require('./config.json');
+const { REST, Routes } = require('discord.js');
+const { token, clientId } = require('./config.json');
+const db = require('./lib/db');
+db.init();
 
 const client = new Client({ intents: [
 	GatewayIntentBits.Guilds,
 	GatewayIntentBits.GuildMessages,
-	GatewayIntentBits.GuildMessageTyping,
-	GatewayIntentBits.GuildMessageReactions,
-	GatewayIntentBits.MessageContent,
-	GatewayIntentBits.GuildMembers
 ] });
+
+// Handlers for modal-based inputs (replace message-content collectors)
+const manualEntry = require('./commands/utility/TrackerUtils/trackerHandlers/manualEntryHandlers');
+const editHandlers = require('./commands/utility/TrackerUtils/trackerHandlers/editHandlers');
+
+// Simple in-process lock queue to serialize config read/write and deployments
+const _locks = new Map();
+function queueLock(name, job) {
+	const prev = _locks.get(name) || Promise.resolve();
+	const next = prev.then(() => job());
+	// store a version that won't reject the chain
+	_locks.set(name, next.catch(() => {}));
+	return next;
+}
 
 client.cooldowns = new Collection();
 client.commands = new Collection();
@@ -33,9 +46,42 @@ for (const folder of commandFolders) {
 	}
 }
 
-client.once(Events.ClientReady, c => {
+client.once(Events.ClientReady, async c => {
 	console.log('Github relay started.');
 	console.log(`Ready! Logged in as ${c.user.tag}`);
+
+	// On startup, ensure any guilds the bot is already in have commands deployed
+	try {
+		await queueLock('guild_ops', async () => {
+			const registered = new Set(db.listGuildIds());
+
+			// Build commands payload once
+			const commands = [];
+			for (const command of client.commands.values()) {
+				if (command && command.data && typeof command.data.toJSON === 'function') {
+					commands.push(command.data.toJSON());
+				}
+			}
+			const rest = new REST().setToken(token);
+
+			for (const [guildId, guild] of client.guilds.cache) {
+				if (!registered.has(guildId)) {
+					try {
+						await db.addGuild(guildId);
+						const data = await rest.put(
+							Routes.applicationGuildCommands(clientId, guildId),
+							{ body: commands }
+						);
+						console.log(`On startup: registered ${data.length} commands for guild ${guildId}`);
+					} catch (err) {
+						console.error(`Failed to register commands for guild ${guildId} on startup:`, err);
+					}
+				}
+			}
+		});
+	} catch (err) {
+		console.error('Error syncing guild commands on startup:', err);
+	}
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -44,6 +90,26 @@ client.on(Events.InteractionCreate, async interaction => {
 		console.log('Bot not ready, ignoring interaction');
 		return;
 	}
+
+	// Handle modal submits first (modal-based text inputs)
+	try {
+		if (interaction.isModalSubmit && interaction.isModalSubmit()) {
+			const customId = interaction.customId || '';
+			if (customId.startsWith('tracker_manual_modal:')) {
+				const field = customId.split(':')[1];
+				await manualEntry.handleManualModalSubmit(interaction, field);
+				return;
+			}
+			if (customId.startsWith('tracker_edit_modal:')) {
+				const field = customId.split(':')[1];
+				await editHandlers.handleEditModalSubmit(interaction, field);
+				return;
+			}
+		}
+	} catch (modalErr) {
+		console.error('Error handling modal submit:', modalErr);
+	}
+
 	if (!interaction.isChatInputCommand()) return;
 	const command = client.commands.get(interaction.commandName);
 
@@ -90,6 +156,45 @@ client.on(Events.InteractionCreate, async interaction => {
 		} catch (replyError) {
 			console.error('Failed to send error message:', replyError);
 		}
+	}
+});
+
+// When the bot is added to a new guild, register commands and persist the guild id
+client.on(Events.GuildCreate, async (guild) => {
+	try {
+		await queueLock('guild_ops', async () => {
+			await db.addGuild(guild.id);
+			console.log(`Added guild ${guild.id} to sqlite DB`);
+
+			// Build commands payload from loaded commands
+			const commands = [];
+			for (const command of client.commands.values()) {
+				if (command && command.data && typeof command.data.toJSON === 'function') {
+					commands.push(command.data.toJSON());
+				}
+			}
+
+			const rest = new REST().setToken(token);
+			const data = await rest.put(
+				Routes.applicationGuildCommands(clientId, guild.id),
+				{ body: commands },
+			);
+			console.log(`Successfully registered ${data.length} commands for guild ${guild.id}`);
+		});
+	} catch (error) {
+		console.error('Error handling guildCreate:', error);
+	}
+});
+
+// When the bot is removed from a guild, remove the guild id from config.json
+client.on(Events.GuildDelete, async (guild) => {
+	try {
+		await queueLock('guild_ops', async () => {
+			await db.removeGuild(guild.id);
+			console.log(`Removed guild ${guild.id} from sqlite DB`);
+		});
+	} catch (error) {
+		console.error('Error handling guildDelete:', error);
 	}
 });
 

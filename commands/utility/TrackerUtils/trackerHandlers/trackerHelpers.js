@@ -4,12 +4,20 @@ const NOTATIONS = {
     AA: 1e36, AB: 1e39, AC: 1e42, AD: 1e45, AE: 1e48, AF: 1e51, AG: 1e54, AH: 1e57, AI: 1e60, AJ: 1e63
 };
 
+function normalizeDecimalSeparator(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .trim()
+        .replace(/\s+/g, '')
+        .replace(/,/g, '.');
+}
+
 function parseNumberInput(input) {
     if (typeof input === 'number') return input;
-    const inputStr = String(input).replace(/,/g, '').trim();
-    const match = inputStr.match(/^(\d+|\d*\.\d+)([KMBTqQsSOND]|A[A-J])?$/);
+    const normalized = normalizeDecimalSeparator(input);
+    const match = normalized.match(/^(\d+|\d*\.\d+)([KMBTqQsSOND]|A[A-J])?$/);
     if (!match) {
-        const number = parseFloat(inputStr);
+        const number = parseFloat(normalized);
         if (!isNaN(number)) return number;
         return 0;
     }
@@ -32,9 +40,10 @@ function avg(arr) {
  */
 function standardizeNotation(value) {
     if (!value || typeof value !== 'string') return value;
+    const normalizedValue = normalizeDecimalSeparator(value);
     // Match number and notation parts
-    const match = value.match(/^([\d.,]+)([a-zA-Z]*)$/);
-    if (!match) return value;
+    const match = normalizedValue.match(/^([\d.]+)([a-zA-Z]*)$/);
+    if (!match) return normalizedValue;
     const number = match[1];
     let notation = match[2];
     // If there's notation, standardize it (uppercase except Q/q and S/s, which are preserved as-is)
@@ -47,7 +56,7 @@ function standardizeNotation(value) {
         }).join('');
         return number + notation;
     }
-    return value;
+    return number;
 }
 
 /**
@@ -60,7 +69,7 @@ function formatNumberForDisplay(value, decimalPreference = 'Period (.)') {
     let num = value;
     if (typeof value === 'string') {
         // Try to parse if it's a string
-        num = parseFloat(value.replace(/,/g, ''));
+        num = parseFloat(normalizeDecimalSeparator(value));
         if (isNaN(num)) return value; // If not a number, return as is
     }
     if (typeof num !== 'number' || isNaN(num)) return String(value);
@@ -356,6 +365,54 @@ function formatTime(time) {
     const seconds = time.getSeconds().toString().padStart(2, '0');
     
     return `${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Attempts to parse the in-game "Battle Date" string into a Date object.
+ * Handles common quirks like ordinal suffixes, stray symbols, or missing colons.
+ * @param {string|Date} rawDate - Raw date value from OCR/inputs
+ * @returns {Date|null} Parsed Date instance or null if parsing fails
+ */
+function parseBattleDateTime(rawDate) {
+    if (!rawDate) return null;
+    if (rawDate instanceof Date && !Number.isNaN(rawDate.getTime())) {
+        return rawDate;
+    }
+
+    let cleaned = String(rawDate)
+        .replace(/@/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!cleaned) return null;
+
+    // Remove ordinal suffixes like 22nd
+    cleaned = cleaned.replace(/(\d{1,2})(st|nd|rd|th)/gi, '$1');
+
+    const candidates = new Set();
+    candidates.add(cleaned);
+
+    // Convert "09 18" suffix into "09:18" if colon missing
+    if (!/\d+:\d+/.test(cleaned)) {
+        const colonCandidate = cleaned.replace(/(\d{1,2})\s+(\d{2})(\s*[ap]m)?$/i, (_, h, m, suffix = '') => {
+            const meridian = suffix ? suffix.trim().toUpperCase() : '';
+            return `${h}:${m}${meridian ? ' ' + meridian : ''}`;
+        });
+        candidates.add(colonCandidate.trim());
+    }
+
+    // Convert formats like 09h18m -> 09:18
+    const hmCandidate = cleaned.replace(/(\d{1,2})h\s*(\d{1,2})(?:m)?/gi, '$1:$2');
+    candidates.add(hmCandidate.trim());
+
+    for (const candidate of candidates) {
+        const parsed = new Date(candidate);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed;
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -857,14 +914,18 @@ function formatRateWithNotation(amount, hours) {
         AA: 1e36, AB: 1e39, AC: 1e42, AD: 1e45, AE: 1e48, AF: 1e51, AG: 1e54, AH: 1e57, AI: 1e60, AJ: 1e63
     };
     
+    const normalizedAmount = typeof amount === 'string'
+        ? normalizeDecimalSeparator(amount)
+        : amount;
+
     // Extract numeric value and notation
     let numericValue;
     let notation = '';
     
-    if (typeof amount === 'number') {
-        numericValue = amount;
+    if (typeof normalizedAmount === 'number') {
+        numericValue = normalizedAmount;
     } else {
-    const match = String(amount).match(/^(\d+(?:\.\d+)?)([KMBTSqQsS]*)$/i);
+    const match = String(normalizedAmount).match(/^(\d+(?:\.\d+)?)([KMBTSqQsS]*)$/i);
         if (match) {
             numericValue = parseFloat(match[1]);
             notation = match[2];
@@ -875,7 +936,7 @@ function formatRateWithNotation(amount, hours) {
                 }
             }
         } else {
-            numericValue = parseFloat(amount);
+            numericValue = parseFloat(normalizedAmount);
         }
     }
     
@@ -948,20 +1009,93 @@ function formatRateWithNotation(amount, hours) {
  * @returns {number} - Total hours as decimal
  */
 function parseDurationToHours(duration) {
-    if (!duration || duration === 'Unknown') {
+    if (duration === null || duration === undefined || duration === 'Unknown') {
         return 0;
     }
 
-    const timeMatch = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
-    if (!timeMatch) {
+    if (typeof duration === 'number' && Number.isFinite(duration)) {
+        return duration;
+    }
+
+    const normalized = String(duration)
+        .trim()
+        .replace(/,/g, '.')
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+
+    if (!normalized) {
         return 0;
     }
 
-    const hours = timeMatch[1] ? parseInt(timeMatch[1]) : 0;
-    const minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
-    const seconds = timeMatch[3] ? parseInt(timeMatch[3]) : 0;
+    // Support clock formatted strings like HH:MM or HH:MM:SS
+    const clockMatchToken = normalized.match(/(\d+:\d{1,2}(?::\d{1,2})?)/);
+    if (clockMatchToken) {
+        const parts = clockMatchToken[1].split(':').map(part => parseInt(part, 10) || 0);
+        if (parts.length === 3) {
+            return parts[0] + (parts[1] / 60) + (parts[2] / 3600);
+        }
+        if (parts.length === 2) {
+            return parts[0] + (parts[1] / 60);
+        }
+    }
 
-    return hours + minutes / 60 + seconds / 3600;
+    let totalDays = 0;
+    let totalHours = 0;
+    let totalMinutes = 0;
+    let totalSeconds = 0;
+    let matched = false;
+
+    const tokenRegex = /(\d+(?:\.\d+)?)\s*(d|day|days|h|hr|hrs|hour|hours|m|min|mins|minute|minutes|s|sec|secs|second|seconds)/gi;
+    let tokenMatch;
+    while ((tokenMatch = tokenRegex.exec(normalized)) !== null) {
+        matched = true;
+        const value = parseFloat(tokenMatch[1]);
+        const unit = tokenMatch[2][0]; // first character identifies the unit
+        if (unit === 'd') {
+            totalDays += value;
+        } else if (unit === 'h') {
+            totalHours += value;
+        } else if (unit === 'm') {
+            totalMinutes += value;
+        } else if (unit === 's') {
+            totalSeconds += value;
+        }
+    }
+
+    // Fallback for compact strings like 1h30m45s
+    if (!matched) {
+        const compactRegex = /(\d+(?:\.\d+)?)([dhms])/gi;
+        let compactMatch;
+        while ((compactMatch = compactRegex.exec(normalized)) !== null) {
+            matched = true;
+            const value = parseFloat(compactMatch[1]);
+            const unit = compactMatch[2];
+            if (unit === 'd') {
+                totalDays += value;
+            } else if (unit === 'h') {
+                totalHours += value;
+            } else if (unit === 'm') {
+                totalMinutes += value;
+            } else if (unit === 's') {
+                totalSeconds += value;
+            }
+        }
+    }
+
+    if (!matched) {
+        const numericFallback = parseFloat(normalized);
+        if (!isNaN(numericFallback)) {
+            totalHours += numericFallback;
+            matched = true;
+        }
+    }
+
+    if (!matched) {
+        return 0;
+    }
+
+    const combinedHours = (totalDays * 24) + totalHours + (totalMinutes / 60) + (totalSeconds / 3600);
+    return Number.isFinite(combinedHours) ? combinedHours : 0;
 }
 
 /**
@@ -1137,6 +1271,7 @@ module.exports = {
     parseDurationToHours,
     formatDate,
     formatTime,
+    parseBattleDateTime,
     findPotentialDuplicateRun,
     getDecimalForLanguage,
     ocrFieldTranslations,
@@ -1147,6 +1282,7 @@ module.exports = {
     formatRateWithNotation,
     NOTATIONS,
     parseNumberInput,
+    normalizeDecimalSeparator,
     avg,
     parseTierString
 };

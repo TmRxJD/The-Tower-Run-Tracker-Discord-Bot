@@ -206,30 +206,21 @@ async function setupEditFieldFlow(interaction) {
         }
         const fieldKey = session.fieldsToEdit[session.currentEditField];
         await updateEditFieldPrompt(interaction);
-        const filter = m => m.author.id === userId;
-        const collector = channel.createMessageCollector({
-            filter,
-            max: 1,
-            time: 300000 // 5 minutes
-        });
-        collector.on('collect', async message => {
-            try {
-                await message.delete().catch(() => {});
-                let value = message.content;
-                if (["totalCoins", "totalCells", "totalDice", "coins", "cells", "dice"].includes(fieldKey)) {
-                    value = standardizeNotation(value);
-                } else if (fieldKey === "killedBy" || fieldKey === "Killed By") {
-                    value = toTitleCase(value);
-                }
-                session.data[fieldKey] = value;
-                session.currentEditField++;
-                collector.stop();
-                await setupEditFieldFlow(interaction);
-            } catch (error) {
-                console.error('Error processing field edit:', error);
-                await handleError(interaction, error);
-            }
-        });
+        // Use modal for field input instead of message collector
+        session.currentlyEditingField = fieldKey;
+        userSessions.set(userId, session);
+        const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
+        const modal = new ModalBuilder()
+            .setCustomId(`tracker_edit_modal:${fieldKey}`)
+            .setTitle(`Edit ${getDisplayFieldName(fieldKey)}`);
+        const input = new TextInputBuilder()
+            .setCustomId('tracker_input')
+            .setLabel(`New value for ${getDisplayFieldName(fieldKey)}`)
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
+        await interaction.showModal(modal);
+        return;
         const messageObj = await interaction.fetchReply();
         const buttonCollector = messageObj.createMessageComponentCollector({
             componentType: ComponentType.Button,
@@ -422,5 +413,32 @@ function getFieldFormatExample(field) {
 module.exports = {
     handleEditCurrentRun,
     handleDataEdit,
-    handleFieldEdit
+    handleFieldEdit,
+    async handleEditModalSubmit(interaction, field) {
+        try {
+            const userId = interaction.user.id;
+            const session = userSessions.get(userId);
+            if (!session) {
+                await interaction.reply({ content: 'Session expired or not found. Restart the edit flow.', ephemeral: true });
+                return;
+            }
+            const valueRaw = interaction.fields.getTextInputValue('tracker_input');
+            let value = valueRaw;
+            const fieldKey = field;
+            if (["totalCoins", "totalCells", "totalDice", "coins", "cells", "dice"].includes(fieldKey)) {
+                value = standardizeNotation(valueRaw);
+            } else if (fieldKey === "killedBy" || fieldKey === "Killed By") {
+                value = toTitleCase(valueRaw);
+            }
+            session.data[fieldKey] = value;
+            session.currentEditField++;
+            userSessions.set(userId, session);
+            await interaction.reply({ content: `Updated ${getDisplayFieldName(fieldKey)}.`, ephemeral: true });
+            // Continue flow
+            await setupEditFieldFlow(interaction);
+        } catch (err) {
+            console.error('Error in handleEditModalSubmit:', err);
+            try { await interaction.reply({ content: 'Failed to process input.', ephemeral: true }); } catch(e){}
+        }
+    }
 };

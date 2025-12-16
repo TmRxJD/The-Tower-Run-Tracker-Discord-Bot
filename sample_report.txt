@@ -1,0 +1,92 @@
+Battle Report
+Battle Date    Nov 17, 2025 04:58
+Game Time    1d 12h 15m 8s
+Real Time    7h 18m 13s
+Tier    18
+Wave    8023
+Killed By    Fast
+Coins earned    6.32Q
+Coins per hour    865.81q
+Cash earned    $57.19T
+Interest earned    $8.56M
+Gem Blocks Tapped    5
+Cells Earned    1.65M
+Reroll Shards Earned    129.24K
+Combat
+Damage dealt    1.93ac
+Damage Taken    5.51s
+Damage Taken Wall    577.96Q
+Damage Taken While Berserked    267.21s
+Damage Gain From Berserk    x500.00
+Death Defy    20
+Lifesteal    77.98T
+Projectiles Damage    12.18ab
+Projectiles Count    44.63M
+Thorn damage    326.91aa
+Orb Damage    1.18ac
+Enemies Hit by Orbs    1.01M
+Land Mine Damage    52.51D
+Land Mines Spawned    569562
+Rend Armor Damage    33.92aa
+Death Ray Damage    0
+Smart Missile Damage    8.04ab
+Inner Land Mine Damage    7.74aa
+Chain Lightning Damage    628.72ab
+Death Wave Damage    10.44aa
+Tagged by Deathwave    1126364
+Swamp Damage    6.67ab
+Black Hole Damage    93.74ab
+Utility
+Waves Skipped    3740
+Recovery Packages    3973
+Free Attack Upgrade    598
+Free Defense Upgrade    0
+Free Utility Upgrade    68
+HP From Death Wave    0.00
+Coins From Death Wave    16.33T
+Cash From Golden Tower    $1.60T
+Coins From Golden Tower    3.91Q
+Coins From Black Hole    112.34T
+Coins From Spotlight    22.34T
+Coins From Orb    4.21T
+Coins from Coin Upgrade    2.13q
+Coins from Coin Bonuses    2.40Q
+Enemies Destroyed
+Total Enemies    1186895
+Basic    222851
+Fast    293394
+Tank    273324
+Ranged    260503
+Boss    1011
+Protector    1161
+Total Elites    12673
+Vampires    4186
+Rays    4229
+Scatters    4258
+Saboteur    22
+Commander    28
+Overcharge    30
+Destroyed By Orbs    577868
+Destroyed by Thorns    1
+Destroyed by Death Ray    0
+Destroyed by Land Mine    1
+Destroyed in Spotlight    1166786
+Bots
+Flame Bot Damage    14.82D
+Thunder Bot Stuns    0
+Golden Bot Coins Earned    74.50T
+Destroyed in Golden Bot    817657
+Guardian
+Damage    0
+Summoned enemies    90.23K
+Guardian coins stolen    0
+Coins Fetched    5.47q
+Gems    9
+Medals    2
+Reroll Shards    152
+Cannon Shards    9
+Armor Shards    9
+Generator Shards    0
+Core Shards    6
+Common Modules    1
+Rare Modules    0

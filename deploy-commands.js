@@ -1,7 +1,16 @@
 const { REST, Routes } = require('discord.js');
-const { clientId, guildIds, token } = require('./config.json'); // Adjusted to support multiple guilds
+const { clientId, guildIds: cfgGuildIds, token } = require('./config.json'); // Adjusted to support multiple guilds
 const fs = require('node:fs');
 const path = require('node:path');
+let guildIds = cfgGuildIds || [];
+let dbModule = null;
+try {
+    dbModule = require('./lib/db');
+    const ids = dbModule.listGuildIds();
+    if (ids && ids.length) guildIds = ids;
+} catch (e) {
+    // DB not available, fallback to config.json
+}
 
 const commands = [];
 // Grab all the command folders from the commands directory
@@ -41,8 +50,16 @@ const rest = new REST().setToken(token);
             );
             console.log(`Successfully reloaded ${data.length} application (/) commands in guild ${guildId}.`);
         }
+        // close DB connection if we opened it so Node can exit cleanly
+        try {
+            if (dbModule && typeof dbModule.close === 'function') dbModule.close();
+        } catch (e) {}
+        // exit successfully
+        process.exit(0);
     } catch (error) {
         // Catch and log any errors
         console.error(error);
+        try { if (dbModule && typeof dbModule.close === 'function') dbModule.close(); } catch (e) {}
+        process.exit(1);
     }
 })();

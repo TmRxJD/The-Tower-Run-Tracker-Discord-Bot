@@ -95,48 +95,24 @@ async function showNextManualField(interaction, commandInteractionId) {
         const channel = interaction.channel;
         let collectedInput = false;
 
-        // --- Conditional Message Collector ---
-        let messageCollector;
+        // --- Modal-based input (replaces message collector) ---
         if (expectMessageInput) {
-            const messageFilter = m => m.author.id === userId;
-            messageCollector = channel.createMessageCollector({ filter: messageFilter, max: 1, time: 300000 });
-
-            messageCollector.on('collect', async msg => {
-                 if (collectedInput) return;
-                 collectedInput = true;
-                 componentCollector.stop(); // Stop component collector
-                 await msg.delete().catch(console.error);
-                 const value = msg.content.trim();
-                 const fieldKey = currentField.toLowerCase().replace(/ /g, '');
-                 const decimalPreference = session.settings?.decimalPreference || 'Period (.)';
-                 
-                 // Process text input (excluding Run Type)
-                 try {
-                     if (['coins', 'cells', 'dice'].includes(fieldKey)) {
-                        session.manualData[`total${fieldKey.charAt(0).toUpperCase() + fieldKey.slice(1)}`] = standardizeNotation(value, decimalPreference);
-                     } else if (fieldKey === 'killedby') {
-                         session.manualData.killedBy = toTitleCase(value);
-                     } else if (fieldKey === 'duration') {
-                         session.manualData.roundDuration = value;
-                     } else if (fieldKey === 'date') {
-                         session.manualData.date = value; 
-                     } else if (fieldKey === 'time') {
-                         session.manualData.time = value; 
-                     } else if (fieldKey === 'notes' && value.toLowerCase() === 'n/a') {
-                         session.manualData.notes = '';
-                     } else if (fieldKey !== 'runtype') { // Make sure not to process runtype here
-                         session.manualData[fieldKey] = value;
-                     }
-                     userSessions.set(userId, session); // Save session after update
-                 } catch (processingError) {
-                     console.error('[Manual Entry] Input processing error:', processingError);
-                     trackerEmitter.emit(`error_${commandInteractionId}`, interaction, new Error(`Invalid format for ${currentField}.`));
-                     return; 
-                 }
-
-                 session.currentField++;
-                 await checkManualEntryCompletion(interaction, commandInteractionId, session);
-            });
+            // Store commandInteractionId so modal submit handler can continue the flow
+            session.commandInteractionId = commandInteractionId;
+            userSessions.set(userId, session);
+            const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
+            const modal = new ModalBuilder()
+                .setCustomId(`tracker_manual_modal:${currentField}`)
+                .setTitle(`Enter ${currentField}`);
+            const input = new TextInputBuilder()
+                .setCustomId('tracker_input')
+                .setLabel(`Value for ${currentField}`)
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true);
+            modal.addComponents(new ActionRowBuilder().addComponents(input));
+            await interaction.showModal(modal);
+            // Flow will continue in handleManualModalSubmit
+            return;
         }
 
         // --- Component Collector (Handles Buttons AND Select Menus) ---
@@ -245,4 +221,41 @@ async function checkManualEntryCompletion(interaction, commandInteractionId, ses
 
 module.exports = {
     handleManualEntryFlow,
+    // Modal submit handler (called from central interaction router)
+    async handleManualModalSubmit(interaction, field) {
+        try {
+            const userId = interaction.user.id;
+            const session = userSessions.get(userId);
+            if (!session) {
+                await interaction.reply({ content: 'Session expired or not found. Please start manual entry again.', ephemeral: true });
+                return;
+            }
+            const value = interaction.fields.getTextInputValue('tracker_input')?.trim();
+            const fieldKey = field.toLowerCase().replace(/ /g, '');
+            const decimalPreference = session.settings?.decimalPreference || 'Period (.)';
+            if (['coins', 'cells', 'dice'].includes(fieldKey)) {
+                session.manualData[`total${fieldKey.charAt(0).toUpperCase() + fieldKey.slice(1)}`] = standardizeNotation(value, decimalPreference);
+            } else if (fieldKey === 'killedby') {
+                session.manualData.killedBy = toTitleCase(value);
+            } else if (fieldKey === 'duration') {
+                session.manualData.roundDuration = value;
+            } else if (fieldKey === 'date') {
+                session.manualData.date = value;
+            } else if (fieldKey === 'time') {
+                session.manualData.time = value;
+            } else if (fieldKey === 'notes' && value.toLowerCase() === 'n/a') {
+                session.manualData.notes = '';
+            } else if (fieldKey !== 'runtype') {
+                session.manualData[fieldKey] = value;
+            }
+            userSessions.set(userId, session);
+            await interaction.reply({ content: `Recorded ${field}.`, ephemeral: true });
+            // Continue the flow
+            const cmdId = session.commandInteractionId || null;
+            await checkManualEntryCompletion(interaction, cmdId, session);
+        } catch (err) {
+            console.error('Error in handleManualModalSubmit:', err);
+            try { await interaction.reply({ content: 'Failed to process input.', ephemeral: true }); } catch(e){}
+        }
+    }
 }; 
