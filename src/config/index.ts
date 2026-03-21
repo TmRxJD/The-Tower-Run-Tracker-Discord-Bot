@@ -5,6 +5,13 @@ import { z } from 'zod';
 
 export type DeploymentMode = 'dev' | 'prod';
 
+function normalizeDeploymentMode(value: string | undefined): DeploymentMode {
+  if (!value) return 'dev';
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'prod' || normalized === 'production') return 'prod';
+  return 'dev';
+}
+
 export interface AppConfig {
   deploymentMode: DeploymentMode;
   discord: {
@@ -135,7 +142,7 @@ function loadEnvFilesFromRoot(root: string, mode: DeploymentMode): boolean {
 }
 
 function applyDotenvFiles() {
-  const mode = (process.env.DEPLOYMENT_MODE as DeploymentMode | undefined) ?? 'dev';
+  const mode = normalizeDeploymentMode(process.env.DEPLOYMENT_MODE ?? process.env.NODE_ENV);
 
   const envRoot = resolveEnvRootCandidates().find(root => hasAnyEnvFile(root, mode));
   if (envRoot) {
@@ -159,6 +166,7 @@ export function loadConfig(): AppConfig {
   if (cachedConfig) return cachedConfig;
 
   applyDotenvFiles();
+  process.env.DEPLOYMENT_MODE = normalizeDeploymentMode(process.env.DEPLOYMENT_MODE ?? process.env.NODE_ENV);
   const parsed = envSchema.parse(process.env);
 
   cachedConfig = {
