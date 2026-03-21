@@ -1,0 +1,393 @@
+{
+  "common": {
+    "retryLabel": "Retry",
+    "cancelledMessage": "Cancelled."
+  },
+  "review": {
+    "titlePrefix": "📊",
+    "titleSuffix": "Data Review",
+    "defaultLabel": "Extracted",
+    "duplicateDescription": "**⚠️ Existing entry found. Data will be updated.**\nReview the data before confirming.",
+    "normalDescription": "Please review the extracted data below. Ensure all values are correct before accepting.",
+    "notesFallback": "Use 'Add Note' button to attach a note",
+    "typePlaceholder": "Select run type",
+    "typeOptions": ["Farming", "Overnight", "Tournament", "Milestone"],
+    "buttons": {
+      "addNote": "Add Note",
+      "showFullParse": "Show Full Parse",
+      "accept": "Accept",
+      "edit": "Edit",
+      "cancel": "Main Menu",
+      "doneEditing": "Done Editing"
+    },
+    "messages": {
+      "sessionCancelled": "Tracker session cancelled.",
+      "closed": "Closed.",
+      "interactionInvalid": "This interaction is no longer valid.",
+      "sessionExpiredStart": "Session expired. Please start again with /track.",
+      "cloudUnavailable": "Cloud sync is currently unavailable. Your run is safely stored locally and will upload automatically when cloud is reachable again.",
+      "submissionFailedPrefix": "Run submission failed. Please try again.",
+      "editLabel": "Editing",
+      "processingSubmission": "Processing submission...",
+      "successNavigationUploadAnother": "Start a new run with /track.",
+      "successNavigationDefault": "Return to /track to log another run."
+    },
+    "modals": {
+      "addNoteTitle": "Add Note",
+      "noteLabel": "Note",
+      "notePlaceholder": "Add context for this run",
+      "editFieldTitle": "Edit Field"
+    },
+    "fieldLabels": {
+      "tier": "Tier (e.g. 13 or 13+)",
+      "wave": "Wave",
+      "roundDuration": "Duration (e.g. 1h23m45s)",
+      "totalCoins": "Coins",
+      "totalCells": "Cells",
+      "totalDice": "Dice",
+      "killedBy": "Killed By",
+      "date": "Date",
+      "time": "Time",
+      "notes": "Notes"
+    },
+    "embedFieldNameMap": {
+      "tier": "🔢\nTier",
+      "wave": "🌊\nWave",
+      "duration": "⏱️\nDuration",
+      "totalCoins": "🪙\nCoins",
+      "coins": "🪙\nCoins",
+      "totalCells": "🔋\nCells",
+      "cells": "🔋\nCells",
+      "totalDice": "🎲\nDice",
+      "dice": "🎲\nDice",
+      "rerollShards": "🎲\nDice",
+      "killedBy": "💀\nKilled By",
+      "dateTime": "📅\nDate/Time",
+      "notes": "📝\nNotes",
+      "note": "📝\nNotes",
+      "type": "📋\nRun Type"
+    },
+    "numericFieldKeys": ["totalCoins", "coins", "totalCells", "cells", "totalDice", "dice", "rerollShards"],
+    "standardFieldOrder": ["tier", "wave", "duration", "totalCoins", "coins", "totalCells", "cells", "totalDice", "dice", "rerollShards", "killedBy", "dateTime", "type", "notes"],
+    "skipFieldKeys": [
+      "tierDisplay", "Tierdisplay", "tierdisplay", "tierHasPlus", "tierhasplus", "Tierhasplus",
+      "roundDuration", "time", "reportTimestamp", "Reporttimestamp", "reporttimestamp",
+      "runDateTime", "runDate", "runTime", "date", "runId", "Runid", "runid", "data",
+      "totalEnemies", "Totalenemies", "totalenemies", "taggedByDeathWave", "Taggedbydeathwave", "taggedbydeathwave",
+      "destroyedByOrbs", "Destroyedbyorbs", "destroyedbyorbs", "destroyedInSpotlight", "Destroyedinspotlight", "destroyedinspotlight",
+      "destroyedInGoldenBot", "Destroyedingoldenbot", "destroyedingoldenbot"
+    ]
+  },
+  "success": {
+    "rows": [
+      [
+        { "key": "shareLast", "label": "Share to Channel", "style": "Success", "emoji": "📢" },
+        { "key": "editLast", "label": "Edit Last", "style": "Primary", "emoji": "✏️" }
+      ],
+      [
+        { "key": "uploadAnother", "label": "Add Another", "style": "Success", "emoji": "➕" },
+        { "key": "viewRuns", "label": "View Runs", "style": "Primary", "emoji": "📈" }
+      ],
+      [
+        { "key": "mainMenu", "label": "Main Menu", "style": "Secondary", "emoji": "🏠" },
+        { "key": "webTracker", "label": "Web Tracker", "style": "Link", "emoji": "🔗" }
+      ]
+    ]
+  },
+  "initialMenu": {
+    "title": "📊 The Tower Run Tracker",
+    "url": "https://the-tower-run-tracker.com/",
+    "thumbnail": "https://i.postimg.cc/pTVP1MPh/Screenshot-2025-05-04-124710.png",
+    "welcomeBackTemplate": "Welcome back, <@{userId}>!\nYou've logged **{totalRuns}** runs.\n\n**Here is your last run:**",
+    "welcomeNewTemplate": "Welcome to the Tower Tracker, <@{userId}>! Log and analyze your runs.",
+    "availableOptionsHeader": "**Available Options:**",
+    "options": [
+      { "name": "📤 Upload", "value": "Paste or Scan your Battle Report. You can also attach a screenshot when you paste.", "inline": true },
+      { "name": "📝 Manual Entry", "value": "Manually enter all run details if you prefer not to use paste or OCR.", "inline": true },
+      { "name": "📢 Share Last Run", "value": "Share your last logged run with others in the channel.", "inline": true },
+      { "name": "✏️ Edit Last", "value": "Edit the most recent run you logged. Lets you quickly fix mistakes or update notes.", "inline": true },
+      { "name": "🗑️ Remove Last", "value": "Remove your most recent logged run with confirmation.", "inline": true },
+      { "name": "📈 View Runs", "value": "View and analyze your previous runs with charts, tables, and filters.", "inline": true },
+      { "name": "🔗 Web Tracker", "value": "Open your personal tracker website to view, edit, and analyze your runs.", "inline": true },
+      { "name": "🎟️ Support", "value": "Go to the Tracker Discord server to make a ticket or ask for help.", "inline": true },
+      { "name": "⚙️ Settings", "value": "Configure tracker options such as scan language, timezone, and more.", "inline": true }
+    ],
+    "footer": "Use Creator Code \"JDEVO\" to Support The Tower Run Tracker!",
+    "lastRunFieldLabels": {
+      "tierWave": "🔢\nTier|Wave",
+      "duration": "⏱️\nDuration",
+      "killedBy": "💀\nKilled By",
+      "coins": "🪙\nCoins",
+      "cells": "🔋\nCells",
+      "dice": "🎲\nDice",
+      "coinsPerHour": "🪙\nCoins/Hr",
+      "cellsPerHour": "🔋\nCells/Hr",
+      "dicePerHour": "🎲\nDice/Hr",
+      "runType": "📋\nRun Type",
+      "runNumber": "#️⃣\nRun #",
+      "dateTime": "📅\nDate/Time",
+      "runId": "🆔 Run ID",
+      "notes": "📝\nNotes"
+    },
+    "lastRunFieldOrder": [
+      "tierWave", "duration", "killedBy", "coins", "cells", "dice",
+      "coinsPerHour", "cellsPerHour", "dicePerHour", "runType", "runNumber", "dateTime"
+    ],
+    "mainRows": [
+      [
+        { "key": "addRun", "label": "Add Run", "style": "Success", "emoji": "➕" },
+        { "key": "manual", "label": "Manual Entry", "style": "Primary", "emoji": "📝" },
+        { "key": "shareLastMenu", "label": "Share Last Run", "style": "Success", "emoji": "📢" }
+      ],
+      [
+        { "key": "editLast", "label": "Edit Last", "style": "Primary", "emoji": "✏️" },
+        { "key": "removeLast", "label": "Remove Last", "style": "Danger", "emoji": "🗑️" },
+        { "key": "viewRuns", "label": "View Runs", "style": "Primary", "emoji": "📈" }
+      ],
+      [
+        { "key": "webTracker", "label": "Web Tracker", "style": "Link", "emoji": "🔗" },
+        { "key": "support", "label": "Support", "style": "Primary", "emoji": "🎟️" },
+        { "key": "settings", "label": "Settings", "style": "Secondary", "emoji": "⚙️" }
+      ]
+    ]
+  },
+  "submission": {
+    "title": "The Tower Run Tracker",
+    "url": "https://the-tower-run-tracker.com/",
+    "descriptionLogged": "✅ Run **logged** successfully!\n\nYou have now logged **{totalRuns}** total runs.",
+    "descriptionUpdated": "✅ Run **updated** successfully!\n\nYou have now logged **{totalRuns}** total runs.",
+    "fieldNameMap": {
+      "tier": "🔢\nTier",
+      "wave": "🌊\nWave",
+      "duration": "⏱️\nDuration",
+      "coins": "🪙\nCoins",
+      "cells": "🔋\nCells",
+      "dice": "🎲\nDice",
+      "coinsPerHour": "🪙\nCoins/Hr",
+      "cellsPerHour": "🔋\nCells/Hr",
+      "dicePerHour": "🎲\nDice/Hr",
+      "killedBy": "💀\nKilled By",
+      "date": "📅\nDate/Time",
+      "type": "📋\nRun Type",
+      "run": "#️⃣\nRun #",
+      "notes": "📝\nNotes"
+    },
+    "fieldOrder": [
+      "tierWave", "duration", "killedBy", "coins", "cells", "dice",
+      "coinsPerHour", "cellsPerHour", "dicePerHour", "date", "type", "run"
+    ],
+    "coverageLabel": "Coverage",
+    "footer": "Run logged. Use buttons below or start a new /track.\n\nUse Creator Code \"JDEVO\" to Support The Tower Run Tracker!"
+  },
+  "uploadCard": {
+    "title": "📤 Upload Screenshot",
+    "description": "Please upload a screenshot of your Battle Report.",
+    "tipsTitle": "Tips for best results:",
+    "tipsLines": [
+      "• Use high-quality screenshots",
+      "• Ensure text is clear and readable",
+      "• Crop out unnecessary parts",
+      "• Direct /track command attachment works too!"
+    ],
+    "footer": "Upload screenshot or click Cancel.",
+    "cancelLabel": "Cancel"
+  },
+  "errorUi": {
+    "defaultTitle": "❌ Error",
+    "recoveryButtons": [
+      { "key": "mainMenu", "label": "Main Menu", "style": "Secondary" },
+      { "key": "manual", "label": "Manual Entry", "style": "Primary" }
+    ]
+  },
+  "settings": {
+    "noSettings": "No settings found. Using defaults.",
+    "loadFailed": "Unable to load settings right now.",
+    "shareSuccess": "Settings shared to channel.",
+    "shareFailed": "Unable to share settings right now.",
+    "statsFailed": "Unable to load stats right now.",
+    "importPrompt": "Import from legacy spreadsheet is limited in TS build right now. Continue to queue a cloud-side import attempt when available?",
+    "importAccepted": "Import request acknowledged. This TS build currently preserves local data and will merge cloud data automatically when available.",
+    "importCancelled": "Import cancelled.",
+    "labels": {
+      "defaultRunType": "Default run type",
+      "defaultTracker": "Default tracker",
+      "scanLanguage": "Scan language",
+      "timezone": "Timezone",
+      "decimalPreference": "Decimal preference",
+      "autoDetectDuplicates": "Auto-detect duplicates",
+      "confirmBeforeSubmit": "Confirm before submit",
+      "shareNotes": "Share notes",
+      "shareCoverage": "Share coverage",
+      "shareScreenshot": "Share screenshot",
+      "logChannel": "Log channel",
+      "cloudSync": "Cloud sync",
+      "queuedCloudUploads": "Queued cloud uploads"
+    },
+    "placeholders": {
+      "runType": "Default run type",
+      "language": "Scan language",
+      "timezone": "Timezone"
+    },
+    "runTypeOptions": ["Farming", "Overnight", "Tournament", "Milestone"],
+    "languageOptions": ["English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian"],
+    "timezoneOptions": ["UTC", "EST", "CST", "MST", "PST", "CET", "JST"],
+    "buttons": {
+      "enableDuplicates": "Enable Duplicates",
+      "disableDuplicates": "Disable Duplicates",
+      "enableConfirm": "Enable Confirm",
+      "disableConfirm": "Disable Confirm",
+      "enableShareNotes": "Enable Notes in Share",
+      "disableShareNotes": "Disable Notes in Share",
+      "enableShareCoverage": "Enable Coverage in Share",
+      "disableShareCoverage": "Disable Coverage in Share",
+      "enableShareScreenshot": "Enable Screenshot in Share",
+      "disableShareScreenshot": "Disable Screenshot in Share",
+      "enableCloud": "Enable Cloud Sync",
+      "disableCloud": "Disable Cloud Sync",
+      "forceSave": "Force Save",
+      "setLogChannel": "Set Log Channel",
+      "shareSettings": "Share Settings",
+      "inviteBot": "Invite Bot",
+      "viewStats": "View Stats",
+      "import": "Import",
+      "yes": "Yes",
+      "no": "No"
+    },
+    "toggleFailed": {
+      "cloud": "Unable to toggle cloud sync right now.",
+      "duplicates": "Unable to update duplicate setting right now.",
+      "confirm": "Unable to update confirmation setting right now.",
+      "shareNotes": "Unable to update share notes setting right now.",
+      "shareCoverage": "Unable to update share coverage setting right now.",
+      "shareScreenshot": "Unable to update share screenshot setting right now.",
+      "forceSave": "Unable to force-save queued runs right now.",
+      "language": "Unable to update language setting right now.",
+      "tracker": "Unable to update tracker setting right now.",
+      "runType": "Unable to update default run type right now.",
+      "timezone": "Unable to update timezone setting right now."
+    }
+  },
+  "viewRuns": {
+    "noRuns": "No runs found.",
+    "loadFailed": "Unable to load runs right now.",
+    "typePlaceholder": "Filter run types",
+    "tierPlaceholder": "Filter tiers",
+    "countPlaceholder": "Runs per page",
+    "columnsPlaceholder": "Displayed columns (text view)",
+    "allTiersLabel": "All Tiers",
+    "columns": ["Tier", "Wave", "Duration", "Coins", "Cells", "Dice", "Coins/Hr", "Cells/Hr", "Dice/Hr", "Orbs", "SL", "DW", "GB", "SMN", "Type", "Date/Time"],
+    "countOptions": [5, 10, 20, 35, 50],
+    "buttons": {
+      "prev": "Previous",
+      "next": "Next",
+      "share": "Share/Edit/Delete",
+      "mainMenu": "Main Menu"
+    },
+    "share": {
+      "empty": "No runs available to share from current filters.",
+      "title": "Shared Runs Summary",
+      "description": "Showing {count} runs ({types})",
+      "shared": "Runs shared to channel.",
+      "failed": "Unable to share runs right now."
+    }
+  },
+  "manual": {
+    "title": "📝 Manual Run Entry",
+    "description": "Enter your run fields, then continue to review and submit.",
+    "sessionExpired": "Session expired. Please restart /track.",
+    "startFailed": "Unable to start manual entry right now.",
+    "requiredCoreFields": "Please fill Tier, Wave, and Duration before continuing.",
+    "typePlaceholder": "Select run type",
+    "typeOptions": ["Farming", "Overnight", "Tournament", "Milestone"],
+    "buttons": {
+      "addNote": "Add Note",
+      "editCore": "Edit Core Fields",
+      "editExtra": "Edit Extra Fields",
+      "back": "Back",
+      "reviewSubmit": "Review & Submit",
+      "cancel": "Cancel"
+    },
+    "modals": {
+      "coreTitle": "Manual Entry - Core Fields",
+      "extraTitle": "Manual Entry - Extra Fields",
+      "noteTitle": "Manual Entry Note",
+      "noteLabel": "Note"
+    }
+  },
+  "remove": {
+    "noneFound": "No runs found to remove.",
+    "confirmTitle": "Confirm Remove Last Run",
+    "confirmDescription": "Are you sure you want to remove your last run?\nTier {tier} · Wave {wave}",
+    "confirmButton": "Confirm",
+    "cancelButton": "Cancel",
+    "missingRunId": "Run id missing. Please retry.",
+    "removedTitle": "Run Removed",
+    "removedDescription": "Your last run has been removed.",
+    "returnMain": "Return to Main Menu",
+    "failed": "Failed to remove run right now."
+  },
+  "uploadFlows": {
+    "uploadModalTitle": "Upload Battle Report Screenshot",
+    "addRunModalTitle": "Add New Run",
+    "pasteModalTitle": "Paste Battle Report",
+    "runTypeLabel": "Run Type",
+    "uploadFileLabel": "Upload Screenshot",
+    "optionalUploadFileLabel": "Upload Screenshot (optional)",
+    "battleReportLabel": "Battle Report Text",
+    "optionalNoteLabel": "Optional Note",
+    "addRunNotesLabel": "Notes",
+    "uploadNoFile": "No screenshot detected in modal upload. Please try again and attach an image.",
+    "processingScreenshot": "Processing screenshot...",
+    "processingPaste": "Parsing pasted text...",
+    "parseScreenshotFailed": "Could not process that screenshot. Please try again.",
+    "runSubmissionFailed": "Run submission failed. Please try again.",
+    "uploadTimeout": "Upload timed out. Please run /track again.",
+    "uploadError": "Error processing upload. Please try again.",
+    "openMenuFailed": "Unable to open tracker menu right now.",
+    "editLastNone": "No runs found to edit.",
+    "editLastFailed": "Unable to load last run for editing right now.",
+    "pasteTimeout": "Paste flow timed out. Please try again.",
+    "clickAddRunAgain": "Please click Add Run again to open the modal.",
+    "unableParsePasted": "Unable to parse pasted text right now.",
+    "providePasteOrScreenshot": "Please provide Battle Report text or attach a screenshot in the Add Run modal.",
+    "addRunTimedOut": "Add run timed out. Please try again.",
+    "cancelMessage": "Cancelled.",
+    "runTypeOptions": ["Farming", "Overnight", "Tournament", "Milestone"]
+  },
+  "share": {
+    "authorTemplate": "{username} Shared a Run",
+    "titleTemplate": "{runType} Run #{typeCount}",
+    "url": "https://the-tower-run-tracker.com/",
+    "thumbnail": "https://i.postimg.cc/pTVP1MPh/Screenshot-2025-05-04-124710.png",
+    "descriptionLines": [
+      "🔢 Tier: **{tierDisplay}**",
+      "🌊 Wave: **{wave}**",
+      "⏱️ Duration: **{duration}**",
+      "💀 Killed By: **{killedBy}**",
+      "🪙 Total Coins: **{totalCoins}**",
+      "🔋 Total Cells: **{totalCells}**",
+      "🎲 Total Dice: **{totalDice}**",
+      "### **📈 Earnings per Hour**"
+    ],
+    "hourlyFieldLabels": {
+      "coins": "🪙\nCoins",
+      "cells": "🔋\nCells",
+      "dice": "🎲\nDice"
+    },
+    "notesFieldLabel": "📝\nNotes",
+    "coverageFieldLabel": "Coverage",
+    "footer": "📊 Tracked with The Tower Run Tracker\nUse /track to log a run",
+    "noRunsFound": "No runs found to share.",
+    "shareFailed": "Unable to share last run right now."
+  },
+  "errorLog": {
+    "title": "🤖 Bot Error Log",
+    "descriptionTemplate": "An error occurred for user **{userTag}** (<@{userId}>).\n\n**Context:**\n\n{context}\n\n**Error Message:**\n{errorMessage}",
+    "descriptionWithStackTemplate": "An error occurred for user **{userTag}** (<@{userId}>).\n\n**Context:**\n\n{context}\n\n**Error Message:**\n{errorMessage}\n\n**Stack Trace:**\n{stackTrace}",
+    "unknownUserTag": "Unknown User",
+    "unknownUserId": "Unknown ID",
+    "ocrFieldLabel": "OCR Output (Raw)",
+    "attachmentErrorLabel": "Attachment Error",
+    "attachmentErrorTemplate": "Failed to attach: {attachmentUrl}"
+  }
+}

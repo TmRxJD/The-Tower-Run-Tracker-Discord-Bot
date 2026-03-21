@@ -1,0 +1,93 @@
+Battle Report
+Battle Date    Feb 17, 2026 06:06
+Game Time    12h 53m 6s
+Real Time    2h 35m 15s
+Tier    20
+Wave    3875
+Killed By    Overcharge
+Coins earned    5.78Q
+Coins per hour    2.23Q
+Cash earned    $1.39T
+Interest earned    $46.26M
+Gem Blocks Tapped    1
+Cells Earned    741.54K
+Reroll Shards Earned    323.20K
+Combat
+Damage dealt    141.14ac
+Damage Taken    15.58S
+Damage Taken Wall    181.88s
+Damage Taken While Berserked    216.76S
+Damage Gain From Berserk    x8.00
+Death Defy    50
+Lifesteal    121.47T
+Projectiles Damage    599.60ab
+Projectiles Count    21.88M
+Thorn damage    52.75ab
+Orb Damage    42.53ac
+Enemies Hit by Orbs    285.79K
+Land Mine Damage    1.93ab
+Land Mines Spawned    200329
+Rend Armor Damage    27.63ab
+Death Ray Damage    0
+Smart Missile Damage    482.82ab
+Inner Land Mine Damage    1.77ab
+Chain Lightning Damage    93.47ac
+Death Wave Damage    1.13ab
+Tagged by Deathwave    364026
+Swamp Damage    615.61ab
+Black Hole Damage    3.39ac
+Electrons Damage    0
+Utility
+Waves Skipped    2332
+Recovery Packages    1445
+Free Attack Upgrade    598
+Free Defense Upgrade    0
+Free Utility Upgrade    38
+HP From Death Wave    15.11T
+Coins From Death Wave    5.03T
+Cash From Golden Tower    $9.56B
+Coins From Golden Tower    3.32Q
+Coins From Black Hole    35.72T
+Coins From Spotlight    7.13T
+Coins From Orb    1.20T
+Coins from Coin Upgrade    812.24T
+Coins from Coin Bonuses    2.45Q
+Enemies Destroyed
+Total Enemies    417301
+Basic    84356
+Fast    100227
+Tank    94487
+Ranged    89112
+Boss    450
+Protector    512
+Total Elites    4308
+Vampires    1357
+Rays    1435
+Scatters    1516
+Saboteur    123
+Commander    136
+Overcharge    128
+Destroyed By Orbs    87846
+Destroyed by Thorns    13
+Destroyed by Death Ray    0
+Destroyed by Land Mine    11
+Destroyed in Spotlight    413293
+Bots
+Flame Bot Damage    0
+Thunder Bot Stuns    0
+Golden Bot Coins Earned    23.24T
+Destroyed in Golden Bot    246842
+Guardian
+Damage    0
+Summoned enemies    43.33K
+Guardian coins stolen    0
+Coins Fetched    4.02q
+Gems    3
+Medals    0
+Reroll Shards    86
+Cannon Shards    0
+Armor Shards    3
+Generator Shards    0
+Core Shards    3
+Common Modules    2
+Rare Modules    0
