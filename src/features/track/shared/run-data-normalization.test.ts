@@ -26,6 +26,20 @@ describe('run data normalization', () => {
     expect(normalized['Coins Earned']).toBeUndefined()
   })
 
+  it('preserves canonical values when conflicting raw aliases are present', () => {
+    const normalized = canonicalizeRunDataForOutput({
+      wave: '7676',
+      Wave: '167963',
+      killedBy: 'Fast',
+      'Killed By': 'Apathy',
+    })
+
+    expect(normalized.wave).toBe('7676')
+    expect(normalized.killedBy).toBe('Fast')
+    expect(normalized.Wave).toBeUndefined()
+    expect(normalized['Killed By']).toBeUndefined()
+  })
+
   it('applies submit aliases that collapse duplicated battle-report keys', () => {
     const submitReady = applyRunDataAliasGroups({
       'Enemies Hit by Orbs': '401',

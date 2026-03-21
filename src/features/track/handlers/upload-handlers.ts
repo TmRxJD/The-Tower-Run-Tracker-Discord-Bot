@@ -55,6 +55,7 @@ import type { TrackReplyInteractionLike } from '../interaction-types';
 import { createManualHandlers } from './manual-handlers';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { parseLifetimeStatsFromOcrText } from './lifetime-ocr';
+import { canonicalizeRunDataForOutput } from '../shared/run-data-normalization';
 
 type LooseRecord = Record<string, unknown>;
 
@@ -309,22 +310,22 @@ function buildProcessedRunDataFromParsed(
   const processedData: RunDataLike = {
     ...runDataRecord,
     ...runData,
-    tier: runDataRecord['Tier'] ?? runData.tier,
-    wave: runDataRecord['Wave'] ?? runData.wave,
-    totalCoins: runDataRecord['Coins earned'] ?? runDataRecord['Coins Earned'] ?? runDataRecord['Battle Report Coins earned'] ?? runData.totalCoins ?? runDataRecord['coins'],
-    totalCells: runDataRecord['Cells Earned'] ?? runData.totalCells ?? runDataRecord['cells'],
-    totalDice: runDataRecord['Reroll Shards Earned'] ?? runData.totalDice ?? runDataRecord['rerollShards'],
-    roundDuration: runDataRecord['Real Time'] ?? runData.roundDuration ?? runDataRecord['duration'],
-    killedBy: (runDataRecord['Killed By'] || runData.killedBy || '').toString().trim() || 'Apathy',
+    tier: runData.tier ?? runDataRecord['Tier'],
+    wave: runData.wave ?? runDataRecord['Wave'],
+    totalCoins: runData.totalCoins ?? runDataRecord['Coins earned'] ?? runDataRecord['Coins Earned'] ?? runDataRecord['Battle Report Coins earned'] ?? runDataRecord['coins'],
+    totalCells: runData.totalCells ?? runDataRecord['Cells Earned'] ?? runDataRecord['cells'],
+    totalDice: runData.totalDice ?? runDataRecord['Reroll Shards Earned'] ?? runDataRecord['rerollShards'],
+    roundDuration: runData.roundDuration ?? runDataRecord['Real Time'] ?? runDataRecord['duration'],
+    killedBy: (runData.killedBy ?? runDataRecord['Killed By'] ?? '').toString().trim() || 'Apathy',
     date: displayDate,
     time: displayTime,
     reportTimestamp: resolvedTimestamp.toISOString(),
     notes: params.preNote || '',
-    totalEnemies: runDataRecord['Total Enemies'] || runDataRecord['totalEnemies'],
-    destroyedByOrbs: runDataRecord['Destroyed By Orbs'] || runDataRecord['destroyedByOrbs'],
-    taggedByDeathWave: runDataRecord['Tagged by Deathwave'] || runDataRecord['taggedByDeathWave'],
-    destroyedInSpotlight: runDataRecord['Destroyed in Spotlight'] || runDataRecord['destroyedInSpotlight'],
-    destroyedInGoldenBot: runDataRecord['Destroyed in Golden Bot'] || runDataRecord['destroyedInGoldenBot'],
+    totalEnemies: runData.totalEnemies ?? runDataRecord['Total Enemies'] ?? runDataRecord['totalEnemies'],
+    destroyedByOrbs: runData.destroyedByOrbs ?? runDataRecord['Destroyed By Orbs'] ?? runDataRecord['destroyedByOrbs'],
+    taggedByDeathWave: runData.taggedByDeathWave ?? runDataRecord['Tagged by Deathwave'] ?? runDataRecord['taggedByDeathWave'],
+    destroyedInSpotlight: runData.destroyedInSpotlight ?? runDataRecord['Destroyed in Spotlight'] ?? runDataRecord['destroyedInSpotlight'],
+    destroyedInGoldenBot: runData.destroyedInGoldenBot ?? runDataRecord['Destroyed in Golden Bot'] ?? runDataRecord['destroyedInGoldenBot'],
   };
 
   applyTierMetadata(processedData, [runDataRecord['Tier'], runData.tier]);
@@ -338,7 +339,7 @@ function buildProcessedRunDataFromParsed(
     processedData.notes = params.preNote;
   }
 
-  return processedData;
+  return canonicalizeRunDataForOutput(processedData) as RunDataLike;
 }
 
 function normalizeVerificationValue(key: string, value: unknown): string {

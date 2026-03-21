@@ -16,6 +16,23 @@ describe('review-data-helpers', () => {
     expect(text).toContain('--- additional fields ---\nalpha: A\nnotes: hello\nzeta: Z');
   });
 
+  it('formats raw parse text from canonical values when conflicting aliases exist', () => {
+    const text = buildRawParseText({
+      wave: '7676',
+      Wave: '167963',
+      killedBy: 'Fast',
+      'Killed By': 'Apathy',
+      totalDice: '16.80K',
+      rerollShards: '420',
+    });
+
+    expect(text).toContain('wave: 7676');
+    expect(text).toContain('killedBy: Fast');
+    expect(text).toContain('totalDice: 16.80K');
+    expect(text).not.toContain('Wave: 167963');
+    expect(text).not.toContain('Killed By: Apathy');
+  });
+
   it('builds a submit payload with normalized type and notes', async () => {
     const payload = await buildSubmitPayload('user-1', 'name', {
       tierDisplay: '7+',
@@ -62,5 +79,31 @@ describe('review-data-helpers', () => {
     });
     expect(payload.runData.type).toBeUndefined();
     expect(payload.runData.notes).toBeUndefined();
+  });
+
+  it('builds submit payloads from canonical fields when aliases conflict', async () => {
+    const payload = await buildSubmitPayload('user-3', 'name', {
+      wave: '7676',
+      Wave: '167963',
+      totalCoins: '76.37T',
+      coins: '76.37T',
+      totalCells: '128.82K',
+      cells: '128.82K',
+      totalDice: '16.80K',
+      rerollShards: '420',
+      killedBy: 'Fast',
+      'Killed By': 'Apathy',
+      roundDuration: '9h54m5s',
+      date: '2026-03-21',
+      time: '13:47:00',
+    }, false, false);
+
+    expect(payload.runData).toMatchObject({
+      wave: '7676',
+      totalCoins: '76.37T',
+      totalCells: '128.82K',
+      totalDice: '16.80K',
+      killedBy: 'Fast',
+    });
   });
 });

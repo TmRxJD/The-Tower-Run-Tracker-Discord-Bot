@@ -67,8 +67,8 @@
       "note": "📝\nNotes",
       "type": "📋\nRun Type"
     },
-    "numericFieldKeys": ["totalCoins", "coins", "totalCells", "cells", "totalDice", "dice", "rerollShards"],
-    "standardFieldOrder": ["tier", "wave", "duration", "totalCoins", "coins", "totalCells", "cells", "totalDice", "dice", "rerollShards", "killedBy", "dateTime", "type", "notes"],
+    "numericFieldKeys": ["totalCoins", "totalCells", "totalDice"],
+    "standardFieldOrder": ["tier", "wave", "duration", "totalCoins", "totalCells", "totalDice", "killedBy", "dateTime", "type", "notes"],
     "skipFieldKeys": [
       "tierDisplay", "Tierdisplay", "tierdisplay", "tierHasPlus", "tierhasplus", "Tierhasplus",
       "roundDuration", "time", "reportTimestamp", "Reporttimestamp", "reporttimestamp",
