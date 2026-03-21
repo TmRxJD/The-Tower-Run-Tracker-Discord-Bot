@@ -16,7 +16,10 @@
     "test:watch": "vitest",
     "verify:hourly": "ts-node src/scripts/verify-hourly-rates.ts",
     "appwrite:schema": "ts-node src/scripts/create-appwrite-schema.ts",
-    "register:commands": "cross-env DEPLOYMENT_MODE=dev ts-node src/scripts/register-commands.ts"
+    "register:commands": "ts-node src/scripts/register-commands.ts --mode=dev",
+    "register:commands:dev": "ts-node src/scripts/register-commands.ts --mode=dev",
+    "register:commands:prod": "ts-node src/scripts/register-commands.ts --mode=prod",
+    "register:commands:prod:global": "ts-node src/scripts/register-commands.ts --mode=prod --global"
   },
   "dependencies": {
     "@discordjs/rest": "^2.3.0",
