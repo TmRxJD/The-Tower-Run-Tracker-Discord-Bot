@@ -21,7 +21,7 @@
   "dependencies": {
     "@discordjs/rest": "^2.3.0",
     "@napi-rs/canvas": "^0.1.93",
-    "@tmrxjd/platform": "0.1.8",
+    "@tmrxjd/platform": "0.1.9",
     "dexie": "^4.0.11",
     "discord-api-types": "^0.37.83",
     "discord.js": "^14.24.0",
