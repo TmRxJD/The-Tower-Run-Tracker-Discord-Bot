@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { buildTrackerRunFingerprint, computeExponentialBackoffMs } from '@tmrxjd/platform/tools';
 import type { TrackerSettings } from './types';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
+import { canonicalizeTrackerRunData } from './shared/run-data-normalization';
 
 type SyncOp = 'upsert' | 'delete';
 
@@ -237,14 +238,15 @@ export async function upsertLocalRun(userId: string, username: string, runData: 
   await ensureLoaded();
   const bucket = getOrCreateUser(userId);
   const now = Date.now();
+  const normalizedRunData = canonicalizeTrackerRunData(runData);
 
   const incoming = {
-    ...runData,
+    ...normalizedRunData,
     userId,
     username,
-    localId: String(runData?.localId || randomUUID()),
-    createdAt: parseEpochMillis(runData?.createdAt) || now,
-    updatedAt: parseEpochMillis(runData?.updatedAt) || parseEpochMillis(runData?.reportTimestamp) || now,
+    localId: String(normalizedRunData?.localId || randomUUID()),
+    createdAt: parseEpochMillis(normalizedRunData?.createdAt) || now,
+    updatedAt: parseEpochMillis(normalizedRunData?.updatedAt) || parseEpochMillis(normalizedRunData?.reportTimestamp) || now,
   } as LocalRunRecord;
 
   const byRunIdIndex = incoming.runId
@@ -306,15 +308,17 @@ export async function queueCloudUpsert(input: {
   localId?: string;
 }) {
   await ensureLoaded();
+  const normalizedRunData = canonicalizeTrackerRunData(input.runData ?? {});
+  const normalizedCanonicalRunData = input.canonicalRunData ? canonicalizeTrackerRunData(input.canonicalRunData) : undefined;
   cache!.queue.push({
     id: randomUUID(),
     op: 'upsert',
     userId: input.userId,
     username: input.username,
     localId: input.localId,
-    runId: typeof input.runData.runId === 'string' ? input.runData.runId : undefined,
-    runData: input.runData,
-    canonicalRunData: input.canonicalRunData,
+    runId: typeof normalizedRunData.runId === 'string' ? normalizedRunData.runId : undefined,
+    runData: normalizedRunData,
+    canonicalRunData: normalizedCanonicalRunData,
     screenshot: input.screenshot ?? null,
     createdAt: Date.now(),
     retryCount: 0,

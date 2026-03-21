@@ -55,7 +55,7 @@ import type { TrackReplyInteractionLike } from '../interaction-types';
 import { createManualHandlers } from './manual-handlers';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { parseLifetimeStatsFromOcrText } from './lifetime-ocr';
-import { canonicalizeRunDataForOutput } from '../shared/run-data-normalization';
+import { canonicalizeRunDataForOutput, canonicalizeTrackerRunData } from '../shared/run-data-normalization';
 
 type LooseRecord = Record<string, unknown>;
 
@@ -293,8 +293,8 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
   return createPendingRun({
     userId,
     username,
-    runData: hydratedRunData,
-    canonicalRunData,
+    runData: canonicalizeTrackerRunData(hydratedRunData),
+    canonicalRunData: canonicalRunData ? canonicalizeTrackerRunData(canonicalRunData) : null,
     screenshot,
     isDuplicate,
     decimalPreference,
@@ -339,7 +339,7 @@ function buildProcessedRunDataFromParsed(
     processedData.notes = params.preNote;
   }
 
-  return canonicalizeRunDataForOutput(processedData) as RunDataLike;
+  return canonicalizeTrackerRunData(canonicalizeRunDataForOutput(processedData)) as RunDataLike;
 }
 
 function normalizeVerificationValue(key: string, value: unknown): string {
@@ -992,18 +992,10 @@ export async function handleDirectTextPaste(
   const userId = interaction.user.id;
   const username = interaction.user.username;
 
-  try {
-    await interaction.deferReply({ ephemeral: true });
-  } catch (error: unknown) {
-    const errorRecord = toRecord(error);
-    if (errorRecord.code !== 40060 && errorRecord.code !== 'InteractionAlreadyReplied') throw error;
-  }
-
   await interaction.editReply({ embeds: [createLoadingEmbed(uploadUi.processingPaste)], components: [] }).catch(async (err: unknown) => {
     const errorRecord = toRecord(err);
     if (errorRecord.code === 'InteractionNotReplied') {
-      await interaction.deferReply({ ephemeral: true });
-      await interaction.editReply({ embeds: [createLoadingEmbed(uploadUi.processingPaste)], components: [] });
+      await interaction.reply({ embeds: [createLoadingEmbed(uploadUi.processingPaste)], components: [], ephemeral: true });
     } else {
       throw err;
     }
@@ -1015,6 +1007,18 @@ export async function handleDirectTextPaste(
       preNote,
       defaultRunType,
       mode: resolvedMode,
+    });
+
+    logger.info('tracker direct paste parsed', {
+      userId,
+      rawTier: runData.tier,
+      rawWave: runData.wave,
+      rawKilledBy: runData.killedBy,
+      rawTaggedByDeathWave: runData.taggedByDeathWave,
+      canonicalTier: processedData.tier,
+      canonicalWave: processedData.wave,
+      canonicalKilledBy: processedData.killedBy,
+      canonicalTaggedByDeathWave: processedData.taggedByDeathWave,
     });
 
     const pending = await createPendingRunWithMetadata({

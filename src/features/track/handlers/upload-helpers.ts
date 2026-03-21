@@ -13,6 +13,125 @@ const INLINE_BATTLE_REPORT_SECTION_HEADERS = [
   'Guardian',
 ] as const;
 
+const INLINE_SINGLE_LINE_SECTION_LABELS: Record<string, string[]> = {
+  'Battle Report': [
+    'Battle Date',
+    'Game Time',
+    'Real Time',
+    'Tier',
+    'Wave',
+    'Killed By',
+    'Coins earned',
+    'Coins per hour',
+    'Cash earned',
+    'Interest earned',
+    'Gem Blocks Tapped',
+    'Cells Earned',
+    'Reroll Shards Earned',
+  ],
+  Combat: [
+    'Damage dealt',
+    'Damage Taken',
+    'Damage Taken Wall',
+    'Damage Taken While Berserked',
+    'Damage Gain From Berserk',
+    'Death Defy',
+    'Lifesteal',
+    'Projectiles Damage',
+    'Projectiles Count',
+    'Thorn damage',
+    'Orb Damage',
+    'Enemies Hit by Orbs',
+    'Land Mine Damage',
+    'Land Mines Spawned',
+    'Rend Armor Damage',
+    'Death Ray Damage',
+    'Smart Missile Damage',
+    'Inner Land Mine Damage',
+    'Chain Lightning Damage',
+    'Death Wave Damage',
+    'Deathwave Damage',
+    'Tagged by Death Wave',
+    'Tagged by Deathwave',
+    'Swamp Damage',
+    'Black Hole Damage',
+    'Electrons Damage',
+  ],
+  Utility: [
+    'Waves Skipped',
+    'Recovery Packages',
+    'Free Attack Upgrade',
+    'Free Defense Upgrade',
+    'Free Utility Upgrade',
+    'HP From Death Wave',
+    'HP From Deathwave',
+    'Coins From Death Wave',
+    'Coins From Deathwave',
+    'Cash From Golden Tower',
+    'Coins From Golden Tower',
+    'Coins From Black Hole',
+    'Coins From Spotlight',
+    'Coins From Orb',
+    'Coins from Coin Upgrade',
+    'Coins from Coin Bonuses',
+  ],
+  'Enemies Destroyed': [
+    'Total Enemies',
+    'Basic',
+    'Fast',
+    'Tank',
+    'Ranged',
+    'Boss',
+    'Protector',
+    'Total Elites',
+    'Vampires',
+    'Rays',
+    'Scatters',
+    'Saboteur',
+    'Saboteurs',
+    'Commander',
+    'Commanders',
+    'Overcharge',
+    'Overcharges',
+    'Destroyed By Orbs',
+    'Destroyed by Thorns',
+    'Destroyed by Death Ray',
+    'Destroyed by Land Mine',
+    'Destroyed in Spotlight',
+  ],
+  Bots: [
+    'Flame Bot Damage',
+    'Thunder Bot Stuns',
+    'Golden Bot Coins Earned',
+    'Destroyed in Golden Bot',
+  ],
+  Guardian: [
+    'Guardian Damage',
+    'Damage',
+    'Summoned enemies',
+    'Guardian coins stolen',
+    'Coins Fetched',
+    'Gems',
+    'Medals',
+    'Gems Fetched',
+    'Medals Fetched',
+    'Reroll Shards Fetched',
+    'Reroll Shards',
+    'Cannon Shards Fetched',
+    'Cannon Shards',
+    'Armor Shards Fetched',
+    'Armor Shards',
+    'Generator Shards Fetched',
+    'Generator Shards',
+    'Core Shards Fetched',
+    'Core Shards',
+    'Common Modules Fetched',
+    'Common Modules',
+    'Rare Modules Fetched',
+    'Rare Modules',
+  ],
+};
+
 function normalizeInlineBattleReportText(rawText: string): string {
   const canonicalized = (rawText ?? '')
     .toString()
@@ -52,7 +171,8 @@ function normalizeInlineBattleReportText(rawText: string): string {
   }
 
   let segmented = text.replace(/\t+/g, ' ').replace(/\s+/g, ' ').trim();
-  const labelAlternation = [...INLINE_BATTLE_REPORT_LABELS]
+  const safeGlobalLabels = [...INLINE_BATTLE_REPORT_LABELS].filter(label => label.includes(' ') || label === 'Tier' || label === 'Wave');
+  const globalLabelAlternation = safeGlobalLabels
     .sort((a, b) => b.length - a.length)
     .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
     .join('|');
@@ -61,9 +181,9 @@ function normalizeInlineBattleReportText(rawText: string): string {
     .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
     .join('|');
 
-  if (labelAlternation) {
-    const splitPattern = new RegExp(`\\s+(${labelAlternation})(?=\\s|:|$)`, 'gi');
-    segmented = segmented.replace(splitPattern, '\n$1');
+  if (globalLabelAlternation) {
+    const globalSplitPattern = new RegExp(`\\s+(${globalLabelAlternation})(?=\\s|:|$)`, 'gi');
+    segmented = segmented.replace(globalSplitPattern, '\n$1');
   }
 
   if (sectionAlternation) {
@@ -71,12 +191,43 @@ function normalizeInlineBattleReportText(rawText: string): string {
     segmented = segmented.replace(sectionSplitPattern, '\n$1');
   }
 
-  const lines = segmented
+  const rawLines = segmented
     .split('\n')
     .map(line => line.trim())
     .filter(Boolean);
 
-  if (lines.length === 0) return text;
+  if (rawLines.length === 0) return text;
+
+  const lines: string[] = [];
+  let currentSection = 'Battle Report';
+
+  for (const rawLine of rawLines) {
+    const sectionHeader = INLINE_BATTLE_REPORT_SECTION_HEADERS.find(header => rawLine.toLowerCase().startsWith(header.toLowerCase()));
+    let remainder = rawLine;
+
+    if (sectionHeader) {
+      currentSection = sectionHeader;
+      lines.push(sectionHeader);
+      remainder = rawLine.slice(sectionHeader.length).trim();
+    }
+
+    if (!remainder) continue;
+
+    const sectionLabels = INLINE_SINGLE_LINE_SECTION_LABELS[currentSection] ?? [];
+    const labelAlternation = sectionLabels
+      .sort((a, b) => b.length - a.length)
+      .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
+      .join('|');
+
+    if (!labelAlternation) {
+      lines.push(remainder);
+      continue;
+    }
+
+    const splitPattern = new RegExp(`\\s+(${labelAlternation})(?=\\s|:|$)`, 'gi');
+    const splitRemainder = remainder.replace(splitPattern, '\n$1');
+    lines.push(...splitRemainder.split('\n').map(line => line.trim()).filter(Boolean));
+  }
 
   const sortedLabels = [...INLINE_BATTLE_REPORT_LABELS].sort((a, b) => b.length - a.length);
   const tabbedLines = lines.map(line => {

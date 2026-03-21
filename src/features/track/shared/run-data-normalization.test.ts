@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   applyRunDataAliasGroups,
   canonicalizeRunDataForOutput,
+  canonicalizeTrackerRunData,
+  serializeTrackerRunForCloudAttributes,
 } from './run-data-normalization'
 import { TRACK_RUN_SUBMIT_ALIAS_GROUPS } from './track-run-field-vocabulary'
 
@@ -53,5 +55,56 @@ describe('run data normalization', () => {
     expect(submitReady['Destroyed By Orbs']).toBeUndefined()
     expect(submitReady.guardianSummonedEnemies).toBe('12')
     expect(submitReady.spotlightDamage).toBe('999')
+  })
+
+  it('builds a single canonical tracker run record and drops raw aliases', () => {
+    const canonical = canonicalizeTrackerRunData({
+      tier: '11',
+      Tier: '11+',
+      wave: '7676',
+      Wave: '167963',
+      totalCoins: '76.37T',
+      coins: '76.37T',
+      killedBy: 'Fast',
+      'Killed By': 'Apathy',
+      notes: 'keep me',
+      values: { junk: true },
+    })
+
+    expect(canonical).toMatchObject({
+      tier: '11',
+      tierDisplay: '11',
+      wave: '7676',
+      totalCoins: '76.37T',
+      killedBy: 'Fast',
+      notes: 'keep me',
+    })
+    expect(canonical).not.toHaveProperty('Wave')
+    expect(canonical).not.toHaveProperty('Killed By')
+    expect(canonical).not.toHaveProperty('values')
+  })
+
+  it('omits oversized optional cloud attributes instead of sending invalid Appwrite values', () => {
+    const serialized = serializeTrackerRunForCloudAttributes({
+      tier: '11',
+      wave: '7676',
+      roundDuration: '9h54m5s',
+      totalCoins: '76.37T',
+      totalCells: '128.82K',
+      totalDice: '16.80K',
+      killedBy: 'Fast',
+      date: '2026-03-21',
+      time: '13:47:00',
+      deathWaveDamage: '1234567890123456789012345',
+      taggedByDeathWave: '167963',
+    })
+
+    expect(serialized).toMatchObject({
+      tier: '11',
+      wave: '7676',
+      totalCoins: '76.37T',
+      taggedByDeathWave: '167963',
+    })
+    expect(serialized.deathWaveDamage).toBeUndefined()
   })
 })

@@ -1,4 +1,5 @@
 import type { PendingRecordLike } from '../shared/track-review-records';
+import { canonicalizeTrackerRunData } from '../shared/run-data-normalization';
 
 export type SubmissionSyncResult = {
   queuedForCloud?: boolean;
@@ -14,19 +15,19 @@ export type LocalRunSummary = {
 };
 
 export function buildSubmitRunData(pending: PendingRecordLike, payloadRunData: Record<string, unknown>) {
-  return {
+  return canonicalizeTrackerRunData({
     ...(pending.canonicalRunData ?? {}),
     ...pending.runData,
     ...payloadRunData,
     screenshotUrl: pending.screenshot?.url ?? pending.runData?.screenshotUrl ?? undefined,
-  };
+  });
 }
 
 export function buildCanonicalRunData(pending: PendingRecordLike, submitRunData: Record<string, unknown>) {
-  return {
+  return canonicalizeTrackerRunData({
     ...(pending.canonicalRunData ?? {}),
     ...submitRunData,
-  };
+  });
 }
 
 function readTrimmedString(value: unknown): string | null {
@@ -85,11 +86,11 @@ export function resolveSubmissionIds(params: {
 }
 
 export function buildCoverageSource(canonicalRunData: Record<string, unknown>, resolvedRunId: string | null, resolvedLocalId: string | null) {
-  return {
+  return canonicalizeTrackerRunData({
     ...canonicalRunData,
     ...(resolvedRunId ? { runId: resolvedRunId } : {}),
     ...(resolvedLocalId ? { localId: resolvedLocalId } : {}),
-  };
+  });
 }
 
 export function resolveScreenshotUrl(submitRunData: Record<string, unknown>) {

@@ -5,6 +5,7 @@ import { getTrackerFlowMode } from '../flow-mode-store';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { createAddNoteAndShowFullParseButtonRow, createConfirmationButtons, createDataReviewEmbed, createShowFullParseButtonRow, createTypeSelectionRow } from './tracker-ui';
 import { parseTierString } from '../handlers/upload-helpers';
+import { canonicalizeTrackerRunData } from '../shared/run-data-normalization';
 import type { PendingRecordLike, RunDataRecord } from '../shared/track-review-records';
 
 function createEditNotesButtonRow(token: string): ActionRowBuilder<ButtonBuilder> {
@@ -28,21 +29,21 @@ export function applyEditFieldValue(runData: RunDataRecord, field: string, rawVa
     nextRunData.tier = parsed.numeric ?? runData?.tier ?? null;
     nextRunData.tierDisplay = parsed.hasPlus && parsed.numeric !== null ? `${parsed.numeric}+` : rawValue;
     nextRunData.tierHasPlus = parsed.hasPlus;
-    return nextRunData;
+    return canonicalizeTrackerRunData(nextRunData);
   }
 
   if (field === 'totalCoins' || field === 'totalCells' || field === 'totalDice') {
     nextRunData[field] = rawValue ? standardizeNotation(rawValue) : null;
-    return nextRunData;
+    return canonicalizeTrackerRunData(nextRunData);
   }
 
   if (field === 'wave') {
     nextRunData.wave = rawValue;
-    return nextRunData;
+    return canonicalizeTrackerRunData(nextRunData);
   }
 
   nextRunData[field] = rawValue;
-  return nextRunData;
+  return canonicalizeTrackerRunData(nextRunData);
 }
 
 export function buildReviewPayload(params: {

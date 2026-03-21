@@ -4,7 +4,7 @@ import { buildCanonicalRunData, buildCoverageSource, buildRunTypeCounts, buildSh
 describe('review-submission-helpers', () => {
   it('builds submit and canonical run data with screenshot preference', () => {
     const pending = {
-      runData: { wave: '10', screenshotUrl: 'old-url' },
+      runData: { wave: '10', Wave: '999', screenshotUrl: 'old-url', killedBy: 'Fast', 'Killed By': 'Apathy' },
       canonicalRunData: { tier: '5' },
       screenshot: { url: 'new-url' },
     } as const;
@@ -12,8 +12,10 @@ describe('review-submission-helpers', () => {
     const submitRunData = buildSubmitRunData(pending as never, { totalCoins: '100' });
     const canonicalRunData = buildCanonicalRunData(pending as never, submitRunData);
 
-    expect(submitRunData).toMatchObject({ tier: '5', wave: '10', totalCoins: '100', screenshotUrl: 'new-url' });
-    expect(canonicalRunData).toMatchObject({ tier: '5', wave: '10', totalCoins: '100', screenshotUrl: 'new-url' });
+    expect(submitRunData).toMatchObject({ tier: '5', wave: '10', totalCoins: '100', screenshotUrl: 'new-url', killedBy: 'Fast' });
+    expect(canonicalRunData).toMatchObject({ tier: '5', wave: '10', totalCoins: '100', screenshotUrl: 'new-url', killedBy: 'Fast' });
+    expect(submitRunData).not.toHaveProperty('Wave')
+    expect(submitRunData).not.toHaveProperty('Killed By')
   });
 
   it('resolves duplicate ids and final submission ids', () => {

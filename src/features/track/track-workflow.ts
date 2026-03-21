@@ -33,10 +33,15 @@ export async function handleTrackWorkflow(interaction: ChatInputCommandInteracti
 
   if (options.paste) {
     if (mode === 'lifetime') {
-      await interaction.reply({
+      const payload = {
         content: 'Lifetime paste flow is not supported. Please upload a lifetime screenshot instead.',
         ephemeral: true,
-      }).catch(() => {});
+      };
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: payload.content, embeds: [], components: [] }).catch(() => {});
+      } else {
+        await interaction.reply(payload).catch(() => {});
+      }
       return;
     }
     await handleDirectTextPaste(trackInteraction, options.paste, normalizedAttachment, options.note ?? null, options.runType ?? null, mode);

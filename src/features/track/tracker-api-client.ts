@@ -48,6 +48,7 @@ import {
   mergeLifetimeEntriesDelta,
   sortLifetimeEntriesByTimestamp,
 } from './shared/tracker-parity-core';
+import { canonicalizeTrackerRunData, serializeTrackerRunForCloudAttributes } from './shared/run-data-normalization';
 import {
   getLocalLifetime,
   getLocalRuns,
@@ -511,9 +512,9 @@ function toRunDocumentPayload(params: {
   username: string;
   run: RunRecord;
 }): Record<string, unknown> {
-  const run = params.run;
+  const run = serializeTrackerRunForCloudAttributes(params.run);
   const pick = (canonical: string, ...aliases: string[]) => pickTrackerRunField(run, [canonical, ...aliases]);
-    return parseTrackerRunCloudWrite(stripUndefinedFields({
+  return parseTrackerRunCloudWrite(stripUndefinedFields({
     userId: params.userId,
     username: String(run.username ?? params.username ?? 'unknown'),
     type: String(run.type ?? 'Farming'),
@@ -684,12 +685,13 @@ async function writeRunDocument(params: {
 }
 
 function buildLocalRunUpsertPayload(runData: RunRecord, canonicalRunData?: RunRecord | null): RunRecord {
-  const canonical = canonicalRunData && typeof canonicalRunData === 'object' ? canonicalRunData : null;
-  const coverage = extractTrackerRunCoverageData(runData);
+  const normalizedRunData = canonicalizeTrackerRunData(runData);
+  const canonical = canonicalRunData && typeof canonicalRunData === 'object' ? canonicalizeTrackerRunData(canonicalRunData) : null;
+  const coverage = extractTrackerRunCoverageData(normalizedRunData);
   const canonicalCoverage = canonical ? extractTrackerRunCoverageData(canonical) : {};
 
   return {
-    ...collectTrackerRunScalarFields(runData, canonical),
+    ...collectTrackerRunScalarFields(normalizedRunData, canonical),
     ...coverage,
     ...canonicalCoverage,
   };
@@ -703,21 +705,22 @@ function buildCloudRunEntry(params: {
   screenshotUrl?: string | null;
   existingEntry?: RunRecord | null;
 }): RunRecord {
+  const normalizedRunData = canonicalizeTrackerRunData(params.runData);
+  const normalizedCanonicalRunData = params.canonicalRunData ? canonicalizeTrackerRunData(params.canonicalRunData) : null;
   const nowIso = new Date().toISOString();
   const uploadDateStr = nowIso.split('T')[0];
   const uploadTimeStr = nowIso.split('T')[1]?.slice(0, 8) ?? '00:00:00';
-  const runId = pickString(params.runData.runId)
-    ?? pickString(params.runData.id)
+  const runId = pickString(normalizedRunData.runId)
     ?? pickString(params.existingEntry?.id)
     ?? pickString(params.existingEntry?.runId)
     ?? ID.unique();
   const createdAt = pickString(params.existingEntry?.createdAt) ?? nowIso;
-  const scalarRunFields = collectTrackerRunScalarFields(params.runData, params.canonicalRunData ?? null);
-  const coverage = extractTrackerRunCoverageData(params.runData);
-  const canonicalCoverage = params.canonicalRunData ? extractTrackerRunCoverageData(params.canonicalRunData) : {};
+  const scalarRunFields = collectTrackerRunScalarFields(normalizedRunData, normalizedCanonicalRunData);
+  const coverage = extractTrackerRunCoverageData(normalizedRunData);
+  const canonicalCoverage = normalizedCanonicalRunData ? extractTrackerRunCoverageData(normalizedCanonicalRunData) : {};
 
-  const extractedRunDate = formatDateToISO(String(params.runData.runDate ?? params.runData.date ?? params.existingEntry?.runDate ?? uploadDateStr));
-  const extractedRunTime = formatTimeTo24h(String(params.runData.runTime ?? params.runData.time ?? params.existingEntry?.runTime ?? uploadTimeStr));
+  const extractedRunDate = formatDateToISO(String(normalizedRunData.date ?? params.existingEntry?.runDate ?? uploadDateStr));
+  const extractedRunTime = formatTimeTo24h(String(normalizedRunData.time ?? params.existingEntry?.runTime ?? uploadTimeStr));
 
   return {
     ...(params.existingEntry ?? {}),
@@ -726,30 +729,30 @@ function buildCloudRunEntry(params: {
     runId,
     userId: params.userId,
     username: params.username,
-    type: normalizeTrackerRunType(params.runData.type),
-    tier: normalizeTrackerRunTextValue(params.runData.tier ?? params.runData.Tier ?? params.existingEntry?.tier, '1'),
-    wave: normalizeTrackerRunTextValue(params.runData.wave ?? params.runData.Wave ?? params.existingEntry?.wave, '1'),
-    coins: normalizeTrackerRunMetricValue(params.runData.totalCoins ?? params.runData.coins ?? params.runData['Coins earned'] ?? params.existingEntry?.coins),
-    cells: normalizeTrackerRunMetricValue(params.runData.totalCells ?? params.runData.cells ?? params.runData['Cells Earned'] ?? params.existingEntry?.cells),
+    type: normalizeTrackerRunType(normalizedRunData.type),
+    tier: normalizeTrackerRunTextValue(normalizedRunData.tier ?? params.existingEntry?.tier, '1'),
+    wave: normalizeTrackerRunTextValue(normalizedRunData.wave ?? params.existingEntry?.wave, '1'),
+    coins: normalizeTrackerRunMetricValue(normalizedRunData.totalCoins ?? params.existingEntry?.coins),
+    cells: normalizeTrackerRunMetricValue(normalizedRunData.totalCells ?? params.existingEntry?.cells),
     rerollShards: normalizeTrackerRunMetricValue(
-      params.runData.totalDice ?? params.runData.dice ?? params.runData.rerollShards ?? params.runData['Reroll Shards Earned'] ?? params.existingEntry?.rerollShards,
+      normalizedRunData.totalDice ?? params.existingEntry?.rerollShards,
     ),
-    duration: normalizeTrackerRunTextValue(params.runData.roundDuration ?? params.runData.duration ?? params.runData['Real Time'] ?? params.existingEntry?.duration, '0h0m0s'),
-    killedBy: normalizeTrackerRunTextValue(params.runData.killedBy ?? params.runData['Killed By'] ?? params.existingEntry?.killedBy, 'Apathy'),
+    duration: normalizeTrackerRunTextValue(normalizedRunData.roundDuration ?? params.existingEntry?.duration, '0h0m0s'),
+    killedBy: normalizeTrackerRunTextValue(normalizedRunData.killedBy ?? params.existingEntry?.killedBy, 'Apathy'),
     runDate: extractedRunDate,
     runTime: extractedRunTime,
     date: uploadDateStr,
     time: uploadTimeStr,
-    note: String(params.runData.notes ?? params.runData.note ?? params.existingEntry?.note ?? ''),
-    notes: String(params.runData.notes ?? params.runData.note ?? params.existingEntry?.notes ?? ''),
-    screenshotUrl: params.screenshotUrl ?? pickString(params.runData.screenshotUrl) ?? pickString(params.existingEntry?.screenshotUrl),
+    note: String(normalizedRunData.notes ?? params.existingEntry?.note ?? ''),
+    notes: String(normalizedRunData.notes ?? params.existingEntry?.notes ?? ''),
+    screenshotUrl: params.screenshotUrl ?? pickString(normalizedRunData.screenshotUrl) ?? pickString(params.existingEntry?.screenshotUrl),
     updatedAt: nowIso,
     createdAt,
-    deletedAt: params.runData.deletedAt ?? params.existingEntry?.deletedAt ?? null,
-    source: pickString(params.runData.source) ?? pickString(params.existingEntry?.source) ?? 'discord',
-    fileId: params.runData.fileId ?? params.existingEntry?.fileId ?? null,
-    blocked: Boolean(params.runData.blocked ?? params.existingEntry?.blocked ?? false),
-    verified: params.runData.verified ?? params.existingEntry?.verified ?? null,
+    deletedAt: normalizedRunData.deletedAt ?? params.existingEntry?.deletedAt ?? null,
+    source: pickString(normalizedRunData.source) ?? pickString(params.existingEntry?.source) ?? 'discord',
+    fileId: normalizedRunData.fileId ?? params.existingEntry?.fileId ?? null,
+    blocked: Boolean(normalizedRunData.blocked ?? params.existingEntry?.blocked ?? false),
+    verified: normalizedRunData.verified ?? params.existingEntry?.verified ?? null,
     ...coverage,
     ...canonicalCoverage,
   };

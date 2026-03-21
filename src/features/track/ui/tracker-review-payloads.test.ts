@@ -9,7 +9,7 @@ describe('tracker-review-payloads', () => {
 
   it('normalizes tier edits into tier fields', () => {
     expect(applyEditFieldValue({}, 'tier', '12+')).toMatchObject({
-      tier: 12,
+      tier: '12',
       tierDisplay: '12+',
       tierHasPlus: true,
     });

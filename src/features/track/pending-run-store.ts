@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
+import { canonicalizeTrackerRunData } from './shared/run-data-normalization';
 
 interface PendingRunRecord {
   token: string;
@@ -36,7 +37,13 @@ async function persist() {
 export async function createPendingRun(input: Omit<PendingRunRecord, 'token' | 'createdAt'>) {
   await ensureLoaded();
   const token = randomUUID();
-  const record: PendingRunRecord = { ...input, token, createdAt: Date.now() };
+  const record: PendingRunRecord = {
+    ...input,
+    runData: canonicalizeTrackerRunData(input.runData ?? {}),
+    canonicalRunData: input.canonicalRunData ? canonicalizeTrackerRunData(input.canonicalRunData) : null,
+    token,
+    createdAt: Date.now(),
+  };
   cache!.set(token, record);
   await persist();
   return record;
@@ -51,7 +58,14 @@ export async function updatePendingRun(token: string, patch: Partial<PendingRunR
   await ensureLoaded();
   const current = cache!.get(token);
   if (!current) return null;
-  const next = { ...current, ...patch } as PendingRunRecord;
+  const next = {
+    ...current,
+    ...patch,
+    runData: patch.runData ? canonicalizeTrackerRunData(patch.runData) : current.runData,
+    canonicalRunData: patch.canonicalRunData
+      ? canonicalizeTrackerRunData(patch.canonicalRunData)
+      : (patch.canonicalRunData === null ? null : current.canonicalRunData),
+  } as PendingRunRecord;
   cache!.set(token, next);
   await persist();
   return next;

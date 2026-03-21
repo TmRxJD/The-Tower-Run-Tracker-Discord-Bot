@@ -1,3 +1,5 @@
+import { canonicalizeTrackerRunData } from './run-data-normalization'
+
 export type RunDataRecord = Record<string, unknown> & {
   localId?: unknown
   tier?: unknown
@@ -50,8 +52,8 @@ export function toPendingRecord(value: unknown): PendingRecordLike | null {
   return {
     userId: record.userId,
     username: record.username,
-    runData: toRunDataRecord(record.runData),
-    canonicalRunData: toRunDataRecord(record.canonicalRunData),
+    runData: canonicalizeTrackerRunData(toRunDataRecord(record.runData)),
+    canonicalRunData: record.canonicalRunData ? canonicalizeTrackerRunData(toRunDataRecord(record.canonicalRunData)) : null,
     screenshot: (record.screenshot ?? null) as PendingRecordScreenshot,
     decimalPreference: typeof record.decimalPreference === 'string' ? record.decimalPreference : undefined,
     isDuplicate: typeof record.isDuplicate === 'boolean' ? record.isDuplicate : undefined,

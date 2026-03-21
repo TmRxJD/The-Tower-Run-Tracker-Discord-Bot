@@ -19,12 +19,22 @@ import { autoShareToConfiguredLogChannel } from '../share/auto-log-channel-share
 import type { TrackerBotClient } from '../../../core/tracker-bot-client';
 import type { PendingRecordLike } from '../shared/track-review-records';
 import { ANALYTICS_EVENT_RUN_TRACKER_UPLOAD } from '@tmrxjd/platform/tools';
+import { logger } from '../../../core/logger';
 
 function reviewUi() {
   return getTrackUiConfig().review;
 }
 
 export async function renderDataReview(interaction: TrackReplyInteractionLike, token: string, pending: PendingRecordLike, label: string = 'Extracted') {
+  logger.info('tracker review render', {
+    token,
+    userId: pending.userId,
+    tier: pending.runData?.tier,
+    wave: pending.runData?.wave,
+    killedBy: pending.runData?.killedBy,
+    taggedByDeathWave: pending.runData?.taggedByDeathWave,
+    totalEnemies: pending.runData?.totalEnemies,
+  });
   await renderDataReviewOrSubmit(interaction, token, pending, label, getUserSettings, submitPendingRun);
 }
 

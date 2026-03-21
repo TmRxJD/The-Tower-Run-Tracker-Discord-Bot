@@ -1,8 +1,7 @@
 import { formatDate, formatTime } from './upload-helpers';
 import { ensureType } from './review-interaction-helpers';
 import type { TrackReplyInteractionLike } from '../interaction-types';
-import { applyRunDataAliasGroups, canonicalizeRunDataForOutput } from '../shared/run-data-normalization';
-import { TRACK_RUN_SUBMIT_ALIAS_GROUPS } from '../shared/track-run-field-vocabulary';
+import { canonicalizeRunDataForOutput, canonicalizeTrackerRunData } from '../shared/run-data-normalization';
 import type { RunDataRecord } from '../shared/track-review-records';
 
 const ORDERED_CORE_KEYS = [
@@ -62,25 +61,27 @@ export async function sendRawParseMessage(interaction: TrackReplyInteractionLike
 }
 
 export async function buildSubmitPayload(userId: string, username: string, data: RunDataRecord, includeType: boolean, includeNotes: boolean) {
-  const runData: Record<string, unknown> = applyRunDataAliasGroups(canonicalizeRunDataForOutput(data), TRACK_RUN_SUBMIT_ALIAS_GROUPS);
-
-  runData.tier = runData.tier ?? data.tier ?? data.tierDisplay ?? '1';
-  runData.wave = runData.wave ?? data.wave ?? '1';
-  runData.totalCoins = runData.totalCoins ?? data.totalCoins ?? data.coins ?? '0';
-  runData.totalCells = runData.totalCells ?? data.totalCells ?? data.cells ?? '0';
-  runData.totalDice = runData.totalDice ?? data.totalDice ?? data.rerollShards ?? data.dice ?? '0';
-  runData.roundDuration = runData.roundDuration ?? data.roundDuration ?? data.duration ?? '0h0m0s';
-  runData.killedBy = runData.killedBy ?? data.killedBy ?? 'Apathy';
-  runData.date = runData.date ?? data.date ?? formatDate(new Date());
-  runData.time = runData.time ?? data.time ?? formatTime(new Date());
+  const canonical = canonicalizeTrackerRunData(canonicalizeRunDataForOutput(data));
+  const runData: Record<string, unknown> = {
+    ...canonical,
+    tier: canonical.tier ?? '1',
+    wave: canonical.wave ?? '1',
+    totalCoins: canonical.totalCoins ?? '0',
+    totalCells: canonical.totalCells ?? '0',
+    totalDice: canonical.totalDice ?? '0',
+    roundDuration: canonical.roundDuration ?? '0h0m0s',
+    killedBy: canonical.killedBy ?? 'Apathy',
+    date: canonical.date ?? formatDate(new Date()),
+    time: canonical.time ?? formatTime(new Date()),
+  };
 
   if (includeType) {
-    runData.type = ensureType(data.type);
+    runData.type = ensureType(canonical.type);
   }
 
   if (includeNotes) {
-    runData.notes = data.notes ?? '';
+    runData.notes = canonical.notes ?? '';
   }
 
-  return { runData, note: includeNotes ? (data.notes ?? '') : '', userId, username };
+  return { runData, note: includeNotes ? (canonical.notes ?? '') : '', userId, username };
 }
