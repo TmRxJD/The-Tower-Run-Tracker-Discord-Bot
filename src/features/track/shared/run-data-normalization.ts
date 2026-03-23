@@ -11,6 +11,8 @@ const TRACKER_RUN_CANONICAL_STRING_FIELDS = [
   'killedBy',
   'date',
   'time',
+  'runDate',
+  'runTime',
   'type',
   'notes',
   'reportTimestamp',
@@ -218,6 +220,8 @@ const trackerCanonicalRunSchema = z.object({
   killedBy: z.string().optional(),
   date: z.string().optional(),
   time: z.string().optional(),
+  runDate: z.string().optional(),
+  runTime: z.string().optional(),
   type: z.string().optional(),
   notes: z.string().optional(),
   reportTimestamp: z.string().optional(),
@@ -274,8 +278,10 @@ function omitUndefinedEntries(data: Record<string, unknown>): Record<string, unk
 function buildCanonicalFieldMap(data: RunDataRecordLike): Record<string, unknown> {
   const normalized = canonicalizeRunDataForOutput(data)
   const notes = normalized.notes ?? normalized.note
-  const date = normalized.date ?? normalized.runDate ?? normalized.dateIso
-  const time = normalized.time ?? normalized.runTime ?? normalized.time24h
+  const date = normalized.date ?? normalized.dateIso ?? normalized.runDate
+  const time = normalized.time ?? normalized.time24h ?? normalized.runTime
+  const runDate = normalized.runDate ?? normalized.date ?? normalized.dateIso
+  const runTime = normalized.runTime ?? normalized.time ?? normalized.time24h
 
   const fieldMap: Record<string, unknown> = {
     tier: normalized.tier ?? normalized.tierDisplay,
@@ -289,6 +295,8 @@ function buildCanonicalFieldMap(data: RunDataRecordLike): Record<string, unknown
     killedBy: normalized.killedBy,
     date,
     time,
+    runDate,
+    runTime,
     type: normalized.type,
     notes,
     reportTimestamp: normalized.reportTimestamp,

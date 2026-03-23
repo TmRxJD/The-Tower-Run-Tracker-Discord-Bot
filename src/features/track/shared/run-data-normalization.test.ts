@@ -67,6 +67,10 @@ describe('run data normalization', () => {
       coins: '76.37T',
       killedBy: 'Fast',
       'Killed By': 'Apathy',
+      date: '2026-03-23',
+      time: '14:00:00',
+      runDate: '2026-03-22',
+      runTime: '09:15:00',
       notes: 'keep me',
       values: { junk: true },
     })
@@ -77,6 +81,10 @@ describe('run data normalization', () => {
       wave: '7676',
       totalCoins: '76.37T',
       killedBy: 'Fast',
+      date: '2026-03-23',
+      time: '14:00:00',
+      runDate: '2026-03-22',
+      runTime: '09:15:00',
       notes: 'keep me',
     })
     expect(canonical).not.toHaveProperty('Wave')
@@ -95,6 +103,8 @@ describe('run data normalization', () => {
       killedBy: 'Fast',
       date: '2026-03-21',
       time: '13:47:00',
+      runDate: '2026-03-20',
+      runTime: '11:47:00',
       deathWaveDamage: '1234567890123456789012345',
       taggedByDeathWave: '167963',
     })
@@ -103,6 +113,8 @@ describe('run data normalization', () => {
       tier: '11',
       wave: '7676',
       totalCoins: '76.37T',
+      runDate: '2026-03-20',
+      runTime: '11:47:00',
       taggedByDeathWave: '167963',
     })
     expect(serialized.deathWaveDamage).toBeUndefined()

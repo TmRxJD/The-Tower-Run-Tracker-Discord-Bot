@@ -719,8 +719,10 @@ function buildCloudRunEntry(params: {
   const coverage = extractTrackerRunCoverageData(normalizedRunData);
   const canonicalCoverage = normalizedCanonicalRunData ? extractTrackerRunCoverageData(normalizedCanonicalRunData) : {};
 
-  const extractedRunDate = formatDateToISO(String(normalizedRunData.date ?? params.existingEntry?.runDate ?? uploadDateStr));
-  const extractedRunTime = formatTimeTo24h(String(normalizedRunData.time ?? params.existingEntry?.runTime ?? uploadTimeStr));
+  const extractedRunDate = formatDateToISO(String(normalizedRunData.runDate ?? normalizedRunData.date ?? params.existingEntry?.runDate ?? uploadDateStr));
+  const extractedRunTime = formatTimeTo24h(String(normalizedRunData.runTime ?? normalizedRunData.time ?? params.existingEntry?.runTime ?? uploadTimeStr));
+  const importDate = formatDateToISO(String(params.existingEntry?.date ?? uploadDateStr));
+  const importTime = formatTimeTo24h(String(params.existingEntry?.time ?? uploadTimeStr));
 
   return {
     ...(params.existingEntry ?? {}),
@@ -741,8 +743,8 @@ function buildCloudRunEntry(params: {
     killedBy: normalizeTrackerRunTextValue(normalizedRunData.killedBy ?? params.existingEntry?.killedBy, 'Apathy'),
     runDate: extractedRunDate,
     runTime: extractedRunTime,
-    date: uploadDateStr,
-    time: uploadTimeStr,
+    date: importDate,
+    time: importTime,
     note: String(normalizedRunData.notes ?? params.existingEntry?.note ?? ''),
     notes: String(normalizedRunData.notes ?? params.existingEntry?.notes ?? ''),
     screenshotUrl: params.screenshotUrl ?? pickString(normalizedRunData.screenshotUrl) ?? pickString(params.existingEntry?.screenshotUrl),
