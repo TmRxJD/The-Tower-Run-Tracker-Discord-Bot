@@ -15,7 +15,7 @@ import { createPendingRun } from '../pending-run-store';
 import { renderEditFieldPicker } from './data-review-handlers';
 import { calculateHourlyRate } from '../tracker-helpers';
 import { getViewRunsState, updateViewRunsState } from '../view-runs-store';
-import { TRACKER_IDS } from '../track-custom-ids';
+import { parsePrefixedTrackerToken, parseViewRunsOrientationTarget, TRACKER_IDS, withToken, withViewRunsOrientationTarget } from '../track-custom-ids';
 import { logError } from './error-handlers';
 import { generateCoverageDescription } from './upload-helpers';
 import { renderViewRunsTablePng } from '../ui/view-runs-chart';
@@ -78,17 +78,17 @@ function buildShareActionButtons(token: string, selectedCount: number): ActionRo
   const disableSingleRunActions = selectedCount > 1;
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`${TRACKER_IDS.viewRuns.shareConfirmPrefix}${token}`)
+      .setCustomId(withToken(TRACKER_IDS.viewRuns.shareConfirmPrefix, token))
       .setLabel('Share')
       .setStyle(ButtonStyle.Success)
       .setDisabled(disableSingleRunActions),
     new ButtonBuilder()
-      .setCustomId(`${TRACKER_IDS.viewRuns.shareEditPrefix}${token}`)
+      .setCustomId(withToken(TRACKER_IDS.viewRuns.shareEditPrefix, token))
       .setLabel('Edit')
       .setStyle(ButtonStyle.Primary)
       .setDisabled(disableSingleRunActions),
     new ButtonBuilder()
-      .setCustomId(`${TRACKER_IDS.viewRuns.shareDeletePrefix}${token}`)
+      .setCustomId(withToken(TRACKER_IDS.viewRuns.shareDeletePrefix, token))
       .setLabel('Delete')
       .setStyle(ButtonStyle.Danger),
   );
@@ -493,7 +493,7 @@ async function renderViewRunsPanel(
     new ButtonBuilder().setCustomId(TRACKER_IDS.viewRuns.next).setLabel(viewUi.buttons.next).setStyle(ButtonStyle.Secondary).setDisabled(offset + pageSize >= filtered.length),
     new ButtonBuilder().setCustomId(TRACKER_IDS.viewRuns.share).setLabel(viewUi.buttons.share).setStyle(ButtonStyle.Success).setDisabled(Boolean(options?.disableShareButton)),
     new ButtonBuilder()
-      .setCustomId(`${TRACKER_IDS.viewRuns.orientation}:${state.orientation === 'landscape' ? 'portrait' : 'landscape'}`)
+      .setCustomId(withViewRunsOrientationTarget(state.orientation === 'landscape' ? 'portrait' : 'landscape'))
       .setLabel(state.orientation === 'landscape' ? 'Landscape' : 'Portrait')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(TRACKER_IDS.flow.mainMenu).setLabel(viewUi.buttons.mainMenu).setStyle(ButtonStyle.Primary),
@@ -569,8 +569,7 @@ export async function handleTrackMenuViewRunsOrientation(interaction: TrackMenuI
   }
 
   const current = getViewRunsState(interaction.user.id);
-  const customId = 'customId' in interaction ? interaction.customId : '';
-  const explicitTarget = customId.split(':').pop();
+  const explicitTarget = parseViewRunsOrientationTarget('customId' in interaction ? interaction.customId : '');
   const orientation: 'landscape' | 'portrait' = explicitTarget === 'portrait'
     ? 'portrait'
     : explicitTarget === 'landscape'
@@ -666,7 +665,7 @@ export async function handleTrackMenuShareRuns(interaction: TrackMenuInteraction
 
     const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId(`${TRACKER_IDS.viewRuns.shareSelectPrefix}${token}`)
+        .setCustomId(withToken(TRACKER_IDS.viewRuns.shareSelectPrefix, token))
         .setPlaceholder('Select runs to share/delete')
         .setMinValues(1)
         .setMaxValues(Math.max(1, Math.min(options.length, 25)))
@@ -689,7 +688,11 @@ export async function handleTrackMenuShareRuns(interaction: TrackMenuInteraction
 
 export async function handleTrackMenuShareRunsSelect(interaction: TrackMenuInteraction) {
   try {
-    const token = interaction.customId.slice(TRACKER_IDS.viewRuns.shareSelectPrefix.length);
+    const token = parsePrefixedTrackerToken(TRACKER_IDS.viewRuns.shareSelectPrefix, interaction.customId);
+    if (!token) {
+      await updateOrEdit(interaction, { content: 'Share session expired. Please start again.', components: [] });
+      return;
+    }
     const session = runShareSessions.get(token);
     if (!session || session.userId !== interaction.user.id) {
       await updateOrEdit(interaction, { content: 'Share session expired. Please start again.', components: [] });
@@ -714,7 +717,7 @@ export async function handleTrackMenuShareRunsSelect(interaction: TrackMenuInter
 
     const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId(`${TRACKER_IDS.viewRuns.shareSelectPrefix}${token}`)
+        .setCustomId(withToken(TRACKER_IDS.viewRuns.shareSelectPrefix, token))
         .setPlaceholder('Select runs to share/delete')
         .setMinValues(1)
         .setMaxValues(Math.max(1, Math.min(options.length, 25)))
@@ -735,7 +738,11 @@ export async function handleTrackMenuShareRunsSelect(interaction: TrackMenuInter
 
 export async function handleTrackMenuShareRunsConfirm(interaction: TrackMenuInteraction) {
   try {
-    const token = interaction.customId.slice(TRACKER_IDS.viewRuns.shareConfirmPrefix.length);
+    const token = parsePrefixedTrackerToken(TRACKER_IDS.viewRuns.shareConfirmPrefix, interaction.customId);
+    if (!token) {
+      await updateOrEdit(interaction, { content: 'Share session expired. Please start again.', components: [] });
+      return;
+    }
     const session = runShareSessions.get(token);
     if (!session || session.userId !== interaction.user.id) {
       await updateOrEdit(interaction, { content: 'Share session expired. Please start again.', components: [] });
@@ -817,7 +824,11 @@ export async function handleTrackMenuShareRunsConfirm(interaction: TrackMenuInte
 
 export async function handleTrackMenuShareRunsDelete(interaction: TrackMenuInteraction) {
   try {
-    const token = interaction.customId.slice(TRACKER_IDS.viewRuns.shareDeletePrefix.length);
+    const token = parsePrefixedTrackerToken(TRACKER_IDS.viewRuns.shareDeletePrefix, interaction.customId);
+    if (!token) {
+      await updateOrEdit(interaction, { content: 'Share/Delete session expired. Please start again.', components: [] });
+      return;
+    }
     const session = runShareSessions.get(token);
     if (!session || session.userId !== interaction.user.id) {
       await updateOrEdit(interaction, { content: 'Share/Delete session expired. Please start again.', components: [] });
@@ -878,7 +889,11 @@ export async function handleTrackMenuShareRunsDelete(interaction: TrackMenuInter
 
 export async function handleTrackMenuShareRunsEdit(interaction: TrackMenuInteraction) {
   try {
-    const token = interaction.customId.slice(TRACKER_IDS.viewRuns.shareEditPrefix.length);
+    const token = parsePrefixedTrackerToken(TRACKER_IDS.viewRuns.shareEditPrefix, interaction.customId);
+    if (!token) {
+      await updateOrEdit(interaction, { content: 'Share/Edit session expired. Please start again.', components: [] });
+      return;
+    }
     const session = runShareSessions.get(token);
     if (!session || session.userId !== interaction.user.id) {
       await updateOrEdit(interaction, { content: 'Share/Edit session expired. Please start again.', components: [] });
@@ -920,7 +935,11 @@ export async function handleTrackMenuShareRunsEdit(interaction: TrackMenuInterac
 
 export async function handleTrackMenuShareRunsCancel(interaction: TrackMenuInteraction) {
   try {
-    const token = interaction.customId.slice(TRACKER_IDS.viewRuns.shareCancelPrefix.length);
+    const token = parsePrefixedTrackerToken(TRACKER_IDS.viewRuns.shareCancelPrefix, interaction.customId);
+    if (!token) {
+      await updateOrEdit(interaction, { content: 'Run share canceled.', components: [] });
+      return;
+    }
     runShareSessions.delete(token);
     await updateOrEdit(interaction, { content: 'Run share canceled.', components: [] });
   } catch (error) {

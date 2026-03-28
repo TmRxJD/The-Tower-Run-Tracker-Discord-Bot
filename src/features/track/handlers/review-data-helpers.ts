@@ -1,45 +1,41 @@
 import { formatDate, formatTime } from './upload-helpers';
+import {
+  canonicalizeRunDataForOutput,
+  canonicalizeTrackerRunData,
+  TRACK_RUN_BATTLE_REPORT_FIELDS,
+  TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS,
+} from '@tmrxjd/platform/tools';
 import { ensureType } from './review-interaction-helpers';
 import type { TrackReplyInteractionLike } from '../interaction-types';
-import { canonicalizeRunDataForOutput, canonicalizeTrackerRunData } from '../shared/run-data-normalization';
 import type { RunDataRecord } from '../shared/track-review-records';
 
-const ORDERED_CORE_KEYS = [
-  'tierDisplay',
-  'tier',
-  'wave',
-  'roundDuration',
-  'duration',
-  'totalCoins',
-  'totalCells',
-  'totalDice',
-  'killedBy',
-  'date',
-  'time',
-  'type',
-];
+function readScannedBattleReportValue(data: RunDataRecord, normalizedData: Record<string, unknown>, key: string): string | null {
+  const valuesRecord = data.values && typeof data.values === 'object'
+    ? data.values as Record<string, unknown>
+    : null;
+
+  const value = valuesRecord?.[key] ?? normalizedData[key];
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  return text ? text : null;
+}
 
 export function buildRawParseText(data: RunDataRecord): string {
   const normalizedData = canonicalizeRunDataForOutput(data);
   const lines: string[] = [];
 
-  for (const key of ORDERED_CORE_KEYS) {
-    const value = normalizedData[key];
-    if (value === undefined || value === null) continue;
-    const text = String(value).trim();
-    if (!text) continue;
-    lines.push(`${key}: ${text}`);
-  }
+  for (const section of TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS) {
+    const sectionLines = TRACK_RUN_BATTLE_REPORT_FIELDS
+      .filter(field => field.section === section)
+      .map((field) => {
+        const text = readScannedBattleReportValue(data, normalizedData, field.key);
+        return text ? `${field.label}\t${text}` : null;
+      })
+      .filter((line): line is string => Boolean(line));
 
-  const remainingEntries = Object.entries(normalizedData)
-    .filter(([key, value]) => !ORDERED_CORE_KEYS.includes(key) && value !== undefined && value !== null && String(value).trim() !== '')
-    .sort(([left], [right]) => left.localeCompare(right));
-
-  if (remainingEntries.length) {
-    lines.push('');
-    lines.push('--- additional fields ---');
-    for (const [key, value] of remainingEntries) {
-      lines.push(`${key}: ${String(value).trim()}`);
+    if (sectionLines.length > 0) {
+      lines.push(section);
+      lines.push(...sectionLines);
     }
   }
 

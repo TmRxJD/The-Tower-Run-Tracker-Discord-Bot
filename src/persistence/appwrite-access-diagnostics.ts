@@ -1,7 +1,7 @@
+import { isUnauthorizedAppwriteError } from '@tmrxjd/platform/node';
 import { Databases, Query } from 'node-appwrite';
 import { getAppConfig } from '../config';
 import { logger } from '../core/logger';
-import { isUnauthorizedAppwriteError } from './appwrite-error-utils';
 
 interface AccessCheck {
   databaseId: string;

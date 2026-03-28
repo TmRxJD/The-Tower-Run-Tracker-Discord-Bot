@@ -25,7 +25,7 @@ export function getSelectedReviewValue(interaction: ReviewInteraction): string |
   if ('values' in interaction && Array.isArray(interaction.values) && interaction.values[0]) {
     return interaction.values[0];
   }
-  const value = (interaction as unknown as { value?: unknown }).value;
+  const value = 'value' in interaction ? interaction.value : undefined;
   return typeof value === 'string' ? value : null;
 }
 

@@ -1,6 +1,7 @@
 import { REST, Routes } from 'discord.js';
 import { ZodError } from 'zod';
 import { commandModules } from '../commands';
+import { validateBotBootstrapConfig } from '../core/bootstrap-contract';
 import { logger } from '../core/logger';
 import { getAppConfig, loadConfig } from '../config';
 
@@ -58,22 +59,43 @@ async function registerCommands() {
 
   loadConfig();
   const appConfig = getAppConfig();
+  const runtime = validateBotBootstrapConfig(appConfig);
 
-  const rest = new REST({ version: '10' }).setToken(appConfig.discord.token);
+  const rest = new REST({ version: '10' }).setToken(runtime.loginToken);
   const body = commandModules.map((command: { data: unknown }) => command.data);
-  const targetGuildId = options.forceGlobal ? undefined : (options.guildId ?? appConfig.discord.guildId);
+  const targetGuildId = resolveTargetGuildId(runtime.deploymentMode, options, runtime.registrationGuildId);
 
-  logger.info(`Preparing command registration for ${appConfig.deploymentMode} mode`);
+  logger.info(`Preparing command registration for ${runtime.deploymentMode} mode`);
 
   if (targetGuildId) {
     logger.info(`Registering ${body.length} guild commands to ${targetGuildId}`);
-    await rest.put(Routes.applicationGuildCommands(appConfig.discord.clientId, targetGuildId), { body });
+    await rest.put(Routes.applicationGuildCommands(runtime.clientId, targetGuildId), { body });
   } else {
     logger.info(`Registering ${body.length} global commands`);
-    await rest.put(Routes.applicationCommands(appConfig.discord.clientId), { body });
+    await rest.put(Routes.applicationCommands(runtime.clientId), { body });
   }
 
   logger.info('Slash commands refreshed');
+}
+
+function resolveTargetGuildId(
+  deploymentMode: 'dev' | 'prod',
+  options: RegisterCommandOptions,
+  configuredGuildId?: string,
+): string | undefined {
+  if (options.forceGlobal) {
+    return undefined;
+  }
+
+  if (options.guildId) {
+    return options.guildId;
+  }
+
+  if (deploymentMode === 'dev') {
+    return configuredGuildId;
+  }
+
+  return undefined;
 }
 
 registerCommands().catch(error => {

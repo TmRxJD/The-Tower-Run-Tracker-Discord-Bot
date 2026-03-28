@@ -8,14 +8,15 @@ import {
 import { TRACK_RUN_SUBMIT_ALIAS_GROUPS } from './track-run-field-vocabulary'
 
 describe('run data normalization', () => {
-  it('canonicalizes output aliases and splits guardian summoned enemy text', () => {
+  it('canonicalizes exact battle report labels and keeps the dice bridge only where needed', () => {
     const normalized = canonicalizeRunDataForOutput({
       Tier: '12',
-      duration: '1h2m3s',
-      'Coins Earned': '1234',
-      guardianDamage: '45 summoned enemies 9',
+      'Real Time': '1h2m3s',
+      'Coins earned': '1234',
+      Damage: '45 summoned enemies 9',
       'Guardian coins stolen': '77',
-      'Rare Modules Fetched': '2',
+      'Rare Modules': '2',
+      dice: '88',
     })
 
     expect(normalized.tier).toBe('12')
@@ -25,7 +26,8 @@ describe('run data normalization', () => {
     expect(normalized.guardianSummonedEnemies).toBe('9')
     expect(normalized.guardianCoinsStolen).toBe('77')
     expect(normalized.rareModulesFetched).toBe('2')
-    expect(normalized['Coins Earned']).toBeUndefined()
+    expect(normalized.totalDice).toBe('88')
+    expect(normalized['Coins earned']).toBeUndefined()
   })
 
   it('preserves canonical values when conflicting raw aliases are present', () => {
@@ -45,16 +47,16 @@ describe('run data normalization', () => {
   it('applies submit aliases that collapse duplicated battle-report keys', () => {
     const submitReady = applyRunDataAliasGroups({
       'Enemies Hit by Orbs': '401',
-      'Destroyed By Orbs': '401',
-      'Summoned Enemies': '12',
-      'Spotlight Damage': '999',
+      'Summoned enemies': '12',
+      'Coins From Orb': '999',
+      rerollShards: '14',
     }, TRACK_RUN_SUBMIT_ALIAS_GROUPS)
 
     expect(submitReady.enemiesHitByOrbs).toBe('401')
     expect(submitReady['Enemies Hit by Orbs']).toBeUndefined()
-    expect(submitReady['Destroyed By Orbs']).toBeUndefined()
     expect(submitReady.guardianSummonedEnemies).toBe('12')
-    expect(submitReady.spotlightDamage).toBe('999')
+    expect(submitReady.coinsFromOrbs).toBe('999')
+    expect(submitReady.totalDice).toBe('14')
   })
 
   it('builds a single canonical tracker run record and drops raw aliases', () => {
@@ -64,7 +66,7 @@ describe('run data normalization', () => {
       wave: '7676',
       Wave: '167963',
       totalCoins: '76.37T',
-      coins: '76.37T',
+      'Coins earned': '76.37T',
       killedBy: 'Fast',
       'Killed By': 'Apathy',
       date: '2026-03-23',

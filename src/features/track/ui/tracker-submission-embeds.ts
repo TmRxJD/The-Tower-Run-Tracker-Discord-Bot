@@ -1,9 +1,9 @@
 import { Colors, EmbedBuilder } from 'discord.js'
+import { getFirstMeaningfulRunDataValue } from '@tmrxjd/platform/tools'
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math'
 import { getTrackUiConfig } from '../../../config/tracker-ui-config'
 import { calculateHourlyRate } from '../tracker-helpers'
 import { generateCoverageDescription, trimDisplayTimeSeconds } from '../handlers/upload-helpers'
-import { getFirstMeaningfulRunDataValue } from '../shared/run-data-normalization'
 
 type RunDataLike = Record<string, unknown>
 
@@ -40,19 +40,11 @@ function getSubmissionFieldLabel(key: string) {
 
 function normalizeCoverageFields(data: RunDataLike): RunDataLike {
   const totalEnemies = getFirstMeaningfulRunDataValue(data.totalEnemies, data['Total Enemies'])
-  const enemiesHitByOrbs = getFirstMeaningfulRunDataValue(data.enemiesHitByOrbs, data['Enemies Hit by Orbs'], data.destroyedByOrbs, data['Destroyed By Orbs'])
-  const taggedByDeathWave = getFirstMeaningfulRunDataValue(data.taggedByDeathWave, data['Tagged by Deathwave'])
+  const enemiesHitByOrbs = getFirstMeaningfulRunDataValue(data.enemiesHitByOrbs, data['Enemies Hit by Orbs'])
+  const taggedByDeathWave = getFirstMeaningfulRunDataValue(data.taggedByDeathWave, data['Tagged by Death Wave'])
   const destroyedInSpotlight = getFirstMeaningfulRunDataValue(data.destroyedInSpotlight, data['Destroyed in Spotlight'])
   const destroyedInGoldenBot = getFirstMeaningfulRunDataValue(data.destroyedInGoldenBot, data['Destroyed in Golden Bot'])
-  const summonedEnemies = getFirstMeaningfulRunDataValue(
-    data.guardianSummonedEnemies,
-    data.summonedEnemies,
-    data['Summoned enemies'],
-    data['Summoned Enemies'],
-    data.summoned,
-    data['Summon'],
-    data.summon,
-  )
+  const summonedEnemies = getFirstMeaningfulRunDataValue(data.guardianSummonedEnemies, data['Summoned enemies'])
 
   return {
     ...data,
@@ -60,20 +52,16 @@ function normalizeCoverageFields(data: RunDataLike): RunDataLike {
     ...(enemiesHitByOrbs !== undefined
       ? {
           enemiesHitByOrbs,
-          destroyedByOrbs: enemiesHitByOrbs,
           ['Enemies Hit by Orbs']: enemiesHitByOrbs,
-          ['Destroyed By Orbs']: enemiesHitByOrbs,
         }
       : {}),
-    ...(taggedByDeathWave !== undefined ? { taggedByDeathWave, ['Tagged by Deathwave']: taggedByDeathWave } : {}),
+    ...(taggedByDeathWave !== undefined ? { taggedByDeathWave, ['Tagged by Death Wave']: taggedByDeathWave } : {}),
     ...(destroyedInSpotlight !== undefined ? { destroyedInSpotlight, ['Destroyed in Spotlight']: destroyedInSpotlight } : {}),
     ...(destroyedInGoldenBot !== undefined ? { destroyedInGoldenBot, ['Destroyed in Golden Bot']: destroyedInGoldenBot } : {}),
     ...(summonedEnemies !== undefined
       ? {
           guardianSummonedEnemies: summonedEnemies,
-          summonedEnemies,
           ['Summoned enemies']: summonedEnemies,
-          ['Summoned Enemies']: summonedEnemies,
         }
       : {}),
   }

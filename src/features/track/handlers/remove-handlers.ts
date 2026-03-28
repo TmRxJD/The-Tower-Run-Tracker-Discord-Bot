@@ -1,26 +1,12 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, EmbedBuilder, MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
 import { getLastRun, getLocalLifetimeData, removeLastRun, removeLifetimeEntry } from '../tracker-api-client';
-import { TRACKER_IDS, withToken } from '../track-custom-ids';
+import { packTrackerRemoveToken, parsePrefixedTrackerToken, parseTrackerRemoveToken, TRACKER_IDS, withToken } from '../track-custom-ids';
 import { logError } from './error-handlers';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { createInitialEmbed, createMainMenuButtons } from '../ui/tracker-ui';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
-
-function packRemoveToken(runId: string | null, localId: string | null): string {
-  return `${encodeURIComponent(runId ?? '')}|${encodeURIComponent(localId ?? '')}`;
-}
-
-function unpackRemoveToken(token: string): { runId: string | null; localId: string | null } {
-  const [encodedRunId = '', encodedLocalId = ''] = String(token || '').split('|', 2);
-  const runId = decodeURIComponent(encodedRunId).trim();
-  const localId = decodeURIComponent(encodedLocalId).trim();
-  return {
-    runId: runId || null,
-    localId: localId || null,
-  };
-}
 
 async function renderMainMenuFromLatest(interaction: TrackMenuInteraction, mode: 'track' | 'lifetime') {
   if (mode === 'lifetime') {
@@ -100,7 +86,7 @@ export async function handleTrackMenuRemoveLastPrompt(interaction: TrackMenuInte
       .setColor(Colors.Orange);
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(withToken(TRACKER_IDS.remove.confirmPrefix, packRemoveToken(runId, localId))).setLabel(removeUi.confirmButton).setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(withToken(TRACKER_IDS.remove.confirmPrefix, packTrackerRemoveToken(runId, localId))).setLabel(removeUi.confirmButton).setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId(TRACKER_IDS.remove.cancel).setLabel(removeUi.cancelButton).setStyle(ButtonStyle.Secondary),
     );
 
@@ -114,8 +100,8 @@ export async function handleTrackMenuConfirmRemove(interaction: TrackMenuInterac
   try {
     const mode = getTrackerFlowMode(interaction.user.id);
     const removeUi = getTrackerUiConfig(mode).remove;
-    const token = interaction.customId.slice(TRACKER_IDS.remove.confirmPrefix.length);
-    const { runId, localId } = unpackRemoveToken(token);
+    const token = parsePrefixedTrackerToken(TRACKER_IDS.remove.confirmPrefix, interaction.customId);
+    const { runId, localId } = parseTrackerRemoveToken(token);
     if (!runId && !localId) {
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferUpdate().catch(() => {});

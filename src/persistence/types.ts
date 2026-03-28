@@ -1,16 +1,7 @@
-export interface UIConfigDocument {
-  env: string;
-  version: string;
-  payload: string; // JSON string of ui config
-  updatedAt: string;
-}
+import { z } from 'zod';
 
-export interface BotConfigDocument {
-  env: string;
-  version: string;
-  payload: string; // JSON string of bot config
-  updatedAt: string;
-}
+const isoTimestampSchema = z.string().trim().min(1).refine(value => Number.isFinite(Date.parse(value)), 'Invalid timestamp');
+const optionalSettingStringSchema = z.string().trim().min(1).optional();
 
 export interface GuildDocument {
   guildId: string;
@@ -29,6 +20,18 @@ export interface UserSettingsDocument {
   lastSeen?: string;
   updatedAt?: string;
 }
+
+export const userSettingsDocumentSchema = z.object({
+  userId: z.string().trim().min(1),
+  username: optionalSettingStringSchema,
+  defaultTracker: optionalSettingStringSchema,
+  defaultRunType: optionalSettingStringSchema,
+  scanLanguage: optionalSettingStringSchema,
+  decimalPreference: optionalSettingStringSchema,
+  shareSettings: optionalSettingStringSchema,
+  lastSeen: isoTimestampSchema.optional(),
+  updatedAt: isoTimestampSchema.optional(),
+}).strict();
 
 export interface AnalyticsEventDocument {
   ts: string;

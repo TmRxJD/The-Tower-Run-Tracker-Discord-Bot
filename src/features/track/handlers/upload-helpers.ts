@@ -1,144 +1,20 @@
 import { parseNumberInput } from '../../../utils/tracker-math';
 import { parseBattleReportRunData } from '@tmrxjd/platform/parity';
-import { TRACK_RUN_INLINE_BATTLE_REPORT_LABELS } from '../shared/track-run-field-vocabulary';
+import {
+  TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS,
+  TRACK_RUN_INLINE_BATTLE_REPORT_LABELS,
+  TRACK_RUN_INLINE_BATTLE_REPORT_SECTION_LABELS,
+} from '@tmrxjd/platform/tools';
 
 const INLINE_BATTLE_REPORT_LABELS = TRACK_RUN_INLINE_BATTLE_REPORT_LABELS;
-
-const INLINE_BATTLE_REPORT_SECTION_HEADERS = [
-  'Battle Report',
-  'Combat',
-  'Utility',
-  'Enemies Destroyed',
-  'Bots',
-  'Guardian',
-] as const;
-
-const INLINE_SINGLE_LINE_SECTION_LABELS: Record<string, string[]> = {
-  'Battle Report': [
-    'Battle Date',
-    'Game Time',
-    'Real Time',
-    'Tier',
-    'Wave',
-    'Killed By',
-    'Coins earned',
-    'Coins per hour',
-    'Cash earned',
-    'Interest earned',
-    'Gem Blocks Tapped',
-    'Cells Earned',
-    'Reroll Shards Earned',
-  ],
-  Combat: [
-    'Damage dealt',
-    'Damage Taken',
-    'Damage Taken Wall',
-    'Damage Taken While Berserked',
-    'Damage Gain From Berserk',
-    'Death Defy',
-    'Lifesteal',
-    'Projectiles Damage',
-    'Projectiles Count',
-    'Thorn damage',
-    'Orb Damage',
-    'Enemies Hit by Orbs',
-    'Land Mine Damage',
-    'Land Mines Spawned',
-    'Rend Armor Damage',
-    'Death Ray Damage',
-    'Smart Missile Damage',
-    'Inner Land Mine Damage',
-    'Chain Lightning Damage',
-    'Death Wave Damage',
-    'Deathwave Damage',
-    'Tagged by Death Wave',
-    'Tagged by Deathwave',
-    'Swamp Damage',
-    'Black Hole Damage',
-    'Electrons Damage',
-  ],
-  Utility: [
-    'Waves Skipped',
-    'Recovery Packages',
-    'Free Attack Upgrade',
-    'Free Defense Upgrade',
-    'Free Utility Upgrade',
-    'HP From Death Wave',
-    'HP From Deathwave',
-    'Coins From Death Wave',
-    'Coins From Deathwave',
-    'Cash From Golden Tower',
-    'Coins From Golden Tower',
-    'Coins From Black Hole',
-    'Coins From Spotlight',
-    'Coins From Orb',
-    'Coins from Coin Upgrade',
-    'Coins from Coin Bonuses',
-  ],
-  'Enemies Destroyed': [
-    'Total Enemies',
-    'Basic',
-    'Fast',
-    'Tank',
-    'Ranged',
-    'Boss',
-    'Protector',
-    'Total Elites',
-    'Vampires',
-    'Rays',
-    'Scatters',
-    'Saboteur',
-    'Saboteurs',
-    'Commander',
-    'Commanders',
-    'Overcharge',
-    'Overcharges',
-    'Destroyed By Orbs',
-    'Destroyed by Thorns',
-    'Destroyed by Death Ray',
-    'Destroyed by Land Mine',
-    'Destroyed in Spotlight',
-  ],
-  Bots: [
-    'Flame Bot Damage',
-    'Thunder Bot Stuns',
-    'Golden Bot Coins Earned',
-    'Destroyed in Golden Bot',
-  ],
-  Guardian: [
-    'Guardian Damage',
-    'Damage',
-    'Summoned enemies',
-    'Guardian coins stolen',
-    'Coins Fetched',
-    'Gems',
-    'Medals',
-    'Gems Fetched',
-    'Medals Fetched',
-    'Reroll Shards Fetched',
-    'Reroll Shards',
-    'Cannon Shards Fetched',
-    'Cannon Shards',
-    'Armor Shards Fetched',
-    'Armor Shards',
-    'Generator Shards Fetched',
-    'Generator Shards',
-    'Core Shards Fetched',
-    'Core Shards',
-    'Common Modules Fetched',
-    'Common Modules',
-    'Rare Modules Fetched',
-    'Rare Modules',
-  ],
-};
+const INLINE_SECTION_HEADERS = TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS;
+const INLINE_SINGLE_LINE_SECTION_LABELS = TRACK_RUN_INLINE_BATTLE_REPORT_SECTION_LABELS;
 
 function normalizeInlineBattleReportText(rawText: string): string {
   const canonicalized = (rawText ?? '')
     .toString()
     .replace(/\r/g, '\n')
     .replace(/\\t/g, '\t')
-    .replace(/\bRun\s+ended\s+on\b/gi, 'Battle Date')
-    .replace(/\bElite\s+Cells\s+Earned\b/gi, 'Cells Earned')
     .trim();
 
   const text = canonicalized;
@@ -176,7 +52,7 @@ function normalizeInlineBattleReportText(rawText: string): string {
     .sort((a, b) => b.length - a.length)
     .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
     .join('|');
-  const sectionAlternation = [...INLINE_BATTLE_REPORT_SECTION_HEADERS]
+  const sectionAlternation = [...INLINE_SECTION_HEADERS]
     .sort((a, b) => b.length - a.length)
     .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
     .join('|');
@@ -199,10 +75,10 @@ function normalizeInlineBattleReportText(rawText: string): string {
   if (rawLines.length === 0) return text;
 
   const lines: string[] = [];
-  let currentSection = 'Battle Report';
+  let currentSection: keyof typeof INLINE_SINGLE_LINE_SECTION_LABELS = 'Battle Report';
 
   for (const rawLine of rawLines) {
-    const sectionHeader = INLINE_BATTLE_REPORT_SECTION_HEADERS.find(header => rawLine.toLowerCase().startsWith(header.toLowerCase()));
+    const sectionHeader = INLINE_SECTION_HEADERS.find(header => rawLine.toLowerCase().startsWith(header.toLowerCase()));
     let remainder = rawLine;
 
     if (sectionHeader) {
@@ -518,23 +394,14 @@ export function generateCoverageDescription(runData: RunLike | null | undefined)
   const getVal = (key: unknown) => parseNumberInput(String(key ?? 0));
   const enemiesHitByOrbs = getVal(
     runData['Enemies Hit by Orbs'] ??
-      runData.enemiesHitByOrbs ??
-      runData['Destroyed By Orbs'] ??
-      runData.destroyedByOrbs,
+      runData.enemiesHitByOrbs,
   );
-  const taggedByDeathWave = getVal(runData['Tagged by Deathwave'] ?? runData.taggedByDeathWave);
+  const taggedByDeathWave = getVal(runData['Tagged by Death Wave'] ?? runData.taggedByDeathWave);
   const destroyedInSpotlight = getVal(runData['Destroyed in Spotlight'] ?? runData.destroyedInSpotlight);
   const destroyedInGoldenBot = getVal(runData['Destroyed in Golden Bot'] ?? runData.destroyedInGoldenBot);
   const summonedEnemies = getVal(
     runData['Summoned enemies'] ??
-      runData.guardianSummonedEnemies ??
-      runData.summonedEnemies ??
-      runData['Summoned Enemies'] ??
-      runData.summoned_enemies ??
-      runData.Summoned ??
-      runData.summoned ??
-      runData['Summon'] ??
-      runData.summon,
+      runData.guardianSummonedEnemies,
   );
 
   const toPct = (val: number) => {
@@ -566,7 +433,7 @@ export function generateCoverageDescription(runData: RunLike | null | undefined)
 
 const ocrFieldTranslations: Record<string, Record<string, string>> = {
   English: {
-    coins: 'Coins Earned',
+    coins: 'Coins earned',
     cells: 'Cells Earned',
     dice: 'Reroll Shards Earned',
     duration: 'Real Time',

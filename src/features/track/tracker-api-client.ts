@@ -4,9 +4,11 @@ import { join } from 'node:path';
 import {
   buildTrackerLeaderboardPayload,
   buildTrackerLeaderboardCloudDocument,
+  buildTrackerRunCloudWritePayload,
   buildTrackerRunIdentityKey,
   collectTrackerRunScalarFields,
   createOrUpdateCloudDocument,
+  deleteCloudDocumentIfExists,
   estimateTrackerRunTimestamp,
   extractTrackerRunCoverageData,
   sanitizeTrackerLeaderboardDocumentId,
@@ -14,11 +16,11 @@ import {
   hydrateTrackerCloudRun,
   hydrateTrackerRunEntryFromDocument,
   listCloudDocumentsByUserIds,
+  listFirstCloudDocument,
   normalizeTrackerRunMetricValue,
   normalizeTrackerRunTextValue,
   normalizeTrackerRunType,
   parseTrackerLifetimeCloudWrite,
-  parseTrackerRunCloudWrite,
   pickTrackerRunField,
   compareTrackerVerificationSnapshots,
   createTrackerVerificationSnapshot,
@@ -512,107 +514,11 @@ function toRunDocumentPayload(params: {
   username: string;
   run: RunRecord;
 }): Record<string, unknown> {
-  const run = serializeTrackerRunForCloudAttributes(params.run);
-  const pick = (canonical: string, ...aliases: string[]) => pickTrackerRunField(run, [canonical, ...aliases]);
-  return parseTrackerRunCloudWrite(stripUndefinedFields({
+  return buildTrackerRunCloudWritePayload({
     userId: params.userId,
-    username: String(run.username ?? params.username ?? 'unknown'),
-    type: String(run.type ?? 'Farming'),
-    tier: String(run.tier ?? run.Tier ?? '1'),
-    wave: String(run.wave ?? run.Wave ?? '1'),
-    coins: String(run.coins ?? run.totalCoins ?? run['Coins earned'] ?? '0'),
-    cells: String(run.cells ?? run.totalCells ?? run['Cells Earned'] ?? '0'),
-    rerollShards: String(run.rerollShards ?? run.totalDice ?? run.dice ?? run['Reroll Shards Earned'] ?? '0'),
-    duration: String(run.duration ?? run.roundDuration ?? run['Real Time'] ?? '0h0m0s'),
-    killedBy: String(run.killedBy ?? run['Killed By'] ?? 'Apathy'),
-    runDate: String(run.runDate ?? run.date ?? ''),
-    runTime: String(run.runTime ?? run.time ?? ''),
-    date: String(run.date ?? run.runDate ?? ''),
-    time: String(run.time ?? run.runTime ?? ''),
-    note: String(run.note ?? run.notes ?? ''),
-    public: typeof run.public === 'boolean' ? run.public : undefined,
-    gameTime: pick('gameTime', 'Game Time'),
-    coinsPerHour: pick('coinsPerHour', 'Coins Per Hour'),
-    cellsPerHour: pick('cellsPerHour', 'Cells Per Hour'),
-    rerollShardsPerHour: pick('rerollShardsPerHour', 'Reroll Shards Per Hour'),
-    cashEarned: pick('cashEarned', 'Cash Earned'),
-    interestEarned: pick('interestEarned', 'Interest Earned'),
-    gemBlocksTapped: pick('gemBlocksTapped', 'Gem Blocks Tapped'),
-    damageTaken: pick('damageTaken', 'Damage Taken'),
-    damageTakenWall: pick('damageTakenWall', 'Damage Taken Wall'),
-    damageTakenWhileBerserked: pick('damageTakenWhileBerserked', 'Damage Taken While Berserked'),
-    damageGainFromBerserk: pick('damageGainFromBerserk', 'Damage Gain From Berserk'),
-    deathDefy: pick('deathDefy', 'Death Defy'),
-    damageDealt: pick('damageDealt', 'Damage Dealt'),
-    projectilesDamage: pick('projectilesDamage', 'Projectiles Damage'),
-    rendArmorDamage: pick('rendArmorDamage', 'Rend Armor Damage'),
-    projectilesCount: pick('projectilesCount', 'Projectiles Count'),
-    lifesteal: pick('lifesteal', 'Lifesteal'),
-    thornDamage: pick('thornDamage', 'Thorn Damage'),
-    orbDamage: pick('orbDamage', 'Orb Damage'),
-    enemiesHitByOrbs: pick('enemiesHitByOrbs', 'Enemies Hit by Orbs', 'Destroyed By Orbs'),
-    landMineDamage: pick('landMineDamage', 'Land Mine Damage'),
-    landMinesSpawned: pick('landMinesSpawned', 'Land Mines Spawned'),
-    deathRayDamage: pick('deathRayDamage', 'Death Ray Damage'),
-    smartMissileDamage: pick('smartMissileDamage', 'Smart Missile Damage'),
-    innerLandMineDamage: pick('innerLandMineDamage', 'Inner Land Mine Damage'),
-    chainLightningDamage: pick('chainLightningDamage', 'Chain Lightning Damage'),
-    deathWaveDamage: pick('deathWaveDamage', 'Death Wave Damage'),
-    taggedByDeathWave: pick('taggedByDeathWave', 'Tagged by Deathwave'),
-    swampDamage: pick('swampDamage', 'Swamp Damage'),
-    blackHoleDamage: pick('blackHoleDamage', 'Black Hole Damage'),
-    electronsDamage: pick('electronsDamage', 'Electrons Damage'),
-    wavesSkipped: pick('wavesSkipped', 'Waves Skipped'),
-    recoveryPackages: pick('recoveryPackages', 'Recovery Packages'),
-    freeAttackUpgrade: pick('freeAttackUpgrade', 'Free Attack Upgrade'),
-    freeDefenseUpgrade: pick('freeDefenseUpgrade', 'Free Defense Upgrade'),
-    freeUtilityUpgrade: pick('freeUtilityUpgrade', 'Free Utility Upgrade'),
-    hpFromDeathWave: pick('hpFromDeathWave', 'HP From Death Wave'),
-    coinsFromDeathWave: pick('coinsFromDeathWave', 'Coins From Death Wave'),
-    cashFromGoldenTower: pick('cashFromGoldenTower', 'Cash From Golden Tower'),
-    coinsFromGoldenTower: pick('coinsFromGoldenTower', 'Coins From Golden Tower'),
-    coinsFromBlackhole: pick('coinsFromBlackhole', 'Coins From Blackhole', 'Coins From Black Hole'),
-    coinsFromSpotlight: pick('coinsFromSpotlight', 'Coins From Spotlight'),
-    coinsFromOrbs: pick('coinsFromOrbs', 'Coins From Orbs'),
-    coinsFromCoinUpgrade: pick('coinsFromCoinUpgrade', 'Coins From Coin Upgrade'),
-    coinsFromCoinBonuses: pick('coinsFromCoinBonuses', 'Coins From Coin Bonuses'),
-    totalEnemies: pick('totalEnemies', 'Total Enemies'),
-    basic: pick('basic', 'Basic'),
-    fast: pick('fast', 'Fast'),
-    tank: pick('tank', 'Tank'),
-    ranged: pick('ranged', 'Ranged'),
-    boss: pick('boss', 'Boss'),
-    protector: pick('protector', 'Protector'),
-    totalElites: pick('totalElites', 'Total Elites'),
-    vampires: pick('vampires', 'Vampires'),
-    rays: pick('rays', 'Rays'),
-    scatters: pick('scatters', 'Scatters'),
-    saboteurs: pick('saboteurs', 'Saboteurs'),
-    commanders: pick('commanders', 'Commanders'),
-    overcharges: pick('overcharges', 'Overcharges'),
-    destroyedByOrbs: pick('destroyedByOrbs', 'Destroyed By Orbs'),
-    destroyedByThorns: pick('destroyedByThorns', 'Destroyed By Thorns'),
-    destroyedByDeathRay: pick('destroyedByDeathRay', 'Destroyed By Death Ray'),
-    destroyedByLandMine: pick('destroyedByLandMine', 'Destroyed By Land Mine'),
-    destroyedInSpotlight: pick('destroyedInSpotlight', 'Destroyed in Spotlight'),
-    flameBotDamage: pick('flameBotDamage', 'Flame Bot Damage'),
-    thunderBotStuns: pick('thunderBotStuns', 'Thunder Bot Stuns'),
-    goldenBotCoinsEarned: pick('goldenBotCoinsEarned', 'Golden Bot Coins Earned'),
-    destroyedInGoldenBot: pick('destroyedInGoldenBot', 'Destroyed in Golden Bot'),
-    guardianDamage: pick('guardianDamage', 'Guardian Damage'),
-    guardianSummonedEnemies: pick('guardianSummonedEnemies', 'Guardian Summoned Enemies', 'Summoned enemies', 'Summoned Enemies'),
-    guardianCoinsStolen: pick('guardianCoinsStolen', 'Guardian Coins Stolen'),
-    coinsFetched: pick('coinsFetched', 'Coins Fetched'),
-    gemsFetched: pick('gemsFetched', 'Gems Fetched'),
-    medalsFetched: pick('medalsFetched', 'Medals Fetched'),
-    rerollShardsFetched: pick('rerollShardsFetched', 'Reroll Shards Fetched'),
-    cannonShardsFetched: pick('cannonShardsFetched', 'Cannon Shards Fetched'),
-    armorShardsFetched: pick('armorShardsFetched', 'Armor Shards Fetched'),
-    generatorShardsFetched: pick('generatorShardsFetched', 'Generator Shards Fetched'),
-    coreShardsFetched: pick('coreShardsFetched', 'Core Shards Fetched'),
-    commonModulesFetched: pick('commonModulesFetched', 'Common Modules Fetched'),
-    rareModulesFetched: pick('rareModulesFetched', 'Rare Modules Fetched'),
-  }));
+    username: String(params.run.username ?? params.username ?? 'unknown'),
+    runData: params.run,
+  });
 }
 
 async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
@@ -1435,11 +1341,19 @@ async function hydrateLatestRunFromCloud(userId: string): Promise<boolean> {
 }
 
 async function cloudGetSettings(userId: string): Promise<TrackerSettings | null> {
-  const { databases } = createAppwriteClient();
   const { settingsDatabaseId, settingsCollectionId } = appwriteIds();
 
   try {
-    const doc = await databases.getDocument(settingsDatabaseId, settingsCollectionId, userId);
+    const doc = await listFirstCloudDocument<Record<string, unknown>>({
+      databases: createAppwriteClient().databases,
+      databaseId: settingsDatabaseId,
+      collectionId: settingsCollectionId,
+      queries: [
+        Query.equal('userId', userId),
+        Query.limit(1),
+      ],
+    });
+    if (!doc) return null;
     return {
       defaultTracker: 'Web',
       defaultRunType: pickString(doc.defaultRunType),
@@ -1463,7 +1377,6 @@ async function cloudGetSettings(userId: string): Promise<TrackerSettings | null>
 }
 
 async function cloudEditSettings(userId: string, settings: Record<string, unknown>) {
-  const { databases } = createAppwriteClient();
   const { settingsDatabaseId, settingsCollectionId } = appwriteIds();
 
   const payload = stripUndefinedFields({
@@ -1480,29 +1393,27 @@ async function cloudEditSettings(userId: string, settings: Record<string, unknow
     replyNotificationsEnabled: settings.replyNotificationsEnabled,
   });
 
-  try {
-    await databases.updateDocument(settingsDatabaseId, settingsCollectionId, userId, payload);
-    return true;
-  } catch (error) {
-    const maybeError = error as { code?: number };
-    if (maybeError.code !== 404) throw error;
-    await databases.createDocument(settingsDatabaseId, settingsCollectionId, userId, payload);
-    return true;
-  }
+  await createOrUpdateCloudDocument({
+    databases: createAppwriteClient().databases,
+    databaseId: settingsDatabaseId,
+    collectionId: settingsCollectionId,
+    documentId: userId,
+    data: payload,
+  });
+  return true;
 }
 
 async function cloudDeleteRun(userId: string, runId: string) {
   const targetId = pickString(runId);
   if (!targetId) return false;
 
-  const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
-  try {
-    await databases.deleteDocument(runsDatabaseId, runsCollectionId, targetId);
-  } catch (error) {
-    const maybe = error as { code?: number };
-    if (maybe.code !== 404) throw error;
-  }
+  await deleteCloudDocumentIfExists({
+    databases: createAppwriteClient().databases,
+    databaseId: runsDatabaseId,
+    collectionId: runsCollectionId,
+    documentId: targetId,
+  });
 
   return true;
 }

@@ -2,7 +2,7 @@
  * Creates Appwrite collections/attributes/indexes for Tracker Bot.
  * Safe to re-run: skips if resources already exist (409 conflict).
  */
-import { Client, Databases, IndexType } from 'node-appwrite';
+import { Client, Databases, IndexType, OrderBy } from 'node-appwrite';
 import { getAppConfig, loadConfig } from '../config';
 import { logger } from '../core/logger';
 
@@ -66,7 +66,7 @@ async function ensureDatetimeAttribute(databases: Databases, databaseId: string,
   }
 }
 
-async function ensureIndex(databases: Databases, databaseId: string, collectionId: string, key: string, type: IndexType, attributes: string[], orders?: Array<'ASC' | 'DESC'>) {
+async function ensureIndex(databases: Databases, databaseId: string, collectionId: string, key: string, type: IndexType, attributes: string[], orders?: OrderBy[]) {
   try {
     await databases.createIndex(databaseId, collectionId, key, type, attributes, orders);
     logger.info(`Created index ${collectionId}.${key}`);
@@ -99,15 +99,11 @@ async function main() {
   const guildsCollectionId = process.env.APPWRITE_GUILDS_COLLECTION_ID ?? 'guilds';
   const usersCollectionId = cfg.appwrite.userSettingsCollectionId || 'users';
   const analyticsCollectionId = cfg.appwrite.analyticsCollectionId || 'analytics';
-  const uiConfigCollectionId = process.env.APPWRITE_UI_CONFIG_COLLECTION_ID ?? 'ui_config';
-  const botConfigCollectionId = process.env.APPWRITE_BOT_CONFIG_COLLECTION_ID ?? 'bot_config';
 
   // Collections
   await ensureCollection(databases, databaseId, guildsCollectionId, 'Guilds');
   await ensureCollection(databases, databaseId, usersCollectionId, 'Users');
   await ensureCollection(databases, databaseId, analyticsCollectionId, 'Analytics');
-  await ensureCollection(databases, databaseId, uiConfigCollectionId, 'UI Config');
-  await ensureCollection(databases, databaseId, botConfigCollectionId, 'Bot Config');
 
   // Guilds attributes/indexes
   await ensureStringAttribute(databases, databaseId, guildsCollectionId, 'guildId', 64, true);
@@ -126,7 +122,7 @@ async function main() {
   await ensureDatetimeAttribute(databases, databaseId, usersCollectionId, 'lastSeen', false);
   await ensureDatetimeAttribute(databases, databaseId, usersCollectionId, 'updatedAt', false);
   await ensureIndex(databases, databaseId, usersCollectionId, 'userId_unique', IndexType.Unique, ['userId']);
-  await ensureIndex(databases, databaseId, usersCollectionId, 'lastSeen_key', IndexType.Key, ['lastSeen'], ['DESC']);
+  await ensureIndex(databases, databaseId, usersCollectionId, 'lastSeen_key', IndexType.Key, ['lastSeen'], [OrderBy.Desc]);
 
   // Analytics attributes/indexes
   await ensureDatetimeAttribute(databases, databaseId, analyticsCollectionId, 'ts', true);
@@ -136,31 +132,16 @@ async function main() {
   await ensureStringAttribute(databases, databaseId, analyticsCollectionId, 'commandName', 64, false);
   await ensureStringAttribute(databases, databaseId, analyticsCollectionId, 'runId', 64, false);
   await ensureStringAttribute(databases, databaseId, analyticsCollectionId, 'meta', 4096, false);
-  await ensureIndex(databases, databaseId, analyticsCollectionId, 'ts_key', IndexType.Key, ['ts'], ['DESC']);
-  await ensureIndex(databases, databaseId, analyticsCollectionId, 'event_ts', IndexType.Key, ['event', 'ts'], ['ASC', 'DESC']);
-  await ensureIndex(databases, databaseId, analyticsCollectionId, 'user_ts', IndexType.Key, ['userId', 'ts'], ['ASC', 'DESC']);
-  await ensureIndex(databases, databaseId, analyticsCollectionId, 'command_ts', IndexType.Key, ['commandName', 'ts'], ['ASC', 'DESC']);
-
-  // UI Config attributes/indexes
-  await ensureStringAttribute(databases, databaseId, uiConfigCollectionId, 'env', 32, true);
-  await ensureStringAttribute(databases, databaseId, uiConfigCollectionId, 'version', 64, true);
-  await ensureStringAttribute(databases, databaseId, uiConfigCollectionId, 'payload', 32767, true);
-  await ensureDatetimeAttribute(databases, databaseId, uiConfigCollectionId, 'updatedAt', true);
-  await ensureIndex(databases, databaseId, uiConfigCollectionId, 'env_unique', IndexType.Unique, ['env']);
-
-  // Bot Config attributes/indexes
-  await ensureStringAttribute(databases, databaseId, botConfigCollectionId, 'env', 32, true);
-  await ensureStringAttribute(databases, databaseId, botConfigCollectionId, 'version', 64, true);
-  await ensureStringAttribute(databases, databaseId, botConfigCollectionId, 'payload', 32767, true);
-  await ensureDatetimeAttribute(databases, databaseId, botConfigCollectionId, 'updatedAt', true);
-  await ensureIndex(databases, databaseId, botConfigCollectionId, 'env_unique', IndexType.Unique, ['env']);
+  await ensureIndex(databases, databaseId, analyticsCollectionId, 'ts_key', IndexType.Key, ['ts'], [OrderBy.Desc]);
+  await ensureIndex(databases, databaseId, analyticsCollectionId, 'event_ts', IndexType.Key, ['event', 'ts'], [OrderBy.Asc, OrderBy.Desc]);
+  await ensureIndex(databases, databaseId, analyticsCollectionId, 'user_ts', IndexType.Key, ['userId', 'ts'], [OrderBy.Asc, OrderBy.Desc]);
+  await ensureIndex(databases, databaseId, analyticsCollectionId, 'command_ts', IndexType.Key, ['commandName', 'ts'], [OrderBy.Asc, OrderBy.Desc]);
 
   logger.info('Schema creation/check complete');
 }
 
 main().catch(err => {
   const message = err instanceof Error ? err.message : String(err);
-  logger.error('Schema creation failed');
-  console.error('Schema creation failed:', message);
+  logger.error('Schema creation failed', message);
   process.exitCode = 1;
 });

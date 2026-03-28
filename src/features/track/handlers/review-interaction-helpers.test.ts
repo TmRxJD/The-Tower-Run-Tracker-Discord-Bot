@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { setTrackerFlowMode } from '../flow-mode-store';
-import { ensureType, isTrackReviewFlowEnabled } from './review-interaction-helpers';
+import { ensureType, isTrackReviewFlowEnabled, asTrackReplyInteraction } from './review-interaction-helpers';
 
 describe('review-interaction-helpers', () => {
   it('normalizes supported run types case-insensitively', () => {
@@ -18,5 +18,17 @@ describe('review-interaction-helpers', () => {
     expect(isTrackReviewFlowEnabled(userId)).toBe(true);
     setTrackerFlowMode(userId, 'lifetime');
     expect(isTrackReviewFlowEnabled(userId)).toBe(false);
+  });
+
+  it('passes through a tracker reply-shaped interaction', () => {
+    const interaction = {
+      user: { id: 'user-1', username: 'tester' },
+      client: {},
+      deferReply: async () => undefined,
+      reply: async () => undefined,
+      editReply: async () => undefined,
+    };
+
+    expect(asTrackReplyInteraction(interaction as never)).toBe(interaction);
   });
 });

@@ -2,22 +2,52 @@ import { describe, expect, it } from 'vitest';
 import { buildRawParseText, buildSubmitPayload } from './review-data-helpers';
 
 describe('review-data-helpers', () => {
-  it('formats core fields before sorted additional fields', () => {
+  it('formats only scanned battle report fields in shared report order', () => {
     const text = buildRawParseText({
-      tierDisplay: '10+',
-      wave: '2345',
-      totalCoins: '1.5B',
+      values: {
+        battleDate: 'Mar 26, 2026 06:10',
+        gameTime: '20h 4m 30s',
+        roundDuration: '4h 3m 56s',
+        tier: '20',
+        wave: '5169',
+        totalCoins: '16.17Q',
+        damageDealt: '1.32ad',
+        totalEnemies: '678115',
+        guardianSummonedEnemies: '72.44K',
+      },
+      tierDisplay: '20',
+      type: 'Farming',
       notes: 'hello',
-      alpha: 'A',
-      zeta: 'Z',
+      reportTimestamp: '2026-03-26T06:10:00.000Z',
     });
 
-    expect(text).toContain('tierDisplay: 10+\nwave: 2345\ntotalCoins: 1.5B');
-    expect(text).toContain('--- additional fields ---\nalpha: A\nnotes: hello\nzeta: Z');
+    expect(text).toBe([
+      'Battle Report',
+      'Battle Date\tMar 26, 2026 06:10',
+      'Game Time\t20h 4m 30s',
+      'Real Time\t4h 3m 56s',
+      'Tier\t20',
+      'Wave\t5169',
+      'Coins earned\t16.17Q',
+      'Combat',
+      'Damage Dealt\t1.32ad',
+      'Enemies Destroyed',
+      'Total Enemies\t678115',
+      'Guardian',
+      'Summoned enemies\t72.44K',
+    ].join('\n'));
+    expect(text).not.toContain('type');
+    expect(text).not.toContain('notes');
+    expect(text).not.toContain('reportTimestamp');
   });
 
-  it('formats raw parse text from canonical values when conflicting aliases exist', () => {
+  it('formats raw parse text from canonical scanned values when conflicting aliases exist', () => {
     const text = buildRawParseText({
+      values: {
+        wave: '7676',
+        killedBy: 'Fast',
+        totalDice: '16.80K',
+      },
       wave: '7676',
       Wave: '167963',
       killedBy: 'Fast',
@@ -26,9 +56,9 @@ describe('review-data-helpers', () => {
       rerollShards: '420',
     });
 
-    expect(text).toContain('wave: 7676');
-    expect(text).toContain('killedBy: Fast');
-    expect(text).toContain('totalDice: 16.80K');
+    expect(text).toContain('Wave\t7676');
+    expect(text).toContain('Killed By\tFast');
+    expect(text).toContain('Reroll Shards Earned\t16.80K');
     expect(text).not.toContain('Wave: 167963');
     expect(text).not.toContain('Killed By: Apathy');
   });
@@ -37,7 +67,7 @@ describe('review-data-helpers', () => {
     const payload = await buildSubmitPayload('user-1', 'name', {
       tierDisplay: '7+',
       wave: '321',
-      coins: '99',
+      'Coins earned': '99',
       duration: '1h2m3s',
       killedBy: 'Boss',
       date: '2026-03-13',

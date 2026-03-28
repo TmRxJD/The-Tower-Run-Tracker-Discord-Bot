@@ -14,55 +14,46 @@ function hasPasteOption(commandConfig: Record<string, unknown>): boolean {
 
 export function buildTrackerCommandData(commandKey: TrackerCommandKey) {
   const botConfig = getBotConfig();
-  const commandConfig = botConfig.commands[commandKey] as unknown as {
-    name: string;
-    description: string;
-    options: {
-      paste?: { name: string; description: string };
-      note?: { name: string; description: string };
-      type?: { name: string; description: string; choices: Array<{ name: string; value: string }> };
-      screenshot?: { name: string; description: string };
-      settings?: { name: string; description: string };
-    };
-  };
+  const commandConfig = botConfig.commands[commandKey];
+  const options = commandConfig.options;
 
   const data = new SlashCommandBuilder()
     .setName(commandConfig.name)
     .setDescription(commandConfig.description);
 
-  if (hasPasteOption(commandConfig as unknown as Record<string, unknown>) && commandConfig.options.paste) {
+  if (hasPasteOption(options) && options.paste) {
     data.addStringOption(option =>
-      option.setName(commandConfig.options.paste!.name)
-        .setDescription(commandConfig.options.paste!.description)
+      option.setName(options.paste.name)
+        .setDescription(options.paste.description)
         .setRequired(false));
   }
 
-  if (commandConfig.options.note) {
+  if ('note' in options && options.note) {
     data.addStringOption(option =>
-      option.setName(commandConfig.options.note!.name)
-        .setDescription(commandConfig.options.note!.description)
+      option.setName(options.note.name)
+        .setDescription(options.note.description)
         .setRequired(false));
   }
 
-  if (commandConfig.options.type) {
+  if ('type' in options && options.type) {
     data.addStringOption(option =>
-      option.setName(commandConfig.options.type!.name)
-        .setDescription(commandConfig.options.type!.description)
+      option.setName(options.type.name)
+        .setDescription(options.type.description)
         .setRequired(false)
-        .addChoices(...commandConfig.options.type!.choices));
+        .addChoices(...options.type.choices));
   }
 
-  if (commandConfig.options.screenshot) {
+  if ('screenshot' in options && options.screenshot) {
     data.addAttachmentOption(option =>
-      option.setName(commandConfig.options.screenshot!.name)
-        .setDescription(commandConfig.options.screenshot!.description)
+      option.setName(options.screenshot.name)
+        .setDescription(options.screenshot.description)
         .setRequired(false));
   }
 
-  if (commandConfig.options.settings) {
+  if ('settings' in options && options.settings) {
     data.addBooleanOption(option =>
-      option.setName(commandConfig.options.settings!.name)
-        .setDescription(commandConfig.options.settings!.description)
+      option.setName(options.settings.name)
+        .setDescription(options.settings.description)
         .setRequired(false));
   }
 
@@ -72,15 +63,8 @@ export function buildTrackerCommandData(commandKey: TrackerCommandKey) {
 export async function executeTrackerCommand(commandKey: TrackerCommandKey, interaction: ChatInputCommandInteraction) {
   const botConfig = getBotConfig();
   const common = botConfig.common.responses;
-  const commandConfig = botConfig.commands[commandKey] as unknown as {
-    options: {
-      paste?: { name: string };
-      note?: { name: string };
-      type?: { name: string };
-      screenshot?: { name: string };
-      settings?: { name: string };
-    };
-  };
+  const commandConfig = botConfig.commands[commandKey];
+  const options = commandConfig.options;
 
   if (!interaction.client || !('persistence' in interaction.client)) {
     await interaction.reply({ content: common.notReady, flags: MessageFlagsBitField.Flags.Ephemeral });
@@ -92,20 +76,20 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
   }
 
   const client = interaction.client as TrackerBotClient;
-  const paste = commandConfig.options.paste
-    ? interaction.options.getString(commandConfig.options.paste.name) ?? undefined
+  const paste = 'paste' in options && options.paste
+    ? interaction.options.getString(options.paste.name) ?? undefined
     : undefined;
-  const note = commandConfig.options.note
-    ? interaction.options.getString(commandConfig.options.note.name) ?? undefined
+  const note = 'note' in options && options.note
+    ? interaction.options.getString(options.note.name) ?? undefined
     : undefined;
-  const runType = commandConfig.options.type
-    ? interaction.options.getString(commandConfig.options.type.name) ?? undefined
+  const runType = 'type' in options && options.type
+    ? interaction.options.getString(options.type.name) ?? undefined
     : undefined;
-  const settingsRequested = commandConfig.options.settings
-    ? interaction.options.getBoolean(commandConfig.options.settings.name) ?? false
+  const settingsRequested = 'settings' in options && options.settings
+    ? interaction.options.getBoolean(options.settings.name) ?? false
     : false;
-  const attachment = commandConfig.options.screenshot
-    ? interaction.options.getAttachment(commandConfig.options.screenshot.name) ?? undefined
+  const attachment = 'screenshot' in options && options.screenshot
+    ? interaction.options.getAttachment(options.screenshot.name) ?? undefined
     : undefined;
 
   await client.persistence?.users.touch(interaction.user.id, interaction.user.username).catch(() => {});

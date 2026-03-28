@@ -1,10 +1,13 @@
-import { Databases, ID, Query } from 'node-appwrite';
+import type { Databases } from 'node-appwrite';
+import { ID, Query } from 'node-appwrite';
+import { listFirstCloudDocument } from '@tmrxjd/platform/tools';
 import { getAppConfig } from '../config';
 import { logger } from '../core/logger';
 import type { GuildDocument } from './types';
+import { deleteTrackerGuild, getTrackerGuild, upsertTrackerGuild } from '../services/idb';
 
 export class GuildsRepo {
-  constructor(private readonly databases: Databases) {}
+  constructor(private readonly databases: Databases | null) {}
 
   private get ids() {
     const cfg = getAppConfig();
@@ -12,29 +15,54 @@ export class GuildsRepo {
   }
 
   async addGuild(guildId: string) {
-    const { databaseId, collectionId } = this.ids;
-    try {
-      await this.databases.createDocument(databaseId, collectionId, ID.unique(), {
+    const existing = await getTrackerGuild(guildId);
+    if (!existing) {
+      await upsertTrackerGuild({
         guildId,
         firstSeen: new Date().toISOString(),
-      } as GuildDocument);
-    } catch (err) {
+      });
+    }
+
+    if (!this.databases) {
+      return;
+    }
+
+    const { databaseId, collectionId } = this.ids;
+    const backupDocument: GuildDocument = {
+      guildId,
+      firstSeen: existing?.firstSeen ?? new Date().toISOString(),
+    };
+    void this.databases.createDocument(databaseId, collectionId, ID.unique(), {
+      ...backupDocument,
+    }).catch((err: unknown) => {
       const maybeErr = err as { code?: number };
       if (maybeErr.code === 409) {
-        logger.debug(`Guild ${guildId} already exists`);
+        logger.debug(`Guild ${guildId} already exists remotely`);
         return;
       }
-      throw err;
-    }
+      logger.warn(`Guild backup sync failed for ${guildId}`, err);
+    });
   }
 
   async removeGuild(guildId: string) {
+    await deleteTrackerGuild(guildId);
+
+    if (!this.databases) {
+      return;
+    }
+
     const { databaseId, collectionId } = this.ids;
-    const list = await this.databases.listDocuments(databaseId, collectionId, [
-      Query.equal('guildId', guildId),
-    ]);
-    const doc = list.documents[0];
-    if (!doc) return;
-    await this.databases.deleteDocument(databaseId, collectionId, doc.$id);
+    void (async () => {
+      const doc = await listFirstCloudDocument<{ $id: string }>({
+        databases: this.databases!,
+        databaseId,
+        collectionId,
+        queries: [Query.equal('guildId', guildId)],
+      });
+      if (!doc) return;
+      return this.databases?.deleteDocument(databaseId, collectionId, doc.$id);
+    })().catch((error: unknown) => {
+      logger.warn(`Guild backup delete failed for ${guildId}`, error);
+    });
   }
 }

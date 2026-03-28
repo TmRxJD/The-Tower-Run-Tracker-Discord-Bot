@@ -58,7 +58,7 @@ This document captures the objectives, architecture, and data map for the Tracke
 - **Not stored in Appwrite**: Runs/logged data remain in the external tracker API (unchanged endpoints/auth).
 
 ## Config Strategy
-- `.env.dev` / `.env.prod` with DEPLOYMENT_MODE + required secrets (Discord tokens, Appwrite endpoint/project/database IDs/api key, tracker API URL/key).
+- `.env.dev` uses `DEV_DISCORD_TOKEN`, `DEV_CLIENT_ID`, `DEV_GUILD_ID`; `.env.prod` uses `DISCORD_TOKEN`, `CLIENT_ID`, and no guild ID by default, alongside DEPLOYMENT_MODE and the required Appwrite/tracker secrets.
 - ui_config in Appwrite contains a document with a single json containing: main menu copy, button/row layouts, upload/paste/manual prompts, data review/edit wording, settings options, share/view texts, success/error texts, role thresholds, tracker links, stale-interaction behavior, placeholders for unused fields.
 - bot_config in Appwrite holds non-wording toggles/URLs.
 

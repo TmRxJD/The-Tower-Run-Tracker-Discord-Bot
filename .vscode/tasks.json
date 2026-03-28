@@ -1,0 +1,90 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "validate-hardening",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"eslint",
+				"src/services/idb.ts",
+				"src/persistence/appwrite-client.ts",
+				"src/bot.ts",
+				"--no-cache",
+				"&&",
+				"pnpm",
+				"type-check"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "validate-hardening-trackerbot",
+			"type": "shell",
+			"command": "pwsh",
+			"args": [
+				"-Command",
+				"$env:GITHUB_PACKAGES_TOKEN='placeholder'; pnpm eslint src/services/idb.ts src/persistence/appwrite-client.ts src/bot.ts --no-cache; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm type-check"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "validate-hardening-trackerbot-cmd",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set GITHUB_PACKAGES_TOKEN=placeholder&& pnpm eslint src/services/idb.ts src/persistence/appwrite-client.ts src/bot.ts --no-cache && pnpm type-check"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "validate-local-authoritative-trackerbot",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set GITHUB_PACKAGES_TOKEN=placeholder&& pnpm eslint src/services/idb.ts src/persistence/guilds-repo.ts src/persistence/users-repo.ts src/persistence/analytics-repo.ts src/persistence/index.ts --no-cache && pnpm type-check"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "validate-local-authoritative-trackerbot-rerun",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set GITHUB_PACKAGES_TOKEN=placeholder&& pnpm eslint src/services/idb.ts src/persistence/guilds-repo.ts src/persistence/users-repo.ts src/persistence/analytics-repo.ts src/persistence/index.ts --no-cache && pnpm type-check"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-zod-lint",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"eslint",
+				"src/features/track/types.ts",
+				"src/features/track/local-run-store.ts",
+				"src/features/track/tracker-api-client.ts",
+				"src/persistence/users-repo.ts",
+				"--no-cache"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "trackerbot-zod-lint-env",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set GITHUB_PACKAGES_TOKEN=placeholder&& pnpm eslint src/features/track/types.ts src/features/track/local-run-store.ts src/features/track/tracker-api-client.ts src/persistence/users-repo.ts --no-cache"
+			],
+			"isBackground": false
+		}
+	]
+}

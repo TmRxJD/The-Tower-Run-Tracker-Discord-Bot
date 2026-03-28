@@ -25,10 +25,6 @@ export interface AppConfig {
     cloudVisionModel: string;
     timeoutMs: number;
   };
-  daemon: {
-    bridgeBaseUrl?: string;
-    bridgeToken?: string;
-  };
   appwrite: {
     endpoint: string;
     projectId: string;
@@ -45,9 +41,6 @@ export interface AppConfig {
     analyticsCollectionId: string;
     userSettingsCollectionId: string;
     guildsCollectionId: string;
-    uiConfigCollectionId: string;
-    botConfigCollectionId: string;
-    configDocumentId: string;
     apiKey?: string;
   };
   trackerApi: {
@@ -58,8 +51,11 @@ export interface AppConfig {
 
 const envSchema = z.object({
   DEPLOYMENT_MODE: z.enum(['dev', 'prod']).default('dev'),
-  DISCORD_TOKEN: z.string().min(1),
-  CLIENT_ID: z.string().min(1),
+  DISCORD_TOKEN: z.string().min(1).optional(),
+  CLIENT_ID: z.string().min(1).optional(),
+  DEV_DISCORD_TOKEN: z.string().min(1).optional(),
+  DEV_CLIENT_ID: z.string().min(1).optional(),
+  DEV_GUILD_ID: z.string().min(1).optional(),
   GUILD_ID: z.string().optional(),
   APPWRITE_ENDPOINT: z.string().url(),
   APPWRITE_PROJECT_ID: z.string().min(1),
@@ -76,14 +72,7 @@ const envSchema = z.object({
   APPWRITE_ANALYTICS_COLLECTION_ID: z.string().min(1),
   APPWRITE_USER_SETTINGS_COLLECTION_ID: z.string().min(1),
   APPWRITE_GUILDS_COLLECTION_ID: z.string().min(1).optional(),
-  APPWRITE_UI_CONFIG_COLLECTION_ID: z.string().min(1).optional(),
-  APPWRITE_BOT_CONFIG_COLLECTION_ID: z.string().min(1).optional(),
-  APPWRITE_CONFIG_DOCUMENT_ID: z.string().min(1),
   APPWRITE_API_KEY: z.string().min(1).optional(),
-  APPWRITE_FUNCTION_API_KEY: z.string().min(1).optional(),
-  APPWRITE_KEY: z.string().min(1).optional(),
-  TRACKERAI_BRIDGE_URL: z.string().url().optional(),
-  TRACKERAI_BRIDGE_TOKEN: z.string().min(1).optional(),
   TRACKERAI_CLOUD_AI_ENDPOINT: z.string().url().optional(),
   TRACKERAI_CLOUD_AI_API_KEY: z.string().min(1).optional(),
   TRACKERAI_CLOUD_VISION_MODEL: z.string().min(1).optional(),
@@ -112,20 +101,19 @@ function resolveEnvRootCandidates(): string[] {
 
 function hasAnyEnvFile(root: string, mode: DeploymentMode): boolean {
   return [
-    '.env',
-    '.env.local',
     `.env.${mode}`,
     `.env.${mode}.local`,
+    '.env',
+    '.env.local',
   ].some(filename => fs.existsSync(path.resolve(root, filename)));
 }
 
 function loadEnvFilesFromRoot(root: string, mode: DeploymentMode): boolean {
-  const orderedFilenames = [
-    '.env',
-    '.env.local',
-    `.env.${mode}`,
-    `.env.${mode}.local`,
-  ];
+  const modeFilenames = [`.env.${mode}`, `.env.${mode}.local`];
+  const fallbackFilenames = ['.env', '.env.local'];
+  const orderedFilenames = modeFilenames.some(filename => fs.existsSync(path.resolve(root, filename)))
+    ? modeFilenames
+    : fallbackFilenames;
 
   let loadedAny = false;
   for (const filename of orderedFilenames) {
@@ -162,29 +150,50 @@ function firstNonEmpty(...values: Array<string | undefined>): string | undefined
   return undefined;
 }
 
+function resolveDiscordProfile(parsed: z.infer<typeof envSchema>): { token: string; clientId: string; guildId?: string } {
+  if (parsed.DEPLOYMENT_MODE === 'dev') {
+    return {
+      token: requiredModeValue(parsed.DEV_DISCORD_TOKEN, 'DEV_DISCORD_TOKEN'),
+      clientId: requiredModeValue(parsed.DEV_CLIENT_ID, 'DEV_CLIENT_ID'),
+      guildId: requiredModeValue(parsed.DEV_GUILD_ID, 'DEV_GUILD_ID'),
+    };
+  }
+
+  return {
+    token: requiredModeValue(parsed.DISCORD_TOKEN, 'DISCORD_TOKEN'),
+    clientId: requiredModeValue(parsed.CLIENT_ID, 'CLIENT_ID'),
+    guildId: undefined,
+  };
+}
+
+function requiredModeValue(value: string | undefined, field: string): string {
+  if (value && value.trim().length > 0) {
+    return value;
+  }
+
+  throw new Error(`Missing required configuration value: ${field}`);
+}
+
 export function loadConfig(): AppConfig {
   if (cachedConfig) return cachedConfig;
 
   applyDotenvFiles();
   process.env.DEPLOYMENT_MODE = normalizeDeploymentMode(process.env.DEPLOYMENT_MODE ?? process.env.NODE_ENV);
   const parsed = envSchema.parse(process.env);
+  const discordProfile = resolveDiscordProfile(parsed);
 
   cachedConfig = {
     deploymentMode: parsed.DEPLOYMENT_MODE,
     discord: {
-      token: parsed.DISCORD_TOKEN,
-      clientId: parsed.CLIENT_ID,
-      guildId: parsed.GUILD_ID,
+      token: discordProfile.token,
+      clientId: discordProfile.clientId,
+      guildId: discordProfile.guildId,
     },
     ai: {
       cloudApiKey: parsed.TRACKERAI_CLOUD_AI_API_KEY,
       cloudEndpoint: parsed.TRACKERAI_CLOUD_AI_ENDPOINT,
       cloudVisionModel: firstNonEmpty(parsed.TRACKERAI_CLOUD_VISION_MODEL) ?? 'meta-llama/llama-4-scout-17-16e-instruct',
       timeoutMs: parsed.AI_TIMEOUT_MS ?? 20_000,
-    },
-    daemon: {
-      bridgeBaseUrl: parsed.TRACKERAI_BRIDGE_URL,
-      bridgeToken: parsed.TRACKERAI_BRIDGE_TOKEN,
     },
     appwrite: {
       endpoint: parsed.APPWRITE_ENDPOINT,
@@ -202,10 +211,7 @@ export function loadConfig(): AppConfig {
       analyticsCollectionId: parsed.APPWRITE_ANALYTICS_COLLECTION_ID,
       userSettingsCollectionId: parsed.APPWRITE_USER_SETTINGS_COLLECTION_ID,
       guildsCollectionId: parsed.APPWRITE_GUILDS_COLLECTION_ID ?? 'guilds',
-      uiConfigCollectionId: parsed.APPWRITE_UI_CONFIG_COLLECTION_ID ?? 'ui_config',
-      botConfigCollectionId: parsed.APPWRITE_BOT_CONFIG_COLLECTION_ID ?? 'bot_config',
-      configDocumentId: parsed.APPWRITE_CONFIG_DOCUMENT_ID,
-      apiKey: parsed.APPWRITE_API_KEY ?? parsed.APPWRITE_FUNCTION_API_KEY ?? parsed.APPWRITE_KEY,
+      apiKey: parsed.APPWRITE_API_KEY,
     },
     trackerApi: parsed.TRACKER_API_URL && parsed.TRACKER_API_KEY
       ? {
@@ -221,4 +227,8 @@ export function loadConfig(): AppConfig {
 export function getAppConfig(): AppConfig {
   if (!cachedConfig) return loadConfig();
   return cachedConfig;
+}
+
+export function resetConfig(): void {
+  cachedConfig = null;
 }

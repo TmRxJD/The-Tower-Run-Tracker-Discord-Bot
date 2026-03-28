@@ -1,4 +1,3 @@
-import type { MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
 import { TrackerBotClient } from '../core/tracker-bot-client';
 import {
   handleCancel,
@@ -62,14 +61,6 @@ import {
 } from '../features/track/handlers';
 import { TRACKER_IDS } from '../features/track/track-custom-ids';
 
-const noopModalHandler = async (interaction: MessageComponentInteraction | ModalSubmitInteraction) => {
-  try {
-    await interaction.deferUpdate();
-  } catch {
-    /* ignore */
-  }
-};
-
 export function registerComponentHandlers(client: TrackerBotClient) {
   client.components.registerMany([
     { prefix: TRACKER_IDS.review.typePrefix, handler: handleTypeSelection },
@@ -89,15 +80,6 @@ export function registerComponentHandlers(client: TrackerBotClient) {
     { prefix: TRACKER_IDS.manual.editCoreTokenPrefix, handler: handleManualEditStageOne },
     { prefix: TRACKER_IDS.manual.editExtraPrefix, handler: handleManualEditStageTwo },
     { prefix: TRACKER_IDS.manual.backPrefix, handler: handleManualBackToMenu },
-    // No-op modal handlers to suppress invalid interaction notices (handled inline via awaitModalSubmit)
-    { prefix: TRACKER_IDS.review.noteModalPrefix.replace(/:$/, ''), handler: noopModalHandler },
-    { prefix: TRACKER_IDS.flow.addRunModal, handler: noopModalHandler },
-    { prefix: TRACKER_IDS.review.editModalPrefix.replace(/:$/, ''), handler: noopModalHandler },
-    { prefix: TRACKER_IDS.flow.uploadModal, handler: noopModalHandler },
-    { prefix: TRACKER_IDS.manual.noteModalPrefix.replace(/:$/, ''), handler: noopModalHandler },
-    { prefix: TRACKER_IDS.manual.modalOnePrefix.replace(/:$/, ''), handler: noopModalHandler },
-    { prefix: TRACKER_IDS.manual.modalTwoPrefix.replace(/:$/, ''), handler: noopModalHandler },
-    { prefix: TRACKER_IDS.manual.modalPrefix, handler: noopModalHandler },
     { prefix: TRACKER_IDS.flow.uploadAnother, handler: handleTrackMenuUploadAnother },
     { prefix: TRACKER_IDS.flow.mainMenu, handler: handleTrackMenuMainMenu },
     { prefix: TRACKER_IDS.flow.shareLast, handler: handleTrackMenuShareLast },

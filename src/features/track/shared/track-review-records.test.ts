@@ -22,8 +22,8 @@ describe('track review records', () => {
     expect(pending).toEqual({
       userId: 'user-1',
       username: 'tester',
-      runData: { tier: '12', wave: '3456' },
-      canonicalRunData: { totalCoins: '1000' },
+      runData: { tier: '12', tierDisplay: '12', tierHasPlus: false, wave: '3456', blocked: false, public: false },
+      canonicalRunData: { totalCoins: '1000', tierHasPlus: false, blocked: false, public: false },
       screenshot: { url: 'https://example.com/test.png', contentType: 'image/png' },
       decimalPreference: 'Period (.)',
       isDuplicate: true,

@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { buildTrackerRunFingerprint, computeExponentialBackoffMs } from '@tmrxjd/platform/tools';
-import type { TrackerSettings } from './types';
+import { buildTrackerRunFingerprint, canonicalizeTrackerRunData, computeExponentialBackoffMs } from '@tmrxjd/platform/tools';
+import { trackerStoredSettingsSchema, type TrackerSettings } from './types';
+import { logger } from '../../core/logger';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
-import { canonicalizeTrackerRunData } from './shared/run-data-normalization';
 
-type SyncOp = 'upsert' | 'delete';
+type SyncOp = 'upsert' | 'delete' | 'settings';
 
 export interface LocalRunRecord {
   localId: string;
@@ -25,6 +25,8 @@ export interface CloudQueueItem {
   localId?: string;
   runData?: Record<string, unknown>;
   canonicalRunData?: Record<string, unknown>;
+  settingsData?: TrackerSettings & { updatedAt?: number };
+  settingsUpdatedAt?: number;
   screenshot?: { filename: string; contentType?: string | null; tempPath: string } | null;
   createdAt: number;
   retryCount: number;
@@ -38,7 +40,7 @@ export interface LocalLifetimeRecord {
 }
 
 interface LocalUserBucket {
-  settings: TrackerSettings & { cloudSyncEnabled?: boolean };
+  settings: TrackerSettings & { cloudSyncEnabled?: boolean; updatedAt?: number };
   runs: LocalRunRecord[];
   lifetime?: LocalLifetimeRecord;
 }
@@ -124,29 +126,96 @@ function runFingerprint(run: Record<string, unknown>): string {
   return buildTrackerRunFingerprint(run);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
+function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
+  const record = asRecord(item);
+  if (!record) {
+    return null;
+  }
+  const op = record.op;
+  if (op !== 'upsert' && op !== 'delete' && op !== 'settings') {
+    return null;
+  }
+
+  const userId = typeof record.userId === 'string' && record.userId.trim().length > 0 ? record.userId : null;
+  const username = typeof record.username === 'string' && record.username.trim().length > 0 ? record.username : null;
+  const createdAt = Number.isFinite(Number(record.createdAt)) ? Number(record.createdAt) : null;
+  const retryCount = Number.isFinite(Number(record.retryCount)) ? Number(record.retryCount) : null;
+  const nextRetryAt = Number.isFinite(Number(record.nextRetryAt)) ? Number(record.nextRetryAt) : undefined;
+
+  if (!userId || !username || createdAt === null || retryCount === null) {
+    return null;
+  }
+
+  if (op === 'settings') {
+    const settingsData = record.settingsData && typeof record.settingsData === 'object' ? trackerStoredSettingsSchema.safeParse(record.settingsData) : null;
+    const settingsUpdatedAt = Number.isFinite(Number(record.settingsUpdatedAt)) ? Number(record.settingsUpdatedAt) : null;
+    if (!settingsData?.success || settingsUpdatedAt === null) {
+      return null;
+    }
+
+    return {
+      id: typeof record.id === 'string' && record.id.trim().length > 0 ? record.id : randomUUID(),
+      op,
+      userId,
+      username,
+      settingsData: settingsData.data,
+      settingsUpdatedAt,
+      createdAt,
+      retryCount,
+      nextRetryAt,
+      lastError: typeof record.lastError === 'string' && record.lastError.length > 0 ? record.lastError : undefined,
+    };
+  }
+
+  const runDataRecord = asRecord(record.runData);
+  const canonicalRunDataRecord = asRecord(record.canonicalRunData);
+  const screenshotRecord = asRecord(record.screenshot);
+
+  const runData = runDataRecord ? canonicalizeTrackerRunData(runDataRecord) : undefined;
+  const canonicalRunData = canonicalRunDataRecord ? canonicalizeTrackerRunData(canonicalRunDataRecord) : undefined;
+
+  return {
+    id: typeof record.id === 'string' && record.id.trim().length > 0 ? record.id : randomUUID(),
+    op,
+    userId,
+    username,
+    runId: typeof record.runId === 'string' && record.runId.trim().length > 0 ? record.runId : undefined,
+    localId: typeof record.localId === 'string' && record.localId.trim().length > 0 ? record.localId : undefined,
+    runData,
+    canonicalRunData,
+    screenshot: screenshotRecord
+      ? {
+          filename: typeof screenshotRecord.filename === 'string' ? screenshotRecord.filename : '',
+          contentType: typeof screenshotRecord.contentType === 'string' ? screenshotRecord.contentType : null,
+          tempPath: typeof screenshotRecord.tempPath === 'string' ? screenshotRecord.tempPath : '',
+        }
+      : null,
+    createdAt,
+    retryCount,
+    nextRetryAt,
+    lastError: typeof record.lastError === 'string' && record.lastError.length > 0 ? record.lastError : undefined,
+  };
+}
+
 async function ensureLoaded() {
   if (cache) return;
   const parsed = await getTrackerKv<LocalStoreState>(STORE_KEY);
   if (parsed) {
     const hadLegacyScreenshotPayload = Array.isArray(parsed?.queue)
-      ? parsed.queue.some((item) => Boolean((item as { screenshot?: unknown }).screenshot))
+      ? parsed.queue.some(item => isRecord(item) && Boolean(item.screenshot))
       : false;
     const normalizedQueue: CloudQueueItem[] = Array.isArray(parsed?.queue)
-      ? parsed.queue.map((item) => ({
-          id: item.id,
-          op: item.op,
-          userId: item.userId,
-          username: item.username,
-          runId: item.runId,
-          localId: item.localId,
-          runData: item.runData,
-          canonicalRunData: item.canonicalRunData,
-          screenshot: item.screenshot,
-          createdAt: item.createdAt,
-          retryCount: item.retryCount,
-          nextRetryAt: Number.isFinite(Number(item.nextRetryAt)) ? Number(item.nextRetryAt) : Date.now(),
-          lastError: item.lastError,
-        }))
+      ? parsed.queue
+          .map(parseCloudQueueItem)
+          .filter((item): item is CloudQueueItem => item !== null)
       : [];
     cache = {
       version: 1,
@@ -176,7 +245,13 @@ function getOrCreateUser(userId: string): LocalUserBucket {
     };
   }
   if (!cache.users[userId].settings) cache.users[userId].settings = defaultSettings();
-  cache.users[userId].settings = { ...defaultSettings(), ...cache.users[userId].settings };
+  const parsedSettings = trackerStoredSettingsSchema.safeParse({ ...defaultSettings(), ...cache.users[userId].settings });
+  if (!parsedSettings.success) {
+    logger.warn(`Invalid local tracker settings payload for ${userId}; resetting to defaults`, parsedSettings.error.flatten());
+    cache.users[userId].settings = defaultSettings();
+  } else {
+    cache.users[userId].settings = parsedSettings.data;
+  }
   if (!Array.isArray(cache.users[userId].runs)) cache.users[userId].runs = [];
   if (!cache.users[userId].lifetime || typeof cache.users[userId].lifetime !== 'object') {
     cache.users[userId].lifetime = { entries: [], updatedAt: 0 };
@@ -190,16 +265,31 @@ function getOrCreateUser(userId: string): LocalUserBucket {
   return cache.users[userId];
 }
 
-export async function getLocalSettings(userId: string): Promise<TrackerSettings & { cloudSyncEnabled: boolean }> {
+export async function hasPersistedLocalSettings(userId: string): Promise<boolean> {
   await ensureLoaded();
-  const bucket = getOrCreateUser(userId);
-  return { ...defaultSettings(), ...bucket.settings, cloudSyncEnabled: bucket.settings.cloudSyncEnabled !== false };
+  return Number.isFinite(Number(cache?.users[userId]?.settings?.updatedAt));
 }
 
-export async function updateLocalSettings(userId: string, patch: Partial<TrackerSettings & { cloudSyncEnabled?: boolean }>) {
+export async function getLocalSettingsRecord(userId: string): Promise<{ state: TrackerSettings & { cloudSyncEnabled: boolean }; updatedAt: number | null }> {
   await ensureLoaded();
   const bucket = getOrCreateUser(userId);
-  bucket.settings = { ...bucket.settings, ...patch };
+  return {
+    state: { ...defaultSettings(), ...bucket.settings, cloudSyncEnabled: bucket.settings.cloudSyncEnabled !== false },
+    updatedAt: Number.isFinite(Number(bucket.settings.updatedAt)) ? Number(bucket.settings.updatedAt) : null,
+  };
+}
+
+export async function getLocalSettings(userId: string): Promise<TrackerSettings & { cloudSyncEnabled: boolean }> {
+  const local = await getLocalSettingsRecord(userId);
+  return local.state;
+}
+
+export async function updateLocalSettings(userId: string, patch: Partial<TrackerSettings & { cloudSyncEnabled?: boolean; updatedAt?: number }>) {
+  await ensureLoaded();
+  const bucket = getOrCreateUser(userId);
+  const nextUpdatedAt = Number.isFinite(Number(patch.updatedAt)) ? Number(patch.updatedAt) : Date.now();
+  const parsed = trackerStoredSettingsSchema.parse({ ...bucket.settings, ...patch, updatedAt: nextUpdatedAt });
+  bucket.settings = parsed;
   if (bucket.settings.cloudSyncEnabled === undefined) bucket.settings.cloudSyncEnabled = true;
   await persist();
   return { ...defaultSettings(), ...bucket.settings, cloudSyncEnabled: bucket.settings.cloudSyncEnabled !== false };
@@ -339,6 +429,39 @@ export async function queueCloudDelete(input: { userId: string; username: string
     retryCount: 0,
     nextRetryAt: Date.now(),
   });
+  await persist();
+}
+
+export async function queueCloudSettings(input: {
+  userId: string;
+  settingsData: TrackerSettings & { cloudSyncEnabled?: boolean; updatedAt?: number };
+  settingsUpdatedAt: number;
+}) {
+  await ensureLoaded();
+  const parsedSettings = trackerStoredSettingsSchema.parse({
+    ...input.settingsData,
+    updatedAt: input.settingsUpdatedAt,
+  });
+  const existingIndex = cache!.queue.findIndex(item => item.op === 'settings' && item.userId === input.userId);
+  const nextItem: CloudQueueItem = {
+    id: existingIndex >= 0 ? cache!.queue[existingIndex].id : randomUUID(),
+    op: 'settings',
+    userId: input.userId,
+    username: input.userId,
+    settingsData: parsedSettings,
+    settingsUpdatedAt: input.settingsUpdatedAt,
+    createdAt: existingIndex >= 0 ? cache!.queue[existingIndex].createdAt : Date.now(),
+    retryCount: 0,
+    nextRetryAt: Date.now() - 1,
+    lastError: undefined,
+  };
+
+  if (existingIndex >= 0) {
+    cache!.queue[existingIndex] = nextItem;
+  } else {
+    cache!.queue.push(nextItem);
+  }
+
   await persist();
 }
 

@@ -113,3 +113,42 @@ export function withToken(prefix: string, token: string) {
 export function withTokenAndField(prefix: string, token: string, field: string) {
   return `${prefix}${token}:${field}`;
 }
+
+export function withViewRunsOrientationTarget(target: 'landscape' | 'portrait') {
+  return `${TRACKER_IDS.viewRuns.orientation}:${target}`;
+}
+
+export function parseTrackerToken(customId: string): string | null {
+  const [, token = ''] = customId.split(':');
+  return token || null;
+}
+
+export function parsePrefixedTrackerToken(prefix: string, customId: string): string | null {
+  if (!customId.startsWith(prefix)) {
+    return null;
+  }
+  const token = customId.slice(prefix.length);
+  return token || null;
+}
+
+export function packTrackerRemoveToken(runId: string | null, localId: string | null) {
+  return `${encodeURIComponent(runId ?? '')}|${encodeURIComponent(localId ?? '')}`;
+}
+
+export function parseTrackerRemoveToken(token: string | null): { runId: string | null; localId: string | null } {
+  const [encodedRunId = '', encodedLocalId = ''] = String(token || '').split('|', 2);
+  const runId = decodeURIComponent(encodedRunId).trim();
+  const localId = decodeURIComponent(encodedLocalId).trim();
+  return {
+    runId: runId || null,
+    localId: localId || null,
+  };
+}
+
+export function parseViewRunsOrientationTarget(customId: string): 'landscape' | 'portrait' | null {
+  const target = parsePrefixedTrackerToken(`${TRACKER_IDS.viewRuns.orientation}:`, customId);
+  if (target === 'landscape' || target === 'portrait') {
+    return target;
+  }
+  return null;
+}

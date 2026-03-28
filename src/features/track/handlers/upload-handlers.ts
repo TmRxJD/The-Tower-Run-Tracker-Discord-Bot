@@ -1,4 +1,5 @@
 import * as Discord from 'discord.js';
+import { canonicalizeRunDataForOutput, canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
 import {
   extractTrackerImageText,
   preprocessTrackerImageForOcr,
@@ -18,6 +19,7 @@ import {
   TextInputStyle,
   StringSelectMenuBuilder,
 } from 'discord.js';
+import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { handleError, logError } from './error-handlers';
 import { logger } from '../../../core/logger';
 import {
@@ -55,7 +57,6 @@ import type { TrackReplyInteractionLike } from '../interaction-types';
 import { createManualHandlers } from './manual-handlers';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { parseLifetimeStatsFromOcrText } from './lifetime-ocr';
-import { canonicalizeRunDataForOutput, canonicalizeTrackerRunData } from '../shared/run-data-normalization';
 
 type LooseRecord = Record<string, unknown>;
 
@@ -312,10 +313,10 @@ function buildProcessedRunDataFromParsed(
     ...runData,
     tier: runData.tier ?? runDataRecord['Tier'],
     wave: runData.wave ?? runDataRecord['Wave'],
-    totalCoins: runData.totalCoins ?? runDataRecord['Coins earned'] ?? runDataRecord['Coins Earned'] ?? runDataRecord['Battle Report Coins earned'] ?? runDataRecord['coins'],
-    totalCells: runData.totalCells ?? runDataRecord['Cells Earned'] ?? runDataRecord['cells'],
-    totalDice: runData.totalDice ?? runDataRecord['Reroll Shards Earned'] ?? runDataRecord['rerollShards'],
-    roundDuration: runData.roundDuration ?? runDataRecord['Real Time'] ?? runDataRecord['duration'],
+    totalCoins: runData.totalCoins ?? runDataRecord['Coins earned'],
+    totalCells: runData.totalCells ?? runDataRecord['Cells Earned'],
+    totalDice: runData.totalDice ?? runDataRecord['Reroll Shards Earned'] ?? runDataRecord['rerollShards'] ?? runDataRecord['dice'],
+    roundDuration: runData.roundDuration ?? runDataRecord['Real Time'],
     killedBy: (runData.killedBy ?? runDataRecord['Killed By'] ?? '').toString().trim() || 'Apathy',
     date: displayDate,
     time: displayTime,
@@ -323,7 +324,7 @@ function buildProcessedRunDataFromParsed(
     notes: params.preNote || '',
     totalEnemies: runData.totalEnemies ?? runDataRecord['Total Enemies'] ?? runDataRecord['totalEnemies'],
     destroyedByOrbs: runData.destroyedByOrbs ?? runDataRecord['Destroyed By Orbs'] ?? runDataRecord['destroyedByOrbs'],
-    taggedByDeathWave: runData.taggedByDeathWave ?? runDataRecord['Tagged by Deathwave'] ?? runDataRecord['taggedByDeathWave'],
+    taggedByDeathWave: runData.taggedByDeathWave ?? runDataRecord['Tagged by Death Wave'] ?? runDataRecord['taggedByDeathWave'],
     destroyedInSpotlight: runData.destroyedInSpotlight ?? runDataRecord['Destroyed in Spotlight'] ?? runDataRecord['destroyedInSpotlight'],
     destroyedInGoldenBot: runData.destroyedInGoldenBot ?? runDataRecord['Destroyed in Golden Bot'] ?? runDataRecord['destroyedInGoldenBot'],
   };
@@ -672,10 +673,7 @@ export async function handleUploadFlow(interaction: MessageComponentInteraction 
   await interaction.showModal(modal);
 
   try {
-    const submitted = await interaction.awaitModalSubmit({
-      filter: (i: ModalSubmitInteraction) => i.customId === TRACKER_IDS.flow.uploadModal && i.user.id === userId,
-      time: 300_000,
-    });
+    const submitted = await awaitOwnedModalSubmit(interaction as MessageComponentInteraction, TRACKER_IDS.flow.uploadModal);
     try {
       await submitted.deferUpdate();
     } catch {
@@ -1065,10 +1063,7 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
   await interaction.showModal(modal);
 
   try {
-    const submitted = await interaction.awaitModalSubmit({
-      filter: (i: ModalSubmitInteraction) => i.customId === TRACKER_IDS.flow.pasteModal && i.user.id === userId,
-      time: 300_000,
-    });
+    const submitted = await awaitOwnedModalSubmit(interaction as MessageComponentInteraction, TRACKER_IDS.flow.pasteModal);
     try {
       await submitted.deferUpdate();
     } catch (deferError: unknown) {
@@ -1159,10 +1154,7 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
   await interaction.showModal(modal);
 
   try {
-    const submitted = await interaction.awaitModalSubmit({
-      filter: (i: ModalSubmitInteraction) => i.customId === TRACKER_IDS.flow.addRunModal && i.user.id === userId,
-      time: 300_000,
-    });
+    const submitted = await awaitOwnedModalSubmit(interaction as MessageComponentInteraction, TRACKER_IDS.flow.addRunModal);
 
     try {
       await submitted.deferUpdate();

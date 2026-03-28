@@ -1,5 +1,6 @@
 import { getAppConfig } from '../../config';
 import { logger } from '../../core/logger';
+import { extractChatCompletionText, extractJsonObject, extractOcrTextLines, resolveChatCompletionsEndpoint } from '@tmrxjd/platform/tools';
 import type { AttachmentPayload } from './types';
 
 type VisionOcrPayload = {
@@ -28,19 +29,6 @@ type ErrorResponse = {
   };
 };
 
-function resolveChatCompletionsEndpoint(configured: string | undefined): string {
-  const trimmed = String(configured || '').trim();
-  if (!trimmed) {
-    throw new Error('TrackerAI cloud endpoint is not configured');
-  }
-
-  if (/\/chat\/completions\/?$/i.test(trimmed)) {
-    return trimmed.replace(/\/$/, '');
-  }
-
-  return `${trimmed.replace(/\/$/, '')}/chat/completions`;
-}
-
 function resolveVisionModel(configured: string | undefined): string {
   const trimmed = String(configured || '').trim();
   return trimmed || 'meta-llama/llama-4-scout-17-16e-instruct';
@@ -49,54 +37,6 @@ function resolveVisionModel(configured: string | undefined): string {
 function buildImageDataUrl(file: AttachmentPayload): string {
   const contentType = String(file.contentType || 'image/png').trim() || 'image/png';
   return `data:${contentType};base64,${file.data.toString('base64')}`;
-}
-
-function extractContentText(content: string | ChatCompletionMessageContentPart[] | null | undefined): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return '';
-  }
-
-  return content
-    .map(part => String(part?.text || '').trim())
-    .filter(Boolean)
-    .join('\n');
-}
-
-function extractJsonObject(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    return trimmed;
-  }
-
-  const firstBrace = trimmed.indexOf('{');
-  const lastBrace = trimmed.lastIndexOf('}');
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return trimmed.slice(firstBrace, lastBrace + 1);
-  }
-
-  throw new Error('Vision API returned non-JSON content');
-}
-
-function normalizeTextLines(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value
-      .map(entry => String(entry || '').trim())
-      .filter(Boolean);
-  }
-
-  if (typeof value === 'string') {
-    return value
-      .replace(/\r/g, '\n')
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean);
-  }
-
-  return [];
 }
 
 function normalizeRunData(value: unknown): Record<string, unknown> {
@@ -144,7 +84,10 @@ export async function runDirectVisionOcr(file: AttachmentPayload): Promise<Visio
     throw new Error('TrackerAI cloud API key is not configured');
   }
 
-  const endpoint = resolveChatCompletionsEndpoint(config.cloudEndpoint);
+  const endpoint = resolveChatCompletionsEndpoint(config.cloudEndpoint, '');
+  if (!endpoint) {
+    throw new Error('TrackerAI cloud endpoint is not configured');
+  }
   const model = resolveVisionModel(config.cloudVisionModel);
 
   const response = await fetch(endpoint, {
@@ -195,14 +138,17 @@ export async function runDirectVisionOcr(file: AttachmentPayload): Promise<Visio
   }
 
   const payload = (await response.json()) as ChatCompletionResponse;
-  const rawContent = extractContentText(payload.choices?.[0]?.message?.content);
+  const rawContent = extractChatCompletionText(payload);
   const jsonText = extractJsonObject(rawContent);
+  if (!jsonText) {
+    throw new Error('Vision API returned non-JSON content');
+  }
   const parsed = JSON.parse(jsonText) as {
     textLines?: unknown;
     runData?: unknown;
   };
 
-  const textLines = normalizeTextLines(parsed.textLines);
+  const textLines = extractOcrTextLines(parsed.textLines);
   if (textLines.length === 0) {
     logger.warn('Vision API OCR returned no text lines', { filename: file.filename });
     throw new Error('Vision API OCR returned no text lines');

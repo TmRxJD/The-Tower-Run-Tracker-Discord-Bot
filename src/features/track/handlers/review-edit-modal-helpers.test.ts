@@ -91,7 +91,7 @@ describe('review-edit-modal-helpers', () => {
     expect(applySubmittedReviewEditValues({ notes: 'old' }, ['tier', 'notes'], (_field, index) => {
       return index === 0 ? '14+' : 'new note';
     })).toMatchObject({
-      tier: 14,
+      tier: '14',
       tierDisplay: '14+',
       tierHasPlus: true,
       notes: 'new note',
@@ -106,7 +106,7 @@ describe('review-edit-modal-helpers', () => {
     })).toMatchObject({
       userId: 'user-1',
       username: 'runner',
-      runData: { tier: 10 },
+      runData: { tier: '10' },
     });
     expect(resolveUpdatedPendingRecord(null)).toBeNull();
   });
@@ -141,7 +141,7 @@ describe('review-edit-modal-helpers', () => {
     }, 'Session expired')).resolves.toMatchObject({
       userId: 'user-2',
       username: 'runner-2',
-      runData: { wave: 123 },
+      runData: { wave: '123' },
     });
     expect(calls).toEqual([]);
 
@@ -174,7 +174,7 @@ describe('review-edit-modal-helpers', () => {
     }, 'Session expired')).resolves.toMatchObject({
       userId: 'user-2b',
       username: 'runner-2b',
-      runData: { wave: 456 },
+      runData: { wave: '456' },
     });
     expect(calls).toEqual([]);
 

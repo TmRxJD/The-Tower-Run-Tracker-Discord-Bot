@@ -12,6 +12,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { resolve } from 'node:path';
 import { editUserSettings, forceSyncQueuedRuns, getEffectiveQueueCount, getUserSettings, getUserStats } from '../tracker-api-client';
 import { TRACKER_IDS } from '../track-custom-ids';
@@ -540,10 +541,7 @@ export async function handleTrackMenuSetLogChannel(interaction: TrackMenuInterac
 
     await interaction.showModal(modal);
 
-    const submitted = await interaction.awaitModalSubmit({
-      filter: (event) => event.customId === TRACKER_IDS.settings.logChannelModal && event.user.id === interaction.user.id,
-      time: 300_000,
-    });
+    const submitted = await awaitOwnedModalSubmit(interaction as MessageComponentInteraction, TRACKER_IDS.settings.logChannelModal);
 
     if (submitted.guildId === LOG_CHANNEL_RESTRICTED_GUILD_ID) {
       await submitted.reply({ content: LOG_CHANNEL_RESTRICTED_MESSAGE, ephemeral: true }).catch(() => {});

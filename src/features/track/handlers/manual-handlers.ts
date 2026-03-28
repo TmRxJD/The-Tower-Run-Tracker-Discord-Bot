@@ -11,7 +11,9 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
+import { parseTrackerToken } from '../track-custom-ids';
 import { standardizeNotation } from '../../../utils/tracker-math';
 import { formatDate, formatTime, parseTierString } from './upload-helpers';
 import { getPendingRun, updatePendingRun } from '../pending-run-store';
@@ -89,7 +91,7 @@ function toPendingRecord(value: unknown): PendingRecordLike | null {
 }
 
 function getManualToken(customId: string) {
-  return customId.includes(':') ? customId.split(':')[1] : null;
+  return parseTrackerToken(customId);
 }
 
 function withManualDefaults(runData: RunDataRecord, mode: TrackerUiMode) {
@@ -207,10 +209,7 @@ async function openManualStageOne(interaction: ManualInteraction, token: string,
   );
 
   await component.showModal(modal);
-  const submitted = await component.awaitModalSubmit({
-    filter: (i) => i.customId === withToken(TRACKER_IDS.manual.modalOnePrefix, token) && i.user.id === interaction.user.id,
-    time: 300_000,
-  });
+  const submitted = await awaitOwnedModalSubmit(component, withToken(TRACKER_IDS.manual.modalOnePrefix, token));
 
   try {
     await submitted.deferUpdate();
@@ -253,10 +252,7 @@ async function openManualStageTwo(interaction: ManualInteraction, token: string,
   );
 
   await component.showModal(modal);
-  const submitted = await component.awaitModalSubmit({
-    filter: (i) => i.customId === withToken(TRACKER_IDS.manual.modalTwoPrefix, token) && i.user.id === interaction.user.id,
-    time: 300_000,
-  });
+  const submitted = await awaitOwnedModalSubmit(component, withToken(TRACKER_IDS.manual.modalTwoPrefix, token));
 
   try {
     await submitted.deferUpdate();
@@ -368,10 +364,7 @@ export function createManualHandlers(deps: ManualDeps) {
       modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(noteInput));
       await component.showModal(modal);
 
-      const submitted = await component.awaitModalSubmit({
-        filter: (i) => i.customId === withToken(TRACKER_IDS.manual.noteModalPrefix, token) && i.user.id === interaction.user.id,
-        time: 300_000,
-      });
+      const submitted = await awaitOwnedModalSubmit(component, withToken(TRACKER_IDS.manual.noteModalPrefix, token));
 
       try {
         await submitted.deferUpdate();

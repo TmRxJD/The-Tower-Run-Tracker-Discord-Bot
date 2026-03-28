@@ -21,7 +21,7 @@ function normalizeLogLevel(value?: string): LogLevel {
   }
 }
 
-const configuredLogLevel = normalizeLogLevel(process.env.BOT_LOG_LEVEL ?? process.env.LOG_LEVEL);
+const configuredLogLevel = normalizeLogLevel(process.env.BOT_LOG_LEVEL);
 
 function shouldLog(level: Exclude<LogLevel, 'silent'>): boolean {
   if (configuredLogLevel === 'silent') {

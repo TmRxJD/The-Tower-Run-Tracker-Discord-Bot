@@ -28,16 +28,19 @@ export function registerInteractionRouter(client: TrackerBotClient) {
         return;
       }
 
-      if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
-        const handler = client.components.find(interaction);
-        if (!handler) {
-          logger.warn(`No component handler found for customId: ${interaction.customId}`);
-          if (interaction.isRepliable()) {
-            await interaction.reply({ content: 'This interaction is no longer valid. Please retry.', flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
-          }
+      if (
+        interaction.isButton()
+        || interaction.isStringSelectMenu()
+        || interaction.isUserSelectMenu()
+        || interaction.isRoleSelectMenu()
+        || interaction.isMentionableSelectMenu()
+        || interaction.isChannelSelectMenu()
+        || interaction.isModalSubmit()
+      ) {
+        const handled = await client.components.dispatch(interaction);
+        if (!handled) {
           return;
         }
-        await handler(interaction);
       }
     } catch (error) {
       logger.error('Interaction handling error', error);

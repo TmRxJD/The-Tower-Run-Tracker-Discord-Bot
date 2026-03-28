@@ -1,11 +1,11 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
+import { canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 import { standardizeNotation } from '../../../utils/tracker-math';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { createAddNoteAndShowFullParseButtonRow, createConfirmationButtons, createDataReviewEmbed, createShowFullParseButtonRow, createTypeSelectionRow } from './tracker-ui';
 import { parseTierString } from '../handlers/upload-helpers';
-import { canonicalizeTrackerRunData } from '../shared/run-data-normalization';
 import type { PendingRecordLike, RunDataRecord } from '../shared/track-review-records';
 
 function createEditNotesButtonRow(token: string): ActionRowBuilder<ButtonBuilder> {

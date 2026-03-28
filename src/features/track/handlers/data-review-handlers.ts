@@ -1,4 +1,5 @@
 import { MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
+import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { editRun, getLocalRunSummary, getUserSettings, logRun } from '../tracker-api-client';
 import { createSuccessButtons, createLoadingEmbed } from '../ui/tracker-ui';
 import { buildEditFieldPickerPayload } from '../ui/tracker-review-payloads';
@@ -10,7 +11,7 @@ import { applySubmittedReviewEditValues, buildCurrentReviewReplyPayload, buildRe
 import { submitLifetimePendingRun } from './review-lifetime-submission';
 import { buildCanonicalRunData, buildCoverageSource, buildRunTypeCounts, buildShareableRunPayload, buildSubmitRunData, resolveDuplicateRunInfo, resolveScreenshotUrl, resolveSubmissionIds, type LocalRunSummary, type SubmissionSyncResult } from './review-submission-helpers';
 import { updatePendingRun, deletePendingRun } from '../pending-run-store';
-import { TRACKER_IDS, withToken, withTokenAndField } from '../track-custom-ids';
+import { TRACKER_IDS, parsePrefixedTrackerToken, parseTrackerToken, withToken, withTokenAndField } from '../track-custom-ids';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
@@ -111,10 +112,7 @@ async function handleNoteModal(interaction: ReviewInteraction, returnMode: 'revi
 
     await component.showModal(modal);
 
-    const submitted = await component.awaitModalSubmit({
-      filter: (i: ModalSubmitInteraction) => i.customId === withToken(TRACKER_IDS.review.noteModalPrefix, token) && i.user.id === interaction.user.id,
-      time: 300_000,
-    });
+    const submitted = await awaitOwnedModalSubmit(component, withToken(TRACKER_IDS.review.noteModalPrefix, token));
     try {
       await submitted.deferUpdate();
     } catch {
@@ -135,8 +133,7 @@ async function handleNoteModal(interaction: ReviewInteraction, returnMode: 'revi
 
 export async function handleCancel(interaction: ReviewInteraction) {
   const component = interaction as MessageComponentInteraction;
-  const parts = interaction.customId.split(':');
-  const token = parts.length > 1 ? parts[1] : null;
+  const token = parseTrackerToken(interaction.customId);
   if (token) await deletePendingRun(token);
   await component.deferUpdate().catch(() => {});
   const { renderTrackMenu } = await import('./upload-handlers.js');
@@ -324,7 +321,7 @@ export async function handleEditFieldSelection(interaction: ReviewInteraction) {
   try {
     const ui = reviewUi();
     const component = interaction as MessageComponentInteraction;
-    const token = interaction.customId.slice(TRACKER_IDS.review.editFieldPrefix.length);
+    const token = parsePrefixedTrackerToken(TRACKER_IDS.review.editFieldPrefix, interaction.customId);
     const selectedFields = getSelectedReviewFields(interaction);
     if (!token || !selectedFields.length) {
       await updateReviewMessage(interaction, getTrackUiConfig().manual.sessionExpired);
@@ -348,10 +345,7 @@ export async function handleEditFieldSelection(interaction: ReviewInteraction) {
     await component.showModal(modal);
 
     const modalCustomId = withTokenAndField(TRACKER_IDS.review.editModalPrefix, token, modalFieldList);
-    const submitted = await component.awaitModalSubmit({
-      filter: (i: ModalSubmitInteraction) => i.customId === modalCustomId && i.user.id === interaction.user.id,
-      time: 300_000,
-    });
+    const submitted = await awaitOwnedModalSubmit(component, modalCustomId);
 
     try {
       await submitted.deferUpdate();
@@ -379,7 +373,7 @@ export async function handleEditDone(interaction: ReviewInteraction) {
   try {
     const component = interaction as MessageComponentInteraction;
     const resolved = await resolveOwnedPendingInteraction(interaction, {
-      token: interaction.customId.split(':')[1],
+      token: parseTrackerToken(interaction.customId) ?? undefined,
     });
     if (!resolved) {
       return;

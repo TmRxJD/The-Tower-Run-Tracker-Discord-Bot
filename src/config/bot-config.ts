@@ -1,6 +1,3 @@
-import type { ConfigsRepo } from '../persistence/configs-repo';
-import { loadBotConfig as loadBotConfigFromRepo } from './bot-config-loader';
-
 // Default bot configuration mirroring the Mod Bot structure: meta/common plus per-command config.
 export const defaultBotConfig = {
   meta: {
@@ -164,12 +161,7 @@ function mergeConfig(base: unknown, override: unknown): unknown {
   return result;
 }
 
-export async function hydrateBotConfig(configsRepo: ConfigsRepo): Promise<BotConfig> {
-  const doc = await loadBotConfigFromRepo(configsRepo);
-  if (doc) {
-    runtimeBotConfig = mergeConfig(defaultBotConfig, doc) as BotConfig;
-  } else {
-    runtimeBotConfig = defaultBotConfig;
-  }
+export function resetBotConfig(): BotConfig {
+  runtimeBotConfig = mergeConfig(defaultBotConfig, undefined) as BotConfig;
   return runtimeBotConfig;
 }

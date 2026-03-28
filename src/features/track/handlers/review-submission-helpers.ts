@@ -1,5 +1,5 @@
+import { canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
 import type { PendingRecordLike } from '../shared/track-review-records';
-import { canonicalizeTrackerRunData } from '../shared/run-data-normalization';
 
 export type SubmissionSyncResult = {
   queuedForCloud?: boolean;

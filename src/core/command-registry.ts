@@ -18,6 +18,30 @@ export class CommandRegistry {
     return this.commands.get(name);
   }
 
+  getSlash(name: string) {
+    return this.get(name);
+  }
+
+  getContextMenu(_name: string) {
+    return undefined;
+  }
+
+  has(name: string) {
+    return this.commands.has(name);
+  }
+
+  listSlash() {
+    return this.list();
+  }
+
+  listContextMenu() {
+    return [] as CommandModule[];
+  }
+
+  listAll() {
+    return this.list();
+  }
+
   list() {
     return [...this.commands.values()];
   }

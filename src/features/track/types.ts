@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export interface AttachmentPayload {
   data: Buffer;
   filename: string;
@@ -55,3 +57,39 @@ export interface TrackerSettings {
   replyNotificationsEnabled?: boolean;
   cloudSyncEnabled?: boolean;
 }
+
+export const trackerSettingsSchema = z.object({
+  defaultTracker: z.string().optional(),
+  defaultRunType: z.string().optional(),
+  scanLanguage: z.string().optional(),
+  timezone: z.string().optional(),
+  decimalPreference: z.string().optional(),
+  autoDetectDuplicates: z.boolean().optional(),
+  confirmBeforeSubmit: z.boolean().optional(),
+  shareNotes: z.boolean().optional(),
+  shareCoverage: z.boolean().optional(),
+  shareScreenshot: z.boolean().optional(),
+  shareTier: z.boolean().optional(),
+  shareWave: z.boolean().optional(),
+  shareDuration: z.boolean().optional(),
+  shareKilledBy: z.boolean().optional(),
+  shareTotalCoins: z.boolean().optional(),
+  shareTotalCells: z.boolean().optional(),
+  shareTotalDice: z.boolean().optional(),
+  shareCoinsPerHour: z.boolean().optional(),
+  shareCellsPerHour: z.boolean().optional(),
+  shareDicePerHour: z.boolean().optional(),
+  logChannelId: z.string().optional(),
+  logChannelGuildId: z.string().optional(),
+  logChannelCategoryId: z.string().optional(),
+  leaderboard: z.boolean().optional(),
+  messagingEnabled: z.boolean().optional(),
+  blockedUsers: z.union([z.string(), z.array(z.string())]).optional(),
+  reactionNotificationsEnabled: z.boolean().optional(),
+  replyNotificationsEnabled: z.boolean().optional(),
+  cloudSyncEnabled: z.boolean().optional(),
+});
+
+export const trackerStoredSettingsSchema = trackerSettingsSchema.extend({
+  updatedAt: z.number().finite().nonnegative().optional(),
+});

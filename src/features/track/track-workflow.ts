@@ -2,7 +2,7 @@ import { Attachment, ChatInputCommandInteraction, EmbedBuilder, MessageFlagsBitF
 import { logger } from '../../core/logger';
 import { getBotConfig } from '../../config/bot-config';
 import { getUserSettings } from './tracker-api-client';
-import type { TrackReplyInteractionLike } from './interaction-types';
+import { asTrackReplyInteraction } from './handlers/review-interaction-helpers';
 import { renderTrackMenu, handleDirectTextPaste, handleDirectAttachment } from './handlers';
 import { buildSettingsPayload } from './handlers/settings-handlers';
 import { setTrackerFlowMode } from './flow-mode-store';
@@ -17,7 +17,7 @@ interface TrackOptions {
 }
 
 export async function handleTrackWorkflow(interaction: ChatInputCommandInteraction, options: TrackOptions) {
-  const trackInteraction = interaction as unknown as TrackReplyInteractionLike;
+  const trackInteraction = asTrackReplyInteraction(interaction);
   const botConfig = getBotConfig();
   const mode = options.mode ?? 'track';
   setTrackerFlowMode(interaction.user.id, mode);

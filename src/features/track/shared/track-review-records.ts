@@ -41,20 +41,31 @@ export type PendingRecordLike = {
   defaultRunType?: string
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+}
+
 export function toRunDataRecord(value: unknown): RunDataRecord {
-  return (typeof value === 'object' && value !== null ? value : {}) as RunDataRecord
+  return isRecord(value) ? value : {}
 }
 
 export function toPendingRecord(value: unknown): PendingRecordLike | null {
-  if (!value || typeof value !== 'object') return null
-  const record = value as Record<string, unknown>
+  if (!isRecord(value)) return null
+  const record = value
   if (typeof record.userId !== 'string' || typeof record.username !== 'string') return null
+  const screenshot = isRecord(record.screenshot) && typeof record.screenshot.url === 'string' && record.screenshot.url.trim().length > 0
+    ? {
+        url: record.screenshot.url,
+        name: typeof record.screenshot.name === 'string' ? record.screenshot.name : undefined,
+        contentType: typeof record.screenshot.contentType === 'string' ? record.screenshot.contentType : undefined,
+      }
+    : null
   return {
     userId: record.userId,
     username: record.username,
     runData: canonicalizeTrackerRunData(toRunDataRecord(record.runData)),
     canonicalRunData: record.canonicalRunData ? canonicalizeTrackerRunData(toRunDataRecord(record.canonicalRunData)) : null,
-    screenshot: (record.screenshot ?? null) as PendingRecordScreenshot,
+    screenshot,
     decimalPreference: typeof record.decimalPreference === 'string' ? record.decimalPreference : undefined,
     isDuplicate: typeof record.isDuplicate === 'boolean' ? record.isDuplicate : undefined,
     defaultRunType: typeof record.defaultRunType === 'string' ? record.defaultRunType : undefined,

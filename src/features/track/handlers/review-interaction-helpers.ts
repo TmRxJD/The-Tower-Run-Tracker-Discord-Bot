@@ -4,6 +4,7 @@ import { getTrackerFlowMode } from '../flow-mode-store';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { getPendingRun } from '../pending-run-store';
 import { toPendingRecord, type PendingRecordLike } from '../shared/track-review-records';
+import { parseTrackerToken } from '../track-custom-ids';
 
 export type ReviewInteraction = MessageComponentInteraction | ModalSubmitInteraction;
 
@@ -19,8 +20,33 @@ export function isTrackReviewFlowEnabled(userId: string) {
   return getTrackerFlowMode(userId) === 'track';
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function isTrackReplyLike(value: unknown): value is TrackReplyInteractionLike {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const record = value;
+  const user = isRecord(record.user) ? record.user : null;
+  return typeof record.user === 'object'
+    && record.user !== null
+    && !!user
+    && typeof user.id === 'string'
+    && typeof user.username === 'string'
+    && typeof record.deferReply === 'function'
+    && typeof record.reply === 'function'
+    && typeof record.editReply === 'function';
+}
+
 export function asTrackReplyInteraction(interaction: ReviewInteraction | MessageComponentInteraction): TrackReplyInteractionLike {
-  return interaction as unknown as TrackReplyInteractionLike;
+  if (!isTrackReplyLike(interaction)) {
+    throw new Error('Interaction does not satisfy the tracker reply contract');
+  }
+
+  return interaction;
 }
 
 export async function updateReviewMessage(interaction: ReviewInteraction, content: string) {
@@ -50,6 +76,5 @@ export async function resolveOwnedPendingInteraction(
 }
 
 function resolvePendingToken(interaction: ReviewInteraction): string | null {
-  const customId = interaction.customId || '';
-  return customId.includes(':') ? customId.split(':')[1] : null;
+  return parseTrackerToken(interaction.customId || '');
 }

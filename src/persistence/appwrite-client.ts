@@ -1,4 +1,5 @@
 import { Client, Databases, Storage } from 'node-appwrite';
+import { createAppwriteClientBundle, resolveAppwriteCredential } from '@tmrxjd/platform/node';
 import { getAppConfig } from '../config';
 import { logger } from '../core/logger';
 
@@ -16,33 +17,38 @@ export function createAppwriteClient() {
   if (cachedBundle) return cachedBundle;
 
   const cfg = getAppConfig();
-  const client = new Client().setEndpoint(cfg.appwrite.endpoint).setProject(cfg.appwrite.projectId);
+  const credential = resolveAppwriteCredential({
+    apiKey: cfg.appwrite.apiKey,
+    apiKeyEnvValue: process.env.APPWRITE_API_KEY,
+    jwt: process.env.APPWRITE_JWT,
+    session: process.env.APPWRITE_SESSION,
+  });
 
-  const apiKey = cfg.appwrite.apiKey?.trim();
-  const apiKeySource = ['APPWRITE_API_KEY', 'APPWRITE_FUNCTION_API_KEY', 'APPWRITE_KEY']
-    .find(name => Boolean(process.env[name]?.trim())) ?? 'config';
-  const sessionJwt = process.env.APPWRITE_JWT?.trim();
-  const session = process.env.APPWRITE_SESSION?.trim();
-
-  if (apiKey) {
+  if (credential.kind === 'apiKey') {
     if (!hasLoggedCredentialSource) {
-      logger.info(`Using Appwrite API credential source: ${apiKeySource}`);
+      logger.info(`Using Appwrite API credential source: ${credential.apiKeySource}`);
       hasLoggedCredentialSource = true;
     }
-    client.setKey(apiKey);
-  } else if (sessionJwt) {
-    client.setJWT(sessionJwt);
-  } else if (session) {
-    client.setSession(session);
-  } else {
+  } else if (credential.kind === 'none') {
     if (!hasLoggedMissingCredential) {
       logger.warn('No Appwrite credential found (APPWRITE_API_KEY/APPWRITE_JWT/APPWRITE_SESSION). Discord login does not authorize Appwrite; bot will run local-only until credentials are provided.');
       hasLoggedMissingCredential = true;
     }
   }
 
-  const databases = new Databases(client);
-  const storage = new Storage(client);
-  cachedBundle = { client, databases, storage };
+  const bundle = createAppwriteClientBundle({
+    client: new Client(),
+    endpoint: cfg.appwrite.endpoint,
+    projectId: cfg.appwrite.projectId,
+    credential,
+    createDatabases: client => new Databases(client),
+    createStorage: client => new Storage(client),
+  });
+
+  cachedBundle = {
+    client: bundle.client,
+    databases: bundle.databases,
+    storage: bundle.storage,
+  };
   return cachedBundle;
 }
