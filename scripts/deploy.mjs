@@ -51,6 +51,10 @@ function run(command, options = {}) {
   })
 }
 
+function getPackagesAuthToken() {
+  return getEnv('NODE_AUTH_TOKEN') || getEnv('GITHUB_PACKAGES_TOKEN') || getEnv('GH_PACKAGES_TOKEN')
+}
+
 function writeEnvFile() {
   const lines = [
     'NODE_ENV=production',
@@ -106,9 +110,17 @@ function checkPm2() {
 }
 
 function checkPackageAccess() {
+  const authToken = getPackagesAuthToken()
+  if (!authToken) {
+    throw new Error('GitHub Packages auth is missing. Set NODE_AUTH_TOKEN (or GITHUB_PACKAGES_TOKEN) before installing @tmrxjd/platform.')
+  }
+
   execSync(`pnpm view @tmrxjd/platform version --registry ${platformRegistry} --json`, {
     stdio: 'ignore',
-    env: process.env,
+    env: {
+      ...process.env,
+      NODE_AUTH_TOKEN: authToken,
+    },
   })
 }
 
