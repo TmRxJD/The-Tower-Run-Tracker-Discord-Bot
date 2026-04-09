@@ -65,7 +65,7 @@ describe('AnalyticsRepo', () => {
       ],
     });
 
-    const { AnalyticsRepo } = await import('./analytics-repo');
+    const { AnalyticsRepo } = await import('./analytics-repo.js');
     const repo = new AnalyticsRepo({
       listDocuments: (...args: unknown[]) => mockListDocuments(...args),
     } as never);

@@ -63,7 +63,7 @@ describe('UsersRepo', () => {
       unexpectedField: 'ignored',
     });
 
-    const { UsersRepo } = await import('./users-repo');
+    const { UsersRepo } = await import('./users-repo.js');
     const repo = new UsersRepo({
       listDocuments: (...args: unknown[]) => mockListFirstDocument(...args),
       getDocument: vi.fn(),

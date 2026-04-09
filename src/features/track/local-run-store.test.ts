@@ -6,6 +6,7 @@ import {
   getQueueItems,
   markQueueItemFailed,
   queueCloudUpsert,
+  releaseQueuedItemsForImmediateRetry,
   removeQueueItem,
 } from './local-run-store';
 
@@ -49,5 +50,25 @@ describe('local-run-store queue retry behavior', () => {
     expect(updated.retryCount).toBe(1);
     expect(updated.lastError).toBe('intentional test failure');
     expect((updated.nextRetryAt ?? 0) > previousNextRetryAt).toBe(true);
+  });
+
+  it('releases queued items for immediate retry', async () => {
+    await queueCloudUpsert({
+      userId: TEST_USER_ID,
+      username: 'tester',
+      runData: { localId: 'run-local-id-2', runId: 'run-id-2' },
+      localId: 'run-local-id-2',
+    });
+
+    const [queuedItem] = await getQueueItems(TEST_USER_ID);
+    await markQueueItemFailed(queuedItem.id, 'intentional retry delay');
+
+    const delayed = (await getQueueItems(TEST_USER_ID))[0];
+    expect((delayed.nextRetryAt ?? 0) > Date.now()).toBe(true);
+
+    await releaseQueuedItemsForImmediateRetry(TEST_USER_ID);
+
+    const released = (await getQueueItems(TEST_USER_ID))[0];
+    expect((released.nextRetryAt ?? 0) <= Date.now()).toBe(true);
   });
 });

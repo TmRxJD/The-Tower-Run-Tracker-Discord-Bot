@@ -44,6 +44,7 @@ export interface TrackerSettings {
   shareTotalCoins?: boolean;
   shareTotalCells?: boolean;
   shareTotalDice?: boolean;
+  shareDeathDefy?: boolean;
   shareCoinsPerHour?: boolean;
   shareCellsPerHour?: boolean;
   shareDicePerHour?: boolean;
@@ -76,6 +77,7 @@ export const trackerSettingsSchema = z.object({
   shareTotalCoins: z.boolean().optional(),
   shareTotalCells: z.boolean().optional(),
   shareTotalDice: z.boolean().optional(),
+  shareDeathDefy: z.boolean().optional(),
   shareCoinsPerHour: z.boolean().optional(),
   shareCellsPerHour: z.boolean().optional(),
   shareDicePerHour: z.boolean().optional(),

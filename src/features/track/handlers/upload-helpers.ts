@@ -9,8 +9,36 @@ import {
 const INLINE_BATTLE_REPORT_LABELS = TRACK_RUN_INLINE_BATTLE_REPORT_LABELS;
 const INLINE_SECTION_HEADERS = TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS;
 const INLINE_SINGLE_LINE_SECTION_LABELS = TRACK_RUN_INLINE_BATTLE_REPORT_SECTION_LABELS;
+const LEGACY_SINGLE_LINE_SECTION_HEADERS = ['Battle Report', 'Combat', 'Utility', 'Enemies Destroyed', 'Bots', 'Guardian'] as const;
+const LEGACY_SINGLE_LINE_SECTION_LABELS = Object.freeze(
+  Object.fromEntries(
+    LEGACY_SINGLE_LINE_SECTION_HEADERS.map(section => [section, [...(INLINE_SINGLE_LINE_SECTION_LABELS[section] ?? [])]]),
+  ) as Record<(typeof LEGACY_SINGLE_LINE_SECTION_HEADERS)[number], string[]>,
+);
 
-function normalizeInlineBattleReportText(rawText: string): string {
+function getSingleLineSectionLabels(sectionLabelMap: Readonly<Record<string, string[]>>, section: string): string[] {
+  return sectionLabelMap[section] ?? [];
+}
+
+function getSafeSingleLineSectionLabels(labels: string[]): string[] {
+  return labels.filter(label => {
+    const normalizedLabel = label.toLowerCase();
+    return !labels.some(otherLabel => {
+      if (otherLabel === label) return false;
+      return otherLabel.toLowerCase().includes(normalizedLabel);
+    });
+  });
+}
+
+function escapeSingleLinePattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+}
+
+function getLegacySingleLineLabels(): string[] {
+  return Array.from(new Set(LEGACY_SINGLE_LINE_SECTION_HEADERS.flatMap(section => LEGACY_SINGLE_LINE_SECTION_LABELS[section] ?? [])));
+}
+
+export function normalizeInlineBattleReportText(rawText: string): string {
   const canonicalized = (rawText ?? '')
     .toString()
     .replace(/\r/g, '\n')
@@ -47,24 +75,47 @@ function normalizeInlineBattleReportText(rawText: string): string {
   }
 
   let segmented = text.replace(/\t+/g, ' ').replace(/\s+/g, ' ').trim();
-  const safeGlobalLabels = [...INLINE_BATTLE_REPORT_LABELS].filter(label => label.includes(' ') || label === 'Tier' || label === 'Wave');
-  const globalLabelAlternation = safeGlobalLabels
-    .sort((a, b) => b.length - a.length)
-    .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
-    .join('|');
-  const sectionAlternation = [...INLINE_SECTION_HEADERS]
-    .sort((a, b) => b.length - a.length)
-    .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
-    .join('|');
+  const updatedSingleLineSignal = /\b(Records|Bonus Health Gained|Health Regenerated|Damage Blocked|Killed With Effect Active|Currencies|Enemies Destroyed By)\b/i;
+  const useLegacySingleLineMode = !updatedSingleLineSignal.test(segmented);
+  const activeSectionHeaders = useLegacySingleLineMode ? [...LEGACY_SINGLE_LINE_SECTION_HEADERS] : [...INLINE_SECTION_HEADERS];
+  const sortedSectionHeaders = [...activeSectionHeaders].sort((a, b) => b.length - a.length);
+  const activeSectionLabels = useLegacySingleLineMode ? getLegacySingleLineLabels() : [...INLINE_BATTLE_REPORT_LABELS];
+  const activeSectionLabelMap = useLegacySingleLineMode ? LEGACY_SINGLE_LINE_SECTION_LABELS : INLINE_SINGLE_LINE_SECTION_LABELS;
 
-  if (globalLabelAlternation) {
-    const globalSplitPattern = new RegExp(`\\s+(${globalLabelAlternation})(?=\\s|:|$)`, 'gi');
-    segmented = segmented.replace(globalSplitPattern, '\n$1');
-  }
+  if (useLegacySingleLineMode) {
+    const safeGlobalLabels = activeSectionLabels.filter(label => label.includes(' ') || label === 'Tier' || label === 'Wave');
+    const globalLabelAlternation = safeGlobalLabels
+      .sort((a, b) => b.length - a.length)
+      .map(escapeSingleLinePattern)
+      .join('|');
+    const sectionAlternation = sortedSectionHeaders
+      .map(escapeSingleLinePattern)
+      .join('|');
 
-  if (sectionAlternation) {
-    const sectionSplitPattern = new RegExp(`\\s+(${sectionAlternation})(?=\\s|:|$)`, 'gi');
-    segmented = segmented.replace(sectionSplitPattern, '\n$1');
+    if (globalLabelAlternation) {
+      const globalSplitPattern = new RegExp(`\\s+(${globalLabelAlternation})(?=\\s|:|$)`, 'gi');
+      segmented = segmented.replace(globalSplitPattern, '\n$1');
+    }
+
+    if (sectionAlternation) {
+      const sectionSplitPattern = new RegExp(`\\s+(${sectionAlternation})(?=\\s|:|$)`, 'gi');
+      segmented = segmented.replace(sectionSplitPattern, '\n$1');
+    }
+  } else {
+    for (const sectionHeader of sortedSectionHeaders) {
+      const sectionLabels = getSingleLineSectionLabels(activeSectionLabelMap as Readonly<Record<string, string[]>>, sectionHeader)
+      if (sectionLabels.length === 0) continue
+
+      const labelAlternation = [...sectionLabels]
+        .sort((a, b) => b.length - a.length)
+        .map(escapeSingleLinePattern)
+        .join('|')
+      if (!labelAlternation) continue
+
+      const escapedHeader = escapeSingleLinePattern(sectionHeader)
+      const sectionSplitPattern = new RegExp(`\\s+(${escapedHeader})(?=\\s+(?:${labelAlternation})(?=\\s|:|$))`, 'gi')
+      segmented = segmented.replace(sectionSplitPattern, '\n$1')
+    }
   }
 
   const rawLines = segmented
@@ -75,10 +126,10 @@ function normalizeInlineBattleReportText(rawText: string): string {
   if (rawLines.length === 0) return text;
 
   const lines: string[] = [];
-  let currentSection: keyof typeof INLINE_SINGLE_LINE_SECTION_LABELS = 'Battle Report';
+  let currentSection = 'Battle Report';
 
   for (const rawLine of rawLines) {
-    const sectionHeader = INLINE_SECTION_HEADERS.find(header => rawLine.toLowerCase().startsWith(header.toLowerCase()));
+    const sectionHeader = sortedSectionHeaders.find(header => rawLine.toLowerCase().startsWith(header.toLowerCase()));
     let remainder = rawLine;
 
     if (sectionHeader) {
@@ -89,10 +140,11 @@ function normalizeInlineBattleReportText(rawText: string): string {
 
     if (!remainder) continue;
 
-    const sectionLabels = INLINE_SINGLE_LINE_SECTION_LABELS[currentSection] ?? [];
-    const labelAlternation = sectionLabels
-      .sort((a, b) => b.length - a.length)
-      .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
+    const sectionLabels = getSingleLineSectionLabels(activeSectionLabelMap as Readonly<Record<string, string[]>>, currentSection);
+    const splitLabels = useLegacySingleLineMode ? getSafeSingleLineSectionLabels(sectionLabels) : sectionLabels;
+    const labelAlternation = splitLabels
+      .sort((a: string, b: string) => b.length - a.length)
+      .map((label: string) => escapeSingleLinePattern(label))
       .join('|');
 
     if (!labelAlternation) {
@@ -392,6 +444,11 @@ export function generateCoverageDescription(runData: RunLike | null | undefined)
   if (!hasValidTotalEnemies) return '';
 
   const getVal = (key: unknown) => parseNumberInput(String(key ?? 0));
+  const killsWithGoldenTower = getVal(runData['Golden Tower'] ?? runData.killsWithGoldenTower);
+  const enemiesHitByBlackHole = getVal(
+    runData['Enemies Hit By Black Hole'] ??
+      runData.enemiesHitByBlackHole,
+  );
   const enemiesHitByOrbs = getVal(
     runData['Enemies Hit by Orbs'] ??
       runData.enemiesHitByOrbs,
@@ -399,6 +456,7 @@ export function generateCoverageDescription(runData: RunLike | null | undefined)
   const taggedByDeathWave = getVal(runData['Tagged by Death Wave'] ?? runData.taggedByDeathWave);
   const destroyedInSpotlight = getVal(runData['Destroyed in Spotlight'] ?? runData.destroyedInSpotlight);
   const destroyedInGoldenBot = getVal(runData['Destroyed in Golden Bot'] ?? runData.destroyedInGoldenBot);
+  const killsWithAmplifyBot = getVal(runData['Amplify Bot'] ?? runData.killsWithAmplifyBot);
   const summonedEnemies = getVal(
     runData['Summoned enemies'] ??
       runData.guardianSummonedEnemies,
@@ -418,11 +476,14 @@ export function generateCoverageDescription(runData: RunLike | null | undefined)
   };
 
   const metrics = [
+    { label: 'Golden Tower', value: toPct(killsWithGoldenTower), block: '🟨' },
+    { label: 'Black Hole', value: toPct(enemiesHitByBlackHole), block: '🟪' },
+    { label: 'Spotlight', value: toPct(destroyedInSpotlight), block: '⬜' },
+    { label: 'Death Wave', value: toPct(taggedByDeathWave), block: '🟥' },
     { label: 'Orbs', value: toPct(enemiesHitByOrbs), block: '🟪' },
-    { label: 'SL', value: toPct(destroyedInSpotlight), block: '⬜' },
-    { label: 'DW', value: toPct(taggedByDeathWave), block: '🟥' },
-    { label: 'GB', value: toPct(destroyedInGoldenBot), block: '🟨' },
-    { label: 'Summoned', value: toPct(summonedEnemies), block: '🟦' },
+    { label: 'Golden Bot', value: toPct(destroyedInGoldenBot), block: '🟨' },
+    { label: 'Amp Bot', value: toPct(killsWithAmplifyBot), block: '🟦' },
+    { label: 'Summoned', value: toPct(summonedEnemies), block: '🟪' },
   ].filter((metric): metric is { label: string; value: number; block: string } => typeof metric.value === 'number');
 
   if (!metrics.length) return '';

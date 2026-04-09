@@ -5,7 +5,7 @@ import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '.
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 
 export type ShareEmbedInput = {
-  user: { username: string; displayAvatarURL?: () => string | null };
+  user: { username: string; displayName?: string; displayAvatarURL?: () => string | null };
   run: Record<string, unknown>;
   runTypeCounts: Record<string, number>;
   options?: {
@@ -19,6 +19,7 @@ export type ShareEmbedInput = {
     includeTotalCoins?: boolean;
     includeTotalCells?: boolean;
     includeTotalDice?: boolean;
+    includeDeathDefy?: boolean;
     includeCoinsPerHour?: boolean;
     includeCellsPerHour?: boolean;
     includeDicePerHour?: boolean;
@@ -58,6 +59,7 @@ function buildDescription(run: Record<string, unknown>, options: NonNullable<Sha
   const totalCoins = firstAvailable(run, ['totalCoins', 'coins']) ?? '0';
   const totalCells = firstAvailable(run, ['totalCells', 'cells']) ?? '0';
   const totalDice = firstAvailable(run, ['totalDice', 'rerollShards', 'dice']) ?? '0';
+  const deathDefy = firstAvailable(run, ['deathDefy']) ?? '0';
 
   const parts: string[] = [];
   if (options.includeTier !== false) {
@@ -81,6 +83,9 @@ function buildDescription(run: Record<string, unknown>, options: NonNullable<Sha
   if (options.includeTotalDice !== false) {
     parts.push(`🎲 Total Dice: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalDice)))}**`);
   }
+  if (options.includeDeathDefy !== false) {
+    parts.push(`🍀 Death Defies: **${deathDefy}**`);
+  }
   if (!parts.length) {
     return 'No primary share elements are enabled. Use Share Settings to enable fields.';
   }
@@ -100,6 +105,7 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
   const includeTotalCoins = options?.includeTotalCoins !== false;
   const includeTotalCells = options?.includeTotalCells !== false;
   const includeTotalDice = options?.includeTotalDice !== false;
+  const includeDeathDefy = options?.includeDeathDefy !== false;
   const includeCoinsPerHour = options?.includeCoinsPerHour !== false;
   const includeCellsPerHour = options?.includeCellsPerHour !== false;
   const includeDicePerHour = options?.includeDicePerHour !== false;
@@ -115,7 +121,7 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
 
   const embed = new EmbedBuilder()
     .setAuthor({
-      name: replaceTokens(config.authorTemplate, { username: user.username }),
+      name: replaceTokens(config.authorTemplate, { username: user.displayName ?? user.username }),
       iconURL: user.displayAvatarURL?.() || undefined,
     })
     .setTitle(replaceTokens(config.titleTemplate, { runType: formattedType, typeCount: String(typeCount) }))
@@ -130,6 +136,7 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
       includeTotalCoins,
       includeTotalCells,
       includeTotalDice,
+      includeDeathDefy,
       includeCoinsPerHour,
       includeCellsPerHour,
       includeDicePerHour,
@@ -147,7 +154,7 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
     hourlyFields.push({ name: config.hourlyFieldLabels.dice, value: String(dicePerHour), inline: true });
   }
   if (hourlyFields.length) {
-    embed.addFields(...hourlyFields);
+    embed.addFields({ name: config.hourlySectionLabel, value: '\u200B', inline: false }, ...hourlyFields);
   }
 
   const noteText = firstAvailable(run, ['notes', 'note']);

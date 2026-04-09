@@ -70,6 +70,7 @@ const defaultSettings = (): TrackerSettings & { cloudSyncEnabled: boolean } => (
   shareTotalCoins: true,
   shareTotalCells: true,
   shareTotalDice: true,
+  shareDeathDefy: true,
   shareCoinsPerHour: true,
   shareCellsPerHour: true,
   shareDicePerHour: true,
@@ -485,6 +486,19 @@ export async function markQueueItemFailed(id: string, error: string) {
   cache!.queue[idx].nextRetryAt = Date.now() + computeExponentialBackoffMs({ attemptCount: cache!.queue[idx].retryCount });
   cache!.queue[idx].lastError = error;
   await persist();
+}
+
+export async function releaseQueuedItemsForImmediateRetry(userId: string) {
+  await ensureLoaded();
+  let changed = false;
+  for (const item of cache!.queue) {
+    if (item.userId !== userId) continue;
+    item.nextRetryAt = Date.now() - 1;
+    changed = true;
+  }
+  if (changed) {
+    await persist();
+  }
 }
 
 export async function removeQueueItem(id: string) {

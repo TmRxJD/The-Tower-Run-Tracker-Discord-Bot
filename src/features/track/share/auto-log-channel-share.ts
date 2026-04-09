@@ -1,6 +1,7 @@
 import type { MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
 import { getUserSettings } from '../tracker-api-client';
 import { logError } from '../handlers/error-handlers';
+import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from './share-embed';
 import { getAutoLogMessageRef, setAutoLogMessageRef } from './log-channel-state';
 
@@ -40,7 +41,7 @@ export async function autoShareToConfiguredLogChannel(params: {
   const includeDicePerHour = settings?.shareDicePerHour !== false;
 
   const embed = buildShareEmbed({
-    user: params.interaction.user,
+    user: buildEmbedUserFromInteraction(params.interaction),
     run: params.run,
     runTypeCounts: params.runTypeCounts,
     options: {

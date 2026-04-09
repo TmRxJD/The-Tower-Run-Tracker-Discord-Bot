@@ -19,6 +19,8 @@ jobs:
     runs-on: self-hosted
     if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     environment: production
+    env:
+      NODE_AUTH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout code
@@ -36,6 +38,7 @@ jobs:
           cache: pnpm
           registry-url: https://npm.pkg.github.com
           scope: '@tmrxjd'
+          always-auth: true
 
       - name: Resolve deployment metadata
         shell: pwsh
@@ -49,20 +52,15 @@ jobs:
 
       - name: Run preflight checks
         env:
-          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           CLIENT_ID: ${{ vars.CLIENT_ID }}
         run: pnpm run deploy:preflight
 
       - name: Update platform dependency
         if: github.event_name == 'repository_dispatch'
-        env:
-          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: pnpm run deploy:platform:update
 
       - name: Install dependencies
-        env:
-          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: pnpm run deploy:install
 
       - name: Validate local runtime env files

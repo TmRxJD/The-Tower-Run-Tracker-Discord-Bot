@@ -5,7 +5,7 @@ import { createSuccessButtons, createLoadingEmbed } from '../ui/tracker-ui';
 import { buildEditFieldPickerPayload } from '../ui/tracker-review-payloads';
 import { buildSubmissionResultEmbed } from '../ui/tracker-submission-embeds';
 import { handleError } from './error-handlers';
-import { buildSubmitPayload, sendRawParseMessage } from './review-data-helpers';
+import { buildSubmitPayload, resolveRawParseSourceData, sendRawParseMessage } from './review-data-helpers';
 import { asTrackReplyInteraction, ensureType, isTrackReviewFlowEnabled, resolveOwnedPendingInteraction, type ReviewInteraction, updateReviewMessage } from './review-interaction-helpers';
 import { applySubmittedReviewEditValues, buildCurrentReviewReplyPayload, buildReviewEditFieldModal, buildReviewNoteModal, buildTypeSelectionReviewReplyPayload, getSelectedReviewFields, getSelectedReviewValue, renderDataReviewOrSubmit, renderUpdatedReviewAfterNote, resolveUpdatedPendingOrReplyExpired, resolveUpdatedPendingOrUpdateReviewMessage } from './review-edit-modal-helpers';
 import { submitLifetimePendingRun } from './review-lifetime-submission';
@@ -77,7 +77,11 @@ export async function handleShowFullParse(interaction: ReviewInteraction) {
       await interaction.deferUpdate().catch(() => {});
     }
 
-    await sendRawParseMessage(asTrackReplyInteraction(interaction), pending.runData, 'Full Parse');
+    await sendRawParseMessage(
+      asTrackReplyInteraction(interaction),
+      resolveRawParseSourceData(pending.runData, pending.canonicalRunData ?? null),
+      'Full Parse',
+    );
   } catch (error) {
     await handleError({ client: interaction.client, user: interaction.user, error, context: 'show_full_parse' });
   }
@@ -190,6 +194,13 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
 
     const submitRunData = buildSubmitRunData(pending, payload.runData);
     const canonicalRunData = buildCanonicalRunData(pending, submitRunData);
+    const deferredScreenshotSource = pending.screenshot?.url
+      ? {
+          url: pending.screenshot.url,
+          filename: pending.screenshot?.name ?? 'screenshot.png',
+          contentType: pending.screenshot?.contentType ?? undefined,
+        }
+      : null;
 
     let syncResult: SubmissionSyncResult | null = null;
 
@@ -205,6 +216,7 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
           canonicalRunData,
           settings: undefined,
           skipLeaderboardRefresh: true,
+          deferCloudSync: true,
         });
       } else {
         syncResult = await logRun({
@@ -212,8 +224,9 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
           username,
           runData: duplicateLocalId ? { ...submitRunData, localId: duplicateLocalId } : submitRunData,
           canonicalRunData,
-          screenshot: null,
+          deferredScreenshotSource,
           skipLeaderboardRefresh: true,
+          deferCloudSync: true,
         });
       }
     } else {
@@ -222,8 +235,9 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
         username,
         runData: submitRunData,
         canonicalRunData,
-        screenshot: null,
+        deferredScreenshotSource,
         skipLeaderboardRefresh: true,
+        deferCloudSync: true,
       });
     }
 
@@ -255,6 +269,18 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
     });
 
     await interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: [] });
+
+    if (syncResult?.backgroundSync) {
+      void syncResult.backgroundSync
+        .then(async backgroundResult => {
+          if (backgroundResult.queuedForCloud && backgroundResult.cloudUnavailable) {
+            await interaction.editReply({ content: ui.messages.cloudUnavailable }).catch(() => {});
+          }
+        })
+        .catch(error => {
+          logger.warn('deferred tracker submission follow-up failed', error);
+        });
+    }
 
     await autoShareToConfiguredLogChannel({
       interaction,

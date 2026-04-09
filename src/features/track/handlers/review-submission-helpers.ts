@@ -5,8 +5,10 @@ export type SubmissionSyncResult = {
   queuedForCloud?: boolean;
   cloudUnavailable?: boolean;
   localImageCapacityReached?: boolean;
+  cloudSyncDeferred?: boolean;
   runId?: string | null;
   localId?: string | null;
+  backgroundSync?: Promise<Pick<SubmissionSyncResult, 'queuedForCloud' | 'cloudUnavailable'>>;
 };
 
 export type LocalRunSummary = {

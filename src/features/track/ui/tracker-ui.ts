@@ -5,6 +5,16 @@ import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { trimDisplayTimeSeconds } from '../handlers/upload-helpers';
 import { getTrackUiConfig, getTrackerUiConfig, type TrackerUiMode } from '../../../config/tracker-ui-config';
 
+function firstPresentValue(data: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = data[key];
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text && text !== 'N/A') return text;
+  }
+  return null;
+}
+
 function toButtonStyle(style: string): ButtonStyle {
   switch (style) {
     case 'Primary': return ButtonStyle.Primary;
@@ -76,6 +86,10 @@ export function createDataReviewEmbed(
   const durationVal = viewData.roundDuration ?? viewData.duration;
   const dateVal = viewData.date ?? viewData.runDate ?? '';
   const timeVal = trimDisplayTimeSeconds(viewData.time ?? viewData.runTime ?? '');
+  const reviewDescriptionLines = [
+    isDuplicate ? review.duplicateDescription : review.normalDescription,
+  ];
+  embed.setDescription(reviewDescriptionLines.join('\n'));
 
   for (const key of standardOrder) {
     if (key === 'dateTime') {
@@ -173,14 +187,16 @@ export function createSuccessButtons() {
 
 export function createInitialEmbed(params: {
   mode?: TrackerUiMode;
-  userId: string;
+  userLabel: string;
+  userId?: string;
   lastRun?: Record<string, unknown> | null;
   runCount?: number;
   runTypeCounts?: Record<string, number>;
 }) {
   const ui = getTrackerUiConfig(params.mode ?? 'track');
   const menu = ui.initialMenu;
-  const { userId, lastRun, runCount = 0, runTypeCounts = {} } = params;
+  const { userLabel, userId, lastRun, runCount = 0, runTypeCounts = {} } = params;
+  const mentionUserId = typeof userId === 'string' && userId.trim() ? userId.trim() : userLabel;
   const embed = new EmbedBuilder()
     .setTitle(menu.title)
     .setURL(menu.url)
@@ -189,7 +205,7 @@ export function createInitialEmbed(params: {
 
   if (lastRun) {
     const totalRuns = Math.max(1, Number(runCount) || 0);
-    embed.setDescription(menu.welcomeBackTemplate.replace('{userId}', userId).replace('{totalRuns}', String(totalRuns)));
+    embed.setDescription(menu.welcomeBackTemplate.replace('{userId}', mentionUserId).replace('{totalRuns}', String(totalRuns)));
 
     if ((params.mode ?? 'track') === 'lifetime') {
       const lastRunFieldLabels = menu.lastRunFieldLabels as Record<string, string>;
@@ -225,6 +241,7 @@ export function createInitialEmbed(params: {
     const coinsValue = String(lastRun.coins || lastRun.totalCoins || 'N/A');
     const cellsValue = String(lastRun.cells || lastRun.totalCells || 'N/A');
     const diceValue = String(lastRun.rerollShards || lastRun.totalDice || 'N/A');
+    const deathDefyValue = String(lastRun.deathDefy || 'N/A');
     const dateValue = `${lastRun.date || lastRun.runDate || 'Unknown'} ${trimDisplayTimeSeconds(lastRun.time || lastRun.runTime || '')}`.trim();
 
     const coinsPerHour = calculateHourlyRate(coinsValue, durationValue) || 'N/A';
@@ -242,8 +259,8 @@ export function createInitialEmbed(params: {
       coinsPerHour,
       cellsPerHour,
       dicePerHour,
-      runType: runType.charAt(0).toUpperCase() + runType.slice(1),
-      runNumber: `${typeCount}`,
+      deathDefy: deathDefyValue,
+      runSummary: `${runType.charAt(0).toUpperCase() + runType.slice(1)} #${typeCount}`,
       dateTime: dateValue,
     };
 
@@ -269,7 +286,7 @@ export function createInitialEmbed(params: {
 
     embed.addFields({ name: '\u200B', value: menu.availableOptionsHeader });
   } else {
-    embed.setDescription(menu.welcomeNewTemplate.replace('{userId}', userId));
+    embed.setDescription(menu.welcomeNewTemplate.replace('{userId}', mentionUserId));
     embed.setThumbnail(menu.thumbnail);
   }
 

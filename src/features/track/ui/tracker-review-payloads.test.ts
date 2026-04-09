@@ -50,4 +50,28 @@ describe('tracker-review-payloads', () => {
     expect(values.filter(value => value === '16.80K')).toHaveLength(1);
     expect(values).not.toContain('420');
   });
+
+  it('does not duplicate dice or death defies in the review description', () => {
+    const embed = createDataReviewEmbed({
+      totalDice: '50.33K',
+      deathDefy: '0',
+      tier: '18',
+      wave: '4970',
+      duration: '3h48m47s',
+      totalCoins: '1.30Q',
+      totalCells: '550.81K',
+      killedBy: 'Apathy',
+      date: '2026-04-06',
+      time: '11:03:00',
+      type: 'Farming',
+    });
+
+    const description = embed.data.description ?? '';
+    const fields = embed.data.fields ?? [];
+
+    expect(description).not.toContain('Total Dice');
+    expect(description).not.toContain('Death Defies');
+    expect(fields.some(field => String(field.name).includes('Dice') && String(field.value) === '50.33K')).toBe(true);
+    expect(fields.some(field => String(field.name).includes('Death Defies') && String(field.value) === '0')).toBe(true);
+  });
 });

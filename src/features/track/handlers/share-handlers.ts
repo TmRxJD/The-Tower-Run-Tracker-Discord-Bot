@@ -1,6 +1,7 @@
 import { logError } from './error-handlers';
 import { getLastRun, getLocalLifetimeData, getUserSettings } from '../tracker-api-client';
 import { buildShareEmbed } from '../share/share-embed';
+import { buildEmbedUserFromInteraction, resolveInteractionDisplayName } from '../discord-display-name';
 import { getShareableRun, setShareableRun } from '../share/share-state';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
@@ -92,6 +93,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     const includeTotalCoins = settings?.shareTotalCoins !== false;
     const includeTotalCells = settings?.shareTotalCells !== false;
     const includeTotalDice = settings?.shareTotalDice !== false;
+    const includeDeathDefy = settings?.shareDeathDefy !== false;
     const includeCoinsPerHour = settings?.shareCoinsPerHour !== false;
     const includeCellsPerHour = settings?.shareCellsPerHour !== false;
     const includeDicePerHour = settings?.shareDicePerHour !== false;
@@ -107,7 +109,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       }
 
       embed = new EmbedBuilder()
-        .setAuthor({ name: shareUiConfig.authorTemplate.replace('{username}', interaction.user.username) })
+        .setAuthor({ name: shareUiConfig.authorTemplate.replace('{username}', resolveInteractionDisplayName(interaction)) })
         .setTitle(shareUiConfig.titleTemplate.replace('{typeCount}', String(Math.max(1, sorted.length))))
         .setURL(shareUiConfig.url)
         .setColor(Colors.Blue)
@@ -143,7 +145,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       }
 
       embed = buildShareEmbed({
-        user: interaction.user,
+        user: buildEmbedUserFromInteraction(interaction),
         run,
         runTypeCounts,
         options: {
@@ -154,6 +156,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           includeTotalCoins,
           includeTotalCells,
           includeTotalDice,
+          includeDeathDefy,
           includeCoinsPerHour,
           includeCellsPerHour,
           includeDicePerHour,

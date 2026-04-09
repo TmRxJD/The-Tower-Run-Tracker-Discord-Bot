@@ -24,7 +24,7 @@
 			"command": "pwsh",
 			"args": [
 				"-Command",
-				"$env:GITHUB_PACKAGES_TOKEN='placeholder'; pnpm eslint src/services/idb.ts src/persistence/appwrite-client.ts src/bot.ts --no-cache; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm type-check"
+				"pnpm eslint src/services/idb.ts src/persistence/appwrite-client.ts src/bot.ts --no-cache; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm type-check"
 			],
 			"isBackground": false,
 			"group": "build"
@@ -35,7 +35,7 @@
 			"command": "cmd",
 			"args": [
 				"/c",
-				"set GITHUB_PACKAGES_TOKEN=placeholder&& pnpm eslint src/services/idb.ts src/persistence/appwrite-client.ts src/bot.ts --no-cache && pnpm type-check"
+				"pnpm eslint src/services/idb.ts src/persistence/appwrite-client.ts src/bot.ts --no-cache && pnpm type-check"
 			],
 			"isBackground": false,
 			"group": "build"
@@ -46,7 +46,7 @@
 			"command": "cmd",
 			"args": [
 				"/c",
-				"set GITHUB_PACKAGES_TOKEN=placeholder&& pnpm eslint src/services/idb.ts src/persistence/guilds-repo.ts src/persistence/users-repo.ts src/persistence/analytics-repo.ts src/persistence/index.ts --no-cache && pnpm type-check"
+				"pnpm eslint src/services/idb.ts src/persistence/guilds-repo.ts src/persistence/users-repo.ts src/persistence/analytics-repo.ts src/persistence/index.ts --no-cache && pnpm type-check"
 			],
 			"isBackground": false,
 			"group": "build"
@@ -57,7 +57,7 @@
 			"command": "cmd",
 			"args": [
 				"/c",
-				"set GITHUB_PACKAGES_TOKEN=placeholder&& pnpm eslint src/services/idb.ts src/persistence/guilds-repo.ts src/persistence/users-repo.ts src/persistence/analytics-repo.ts src/persistence/index.ts --no-cache && pnpm type-check"
+				"pnpm eslint src/services/idb.ts src/persistence/guilds-repo.ts src/persistence/users-repo.ts src/persistence/analytics-repo.ts src/persistence/index.ts --no-cache && pnpm type-check"
 			],
 			"isBackground": false,
 			"group": "build"
@@ -82,9 +82,42 @@
 			"command": "cmd",
 			"args": [
 				"/c",
-				"set GITHUB_PACKAGES_TOKEN=placeholder&& pnpm eslint src/features/track/types.ts src/features/track/local-run-store.ts src/features/track/tracker-api-client.ts src/persistence/users-repo.ts --no-cache"
+				"pnpm eslint src/features/track/types.ts src/features/track/local-run-store.ts src/features/track/tracker-api-client.ts src/persistence/users-repo.ts --no-cache"
 			],
 			"isBackground": false
+		},
+		{
+			"label": "trackerbot-queue-fix-validate",
+			"type": "shell",
+			"command": "pwsh",
+			"args": [
+				"-Command",
+				"pnpm eslint src/features/track/tracker-api-client.ts src/features/track/tracker-api-client.settings-sync.test.ts --no-cache; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm vitest run src/features/track/tracker-api-client.settings-sync.test.ts; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm type-check"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-queue-fix-validate-rerun",
+			"type": "shell",
+			"command": "pwsh",
+			"args": [
+				"-Command",
+				"pnpm eslint src/features/track/tracker-api-client.ts src/features/track/tracker-api-client.settings-sync.test.ts --no-cache; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm vitest run src/features/track/tracker-api-client.settings-sync.test.ts; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm type-check"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-queue-fix-validate-final",
+			"type": "shell",
+			"command": "pwsh",
+			"args": [
+				"-Command",
+				"pnpm eslint src/features/track/tracker-api-client.ts src/features/track/tracker-api-client.settings-sync.test.ts --no-cache; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm vitest run src/features/track/tracker-api-client.settings-sync.test.ts; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm type-check"
+			],
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }

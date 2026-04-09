@@ -1,33 +1,54 @@
-import { ID, Query } from 'node-appwrite';
+import { ID, Permission, Query, Role } from 'node-appwrite';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import {
+  buildTrackerLeaderboardRankedMetricRows,
   buildTrackerLeaderboardPayload,
   buildTrackerLeaderboardCloudDocument,
+  buildTrackerLifetimeCloudWritePayload,
   buildTrackerRunCloudWritePayload,
   buildTrackerRunIdentityKey,
+  buildTrackerRunLookupUserIds,
+  buildTrackerRunOwnerUserId,
+  buildTrackerRunPermissionUserIds,
+  createOrUpdateCloudDocumentWithFallback,
   collectTrackerRunScalarFields,
   createOrUpdateCloudDocument,
   deleteCloudDocumentIfExists,
   estimateTrackerRunTimestamp,
+  extractOcrTextLines,
+  extractTrackerLeaderboardCompatibilityCandidates,
   extractTrackerRunCoverageData,
-  sanitizeTrackerLeaderboardDocumentId,
   hasMaterialTrackerRunEntryChange,
   hydrateTrackerCloudRun,
   hydrateTrackerRunEntryFromDocument,
   listCloudDocumentsByUserIds,
   listFirstCloudDocument,
+  normalizeTrackerLeaderboardCompatibilityCandidate,
+  normalizeTrackerLifetimeDate,
+  normalizeTrackerLifetimeEntryValues,
+  parseTrackerLeaderboardBooleanLike,
+  parseTrackerLeaderboardCompatibilityBlob,
   normalizeTrackerRunMetricValue,
   normalizeTrackerRunTextValue,
   normalizeTrackerRunType,
   parseTrackerLifetimeCloudWrite,
+  parseDiscordToAppwriteMapFromEnv,
   pickTrackerRunField,
   compareTrackerVerificationSnapshots,
   createTrackerVerificationSnapshot,
+  isTrackerAppwriteUserId,
+  isTrackerCloudAddressableUserId,
+  isTrackerDiscordSnowflake,
+  resolveCanonicalAppwriteUserId,
+  sanitizeTrackerRunCloudPayload,
+  sanitizeTrackerLeaderboardDocumentId,
   stripUndefinedFields,
+  trackerLeaderboardCanonicalMetrics,
   trackerRunsShareDuplicateIdentity,
   trackerLifetimeCloudDocumentSchema,
   trackerRunCloudDocumentSchema,
+  upsertTrackerLeaderboardBestEntry,
 } from '@tmrxjd/platform/tools';
 import { getAppConfig } from '../../config';
 import { logger } from '../../core/logger';
@@ -36,6 +57,7 @@ import { isUnauthorizedAppwriteError } from '../../persistence/appwrite-error-ut
 import { formatDateToISO, formatTimeTo24h, normalizeDecimalSeparators } from './tracker-helpers';
 import {
   extractTrackerImageText,
+  getDocumentOrNull,
   preprocessTrackerImageForOcr,
 } from '@tmrxjd/platform/node';
 import {
@@ -55,11 +77,14 @@ import {
   getLocalLifetime,
   getLocalRuns,
   getLocalSettings,
+  getLocalSettingsRecord,
   getQueueItems,
   markQueueItemFailed,
   mergeCloudRuns,
   queueCloudDelete,
+  queueCloudSettings,
   queueCloudUpsert,
+  releaseQueuedItemsForImmediateRetry,
   removeLocalRun,
   removeQueueItem,
   upsertLocalRun,
@@ -70,6 +95,7 @@ import { getTrackerKv, setTrackerKv } from '../../services/idb';
 import { runDirectVisionOcr } from './vision-ocr-client';
 
 type RunRecord = Record<string, unknown>;
+
 type TrackerRun = RunRecord & {
   runId?: string;
   type?: string;
@@ -108,29 +134,62 @@ type MigrationOptions = {
   onProgress?: (progress: MigrationProgress) => Promise<void> | void;
 };
 
-const DISCORD_SNOWFLAKE_REGEX = /^\d{16,20}$/;
+type CloudTrackerSettings = TrackerSettings & {
+  updatedAt?: string;
+};
+
+type CloudLeaderboardEntry = {
+  metric: typeof trackerLeaderboardCanonicalMetrics[number];
+  tier: string;
+  username: string;
+  userId: string;
+  value: string;
+  numericValue: number;
+  banned: boolean;
+  runId: string | null;
+  sourceType: string;
+  sourceId: string | null;
+  guildId: string | null;
+  verified: boolean;
+};
+
 const MAX_QUEUE_RETRY_COUNT = 8;
+const DISCORD_TO_APPWRITE_MAP = parseDiscordToAppwriteMapFromEnv(process.env);
 
 type GetLastRunOptions = {
   cloudSyncMode?: 'full' | 'latest' | 'none';
 };
 
-function isCanonicalAppwriteUserId(userId: string): boolean {
+function getRunCloudIdentity(userId: string): {
+  ownerUserId: string;
+  lookupUserIds: string[];
+  permissionUserIds: string[];
+} {
   const normalized = userId.trim();
-  if (!normalized) return false;
-  if (DISCORD_SNOWFLAKE_REGEX.test(normalized)) return false;
-  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(normalized);
-}
+  const canonicalCandidate = resolveCanonicalAppwriteUserId(normalized, DISCORD_TO_APPWRITE_MAP);
+  const mappedAppwriteUserId = canonicalCandidate && isTrackerAppwriteUserId(canonicalCandidate)
+    ? canonicalCandidate
+    : null;
+  const ownerUserId = buildTrackerRunOwnerUserId({
+    discordUserId: isTrackerDiscordSnowflake(normalized) ? normalized : null,
+    appwriteUserId: isTrackerAppwriteUserId(normalized) ? normalized : mappedAppwriteUserId,
+  }) ?? normalized;
 
-function isCloudAddressableUserId(userId: string): boolean {
-  const normalized = userId.trim();
-  if (!normalized) return false;
-  if (DISCORD_SNOWFLAKE_REGEX.test(normalized)) return true;
-  return isCanonicalAppwriteUserId(normalized);
+  return {
+    ownerUserId,
+    lookupUserIds: buildTrackerRunLookupUserIds({
+      ownerUserId,
+      appwriteUserId: mappedAppwriteUserId,
+      extraUserIds: [normalized],
+    }),
+    permissionUserIds: buildTrackerRunPermissionUserIds({
+      appwriteUserId: mappedAppwriteUserId,
+    }),
+  };
 }
 
 function canUseCloudForUserId(userId: string, operation: string): boolean {
-  if (isCloudAddressableUserId(userId)) return true;
+  if (isTrackerCloudAddressableUserId(userId)) return true;
   logger.warn(`Skipping cloud ${operation}: missing cloud-addressable user ID`, { userId });
   return false;
 }
@@ -151,49 +210,6 @@ type ParsedOcrResult = {
   text: string[];
   runData: Record<string, unknown>;
 };
-
-function extractOcrTextLines(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value
-      .flatMap(item => extractOcrTextLines(item))
-      .map(line => line.trim())
-      .filter(Boolean);
-  }
-
-  if (typeof value === 'string') {
-    return value
-      .replace(/\r/g, '\n')
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean);
-  }
-
-  if (!value || typeof value !== 'object') {
-    return [];
-  }
-
-  const record = value as Record<string, unknown>;
-  if (typeof record.text === 'string' || Array.isArray(record.text)) {
-    return extractOcrTextLines(record.text);
-  }
-  if (typeof record.lines === 'string' || Array.isArray(record.lines)) {
-    return extractOcrTextLines(record.lines);
-  }
-  if (typeof record.ocrText === 'string' || Array.isArray(record.ocrText)) {
-    return extractOcrTextLines(record.ocrText);
-  }
-  if (typeof record.rawText === 'string' || Array.isArray(record.rawText)) {
-    return extractOcrTextLines(record.rawText);
-  }
-  if (record.payload && typeof record.payload === 'object') {
-    return extractOcrTextLines(record.payload);
-  }
-  if (record.result && typeof record.result === 'object') {
-    return extractOcrTextLines(record.result);
-  }
-
-  return [];
-}
 
 function buildRunDataFromFormattedOcr(formatted: Record<string, unknown>): Record<string, unknown> {
   const roundDuration = String(formatted.roundDuration ?? formatted.duration ?? '');
@@ -361,6 +377,7 @@ function normalizeShareSettingsPatch(settings: Record<string, unknown>): Record<
     shareTotalCoins: settings.shareTotalCoins ?? true,
     shareTotalCells: settings.shareTotalCells ?? true,
     shareTotalDice: settings.shareTotalDice ?? true,
+    shareDeathDefy: settings.shareDeathDefy ?? true,
     shareCoinsPerHour: settings.shareCoinsPerHour ?? true,
     shareCellsPerHour: settings.shareCellsPerHour ?? true,
     shareDicePerHour: settings.shareDicePerHour ?? true,
@@ -387,6 +404,7 @@ function normalizeShareSettingsDefaults<T extends TrackerSettings & { cloudSyncE
     shareTotalCoins: settings.shareTotalCoins ?? true,
     shareTotalCells: settings.shareTotalCells ?? true,
     shareTotalDice: settings.shareTotalDice ?? true,
+    shareDeathDefy: settings.shareDeathDefy ?? true,
     shareCoinsPerHour: settings.shareCoinsPerHour ?? true,
     shareCellsPerHour: settings.shareCellsPerHour ?? true,
     shareDicePerHour: settings.shareDicePerHour ?? true,
@@ -399,12 +417,13 @@ function normalizeShareSettingsDefaults<T extends TrackerSettings & { cloudSyncE
 async function listRunDocumentsForHydration(userId: string): Promise<RunRecord[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
+  const { lookupUserIds } = getRunCloudIdentity(userId);
 
   return await listCloudDocumentsByUserIds({
     databases,
     databaseId: runsDatabaseId,
     collectionId: runsCollectionId,
-    userIds: [userId],
+    userIds: lookupUserIds,
     schema: trackerRunCloudDocumentSchema,
     pageSize: RUN_DOCUMENTS_PAGE_SIZE,
     buildQueries: (candidateUserId, cursorAfter, pageSize) => [
@@ -510,25 +529,26 @@ export async function ensureRunDocumentsHydratedForUser(userId: string, options?
 }
 
 function toRunDocumentPayload(params: {
-  userId: string;
+  ownerUserId: string;
   username: string;
   run: RunRecord;
 }): Record<string, unknown> {
-  return buildTrackerRunCloudWritePayload({
-    userId: params.userId,
+  return sanitizeTrackerRunCloudPayload(buildTrackerRunCloudWritePayload({
+    userId: params.ownerUserId,
     username: String(params.run.username ?? params.username ?? 'unknown'),
     runData: params.run,
-  });
+  }));
 }
 
 async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
+  const { lookupUserIds } = getRunCloudIdentity(userId);
   return await listCloudDocumentsByUserIds({
     databases,
     databaseId: runsDatabaseId,
     collectionId: runsCollectionId,
-    userIds: [userId],
+    userIds: lookupUserIds,
     schema: trackerRunCloudDocumentSchema,
     pageSize: 100,
     buildQueries: (candidateUserId, cursorAfter, pageSize) => {
@@ -565,6 +585,7 @@ async function writeRunDocument(params: {
 }): Promise<{ runId: string; screenshotUrl: string | null }> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
+  const { ownerUserId, permissionUserIds } = getRunCloudIdentity(params.userId);
 
   const resolvedRunId = pickString(params.run.runId)
     ?? pickString(params.run.id)
@@ -574,19 +595,50 @@ async function writeRunDocument(params: {
     ?? ID.unique();
 
   const payload = toRunDocumentPayload({
-    userId: params.userId,
+    ownerUserId,
     username: params.username,
     run: params.run,
   });
+  const permissions = permissionUserIds.flatMap(userId => ([
+    Permission.read(Role.user(userId)),
+    Permission.update(Role.user(userId)),
+    Permission.delete(Role.user(userId)),
+  ]));
 
   const documentId = pickString(params.existingDoc?.$id) ?? pickString(params.existingDoc?.id) ?? resolvedRunId;
-  await createOrUpdateCloudDocument({
-    databases,
-    databaseId: runsDatabaseId,
-    collectionId: runsCollectionId,
-    documentId,
-    data: payload,
-  });
+  const writePayload: Record<string, unknown> = { ...payload };
+  const strippedUnsupportedFields: string[] = [];
+
+  for (;;) {
+    try {
+      await createOrUpdateCloudDocument({
+        databases,
+        databaseId: runsDatabaseId,
+        collectionId: runsCollectionId,
+        documentId,
+        data: writePayload,
+        ...(permissions.length ? { permissions } : {}),
+      });
+      break;
+    } catch (error) {
+      const unsupportedAttribute = getUnsupportedAttributeFromInvalidStructureError(error);
+      if (!unsupportedAttribute || !(unsupportedAttribute in writePayload)) {
+        throw error;
+      }
+
+      delete writePayload[unsupportedAttribute];
+      strippedUnsupportedFields.push(unsupportedAttribute);
+    }
+  }
+
+  if (strippedUnsupportedFields.length > 0) {
+    logger.warn('run write stripped unsupported Appwrite attributes', {
+      userId: params.userId,
+      documentId,
+      strippedUnsupportedFields,
+    });
+  }
+
   return { runId: documentId, screenshotUrl: pickString(payload.screenshotUrl) ?? null };
 }
 
@@ -719,6 +771,78 @@ async function cleanupQueuedScreenshot(screenshot: { tempPath: string } | null |
   await fs.unlink(screenshot.tempPath).catch(() => {});
 }
 
+async function loadDeferredScreenshotPayload(source: {
+  url: string;
+  filename?: string | null;
+  contentType?: string | null;
+} | null | undefined): Promise<AttachmentPayload | null> {
+  const screenshotUrl = typeof source?.url === 'string' ? source.url.trim() : '';
+  if (!screenshotUrl) return null;
+
+  try {
+    const response = await fetch(screenshotUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch deferred screenshot: ${response.status}`);
+    }
+
+    return {
+      data: Buffer.from(await response.arrayBuffer()),
+      filename: source?.filename ?? 'screenshot.png',
+      contentType: source?.contentType ?? response.headers.get('content-type') ?? 'application/octet-stream',
+    };
+  } catch (error) {
+    logger.warn('deferred tracker screenshot fetch failed; continuing without binary attachment', error);
+    return null;
+  }
+}
+
+async function startDeferredRunCloudSync(params: {
+  userId: string;
+  username: string;
+  runData: RunRecord;
+  canonicalRunData?: RunRecord | null;
+  screenshot?: AttachmentPayload | null;
+  deferredScreenshotSource?: { url: string; filename?: string | null; contentType?: string | null } | null;
+}): Promise<{ queuedForCloud: boolean; cloudUnavailable: boolean }> {
+  const targetLocalId = pickString(params.runData.localId);
+  const targetRunId = pickString(params.runData.runId) ?? pickString(params.runData.id);
+
+  try {
+    const screenshotPayload = params.screenshot ?? await loadDeferredScreenshotPayload(params.deferredScreenshotSource ?? null);
+    const queuedScreenshot = await storeQueuedScreenshot(params.userId, screenshotPayload);
+
+    await queueCloudUpsert({
+      userId: params.userId,
+      username: params.username,
+      runData: params.runData,
+      canonicalRunData: params.canonicalRunData ?? undefined,
+      screenshot: queuedScreenshot,
+      localId: targetLocalId ?? undefined,
+    });
+
+    await syncQueuedRuns(params.userId);
+
+    const remainingQueueItems = await getQueueItems(params.userId);
+    const stillQueued = remainingQueueItems.some(item => {
+      if (item.op !== 'upsert') return false;
+      if (targetLocalId && item.localId === targetLocalId) return true;
+      if (targetRunId && item.runId === targetRunId) return true;
+      return false;
+    });
+
+    return {
+      queuedForCloud: stillQueued,
+      cloudUnavailable: stillQueued,
+    };
+  } catch (error) {
+    logger.warn('deferred tracker run sync failed before queue replay could complete', error);
+    return {
+      queuedForCloud: true,
+      cloudUnavailable: true,
+    };
+  }
+}
+
 async function storeOfflineScreenshotForUser(userId: string, screenshot: AttachmentPayload | null | undefined) {
   if (!screenshot) return { localPath: null as string | null, capacityReached: false };
 
@@ -781,51 +905,6 @@ async function cloudGetLifetime(userId: string): Promise<LifetimeProgress | null
   return { entries: allEntries };
 }
 
-function normalizeLifetimeDate(value: unknown) {
-  const parsed = new Date(String(value ?? '')).getTime();
-  if (Number.isFinite(parsed) && parsed > 0) {
-    return new Date(parsed).toISOString().split('T')[0];
-  }
-  return new Date().toISOString().split('T')[0];
-}
-
-const LIFETIME_NUMERIC_FIELDS = [
-  'coinsEarned',
-  'recentCoinsPerHour',
-  'cashEarned',
-  'stonesEarned',
-  'keysEarned',
-  'cellsEarned',
-  'rerollShardsEarned',
-  'damageDealt',
-  'enemiesDestroyed',
-  'wavesCompleted',
-  'upgradesBought',
-  'workshopUpgrades',
-  'workshopCoinsSpent',
-  'researchCompleted',
-  'labCoinsSpent',
-  'freeUpgrades',
-  'interestEarned',
-  'orbKills',
-  'deathRayKills',
-  'thornDamage',
-  'wavesSkipped',
-] as const;
-
-function normalizeLifetimeEntryValues(entry: Record<string, unknown>) {
-  const normalized: Record<string, unknown> = { ...entry };
-  for (const field of LIFETIME_NUMERIC_FIELDS) {
-    const value = normalized[field];
-    if (value === undefined || value === null) {
-      normalized[field] = '0';
-      continue;
-    }
-    normalized[field] = standardizeNotation(String(value).replace(',', '.'));
-  }
-  return normalized;
-}
-
 function sortLifetimeEntries(entries: Array<Record<string, unknown>>) {
   return sortLifetimeEntriesByTimestamp(entries);
 }
@@ -833,40 +912,6 @@ function sortLifetimeEntries(entries: Array<Record<string, unknown>>) {
 function mergeLifetimeEntries(localEntries: Array<Record<string, unknown>>, cloudEntries: Array<Record<string, unknown>>) {
   return mergeLifetimeEntriesDelta(localEntries, cloudEntries, estimateLifetimeEntryTimestamp, sortLifetimeEntries);
 }
-
-const LIFETIME_REQUIRED_KEYS = [
-  'coinsEarned',
-  'cashEarned',
-  'stonesEarned',
-  'keysEarned',
-  'damageDealt',
-  'enemiesDestroyed',
-  'wavesCompleted',
-  'upgradesBought',
-  'workshopUpgrades',
-  'workshopCoinsSpent',
-  'researchCompleted',
-  'labCoinsSpent',
-  'freeUpgrades',
-  'interestEarned',
-  'orbKills',
-  'deathRayKills',
-  'thornDamage',
-  'wavesSkipped',
-  'userId',
-  'date',
-  'gameStarted',
-] as const;
-
-const LIFETIME_OPTIONAL_KEYS = [
-  'username',
-  'screenshotUrl',
-  'verified',
-  'blocked',
-  'recentCoinsPerHour',
-  'cellsEarned',
-  'rerollShardsEarned',
-] as const;
 
 function isInvalidStructureError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -876,6 +921,13 @@ function isInvalidStructureError(error: unknown): boolean {
   return typed.code === 400 && (type.includes('document_invalid_structure') || message.includes('invalid structure'));
 }
 
+function getUnsupportedAttributeFromInvalidStructureError(error: unknown): string | null {
+  if (!isInvalidStructureError(error)) return null;
+  const message = String((error as { message?: unknown }).message ?? '');
+  const match = message.match(/unknown attribute:\s*"([^"]+)"/i);
+  return match?.[1]?.trim() || null;
+}
+
 function buildLifetimeDocumentPayload(
   entry: Record<string, unknown>,
   userId: string,
@@ -883,32 +935,11 @@ function buildLifetimeDocumentPayload(
   existing: Record<string, unknown> | null,
   strictMinimal = false,
 ): Record<string, unknown> {
-  const normalized: Record<string, unknown> = {
-    ...entry,
-    userId,
-    username,
-    blocked: Boolean(entry.blocked),
-  };
-
-  const payload: Record<string, unknown> = {};
-  for (const key of LIFETIME_REQUIRED_KEYS) {
-    payload[key] = String(normalized[key] ?? '');
-  }
-
-  const extraKeys = strictMinimal
-    ? []
-    : Array.from(new Set<string>([
-      ...LIFETIME_OPTIONAL_KEYS,
-      ...Object.keys(existing ?? {}).filter(key => !key.startsWith('$')),
-    ]));
-
-  for (const key of extraKeys) {
-    if (LIFETIME_REQUIRED_KEYS.includes(key as (typeof LIFETIME_REQUIRED_KEYS)[number])) continue;
-    const value = normalized[key] ?? existing?.[key];
-    if (value !== undefined) payload[key] = value;
-  }
-
-  return parseTrackerLifetimeCloudWrite(payload);
+  return buildTrackerLifetimeCloudWritePayload(entry, userId, username, {
+    existing,
+    strictMinimal,
+    normalizeNumericValue: value => standardizeNotation(value.replace(',', '.')),
+  });
 }
 
 async function upsertLifetimeDocument(params: {
@@ -951,7 +982,7 @@ export async function saveLifetimeEntry(params: {
   entryId?: string;
   screenshotUrl?: string | null;
 }) {
-  const baseDate = normalizeLifetimeDate(params.entryData.date);
+  const baseDate = normalizeTrackerLifetimeDate(params.entryData.date);
   const entryId = pickString(params.entryId)
     ?? pickString(params.entryData.id)
     ?? pickString(params.entryData.$id)
@@ -967,7 +998,9 @@ export async function saveLifetimeEntry(params: {
     date: baseDate,
   };
 
-  const normalizedEntry = normalizeLifetimeEntryValues(nextEntry);
+  const normalizedEntry = normalizeTrackerLifetimeEntryValues(nextEntry, {
+    normalizeNumericValue: value => standardizeNotation(value.replace(',', '.')),
+  });
 
   if (params.screenshotUrl) {
     normalizedEntry.screenshotUrl = params.screenshotUrl;
@@ -1340,12 +1373,19 @@ async function hydrateLatestRunFromCloud(userId: string): Promise<boolean> {
   }
 }
 
-async function cloudGetSettings(userId: string): Promise<TrackerSettings | null> {
+async function cloudGetSettings(userId: string): Promise<CloudTrackerSettings | null> {
   const { settingsDatabaseId, settingsCollectionId } = appwriteIds();
+  const databases = createAppwriteClient().databases;
 
   try {
-    const doc = await listFirstCloudDocument<Record<string, unknown>>({
-      databases: createAppwriteClient().databases,
+    const directDocument = await getDocumentOrNull<Record<string, unknown>>(
+      databases,
+      settingsDatabaseId,
+      settingsCollectionId,
+      userId,
+    );
+    const doc = directDocument ?? await listFirstCloudDocument<Record<string, unknown>>({
+      databases,
       databaseId: settingsDatabaseId,
       collectionId: settingsCollectionId,
       queries: [
@@ -1368,6 +1408,7 @@ async function cloudGetSettings(userId: string): Promise<TrackerSettings | null>
       blockedUsers: typeof doc.blockedUsers === 'string' ? doc.blockedUsers : undefined,
       reactionNotificationsEnabled: typeof doc.reactionNotificationsEnabled === 'boolean' ? doc.reactionNotificationsEnabled : undefined,
       replyNotificationsEnabled: typeof doc.replyNotificationsEnabled === 'boolean' ? doc.replyNotificationsEnabled : undefined,
+      updatedAt: pickString(doc.updatedAt) ?? pickString(doc.$updatedAt),
     };
   } catch (error) {
     const maybeError = error as { code?: number };
@@ -1381,6 +1422,25 @@ async function cloudEditSettings(userId: string, settings: Record<string, unknow
 
   const payload = stripUndefinedFields({
     defaultTracker: 'Web',
+    defaultRunType: settings.defaultRunType,
+    scanLanguage: settings.scanLanguage,
+    timezone: settings.timezone,
+    decimalPreference: settings.decimalPreference,
+    autoDetectDuplicates: settings.autoDetectDuplicates,
+    confirmBeforeSubmit: settings.confirmBeforeSubmit,
+    shareNotes: settings.shareNotes,
+    leaderboard: settings.leaderboard,
+    messagingEnabled: settings.messagingEnabled,
+    blockedUsers: settings.blockedUsers,
+    reactionNotificationsEnabled: settings.reactionNotificationsEnabled,
+    replyNotificationsEnabled: settings.replyNotificationsEnabled,
+    updatedAt: Number.isFinite(Number(settings.updatedAt))
+      ? new Date(Number(settings.updatedAt)).toISOString()
+      : pickString(settings.updatedAt),
+  });
+
+  const fallbackPayload = stripUndefinedFields({
+    defaultTracker: 'Web',
     scanLanguage: settings.scanLanguage,
     timezone: settings.timezone,
     autoDetectDuplicates: settings.autoDetectDuplicates,
@@ -1393,12 +1453,13 @@ async function cloudEditSettings(userId: string, settings: Record<string, unknow
     replyNotificationsEnabled: settings.replyNotificationsEnabled,
   });
 
-  await createOrUpdateCloudDocument({
+  await createOrUpdateCloudDocumentWithFallback({
     databases: createAppwriteClient().databases,
     databaseId: settingsDatabaseId,
     collectionId: settingsCollectionId,
     documentId: userId,
     data: payload,
+    fallbackData: fallbackPayload,
   });
   return true;
 }
@@ -1521,6 +1582,19 @@ async function syncQueuedRuns(userId: string) {
           });
           shouldRefreshLeaderboard = true;
         }
+      } else if (item.op === 'settings') {
+        const localSettingsRecord = await getLocalSettingsRecord(item.userId);
+        const queuedUpdatedAt = Number.isFinite(Number(item.settingsUpdatedAt)) ? Number(item.settingsUpdatedAt) : 0;
+        const localUpdatedAt = Number.isFinite(Number(localSettingsRecord.updatedAt)) ? Number(localSettingsRecord.updatedAt) : 0;
+        const useLocalState = localUpdatedAt >= queuedUpdatedAt;
+        const effectiveUpdatedAt = useLocalState ? localUpdatedAt : queuedUpdatedAt;
+        const effectiveSettings = useLocalState
+          ? localSettingsRecord.state
+          : (item.settingsData ?? localSettingsRecord.state);
+        await cloudEditSettings(item.userId, {
+          ...effectiveSettings,
+          updatedAt: effectiveUpdatedAt,
+        });
       } else if (item.op === 'delete' && item.runId) {
         await cloudDeleteRun(item.userId, item.runId);
         shouldRefreshLeaderboard = true;
@@ -1626,8 +1700,10 @@ export async function logRun(params: {
   canonicalRunData?: RunRecord | null;
   settings?: Record<string, unknown>;
   screenshot?: AttachmentPayload | null;
+  deferredScreenshotSource?: { url: string; filename?: string | null; contentType?: string | null } | null;
   disableDuplicateLookup?: boolean;
   skipLeaderboardRefresh?: boolean;
+  deferCloudSync?: boolean;
 }) {
   const settings = await getLocalSettings(params.userId);
   let localOnlyScreenshotPatch: Record<string, unknown> = {};
@@ -1672,6 +1748,32 @@ export async function logRun(params: {
       localImageCapacityReached,
       localId: pickString(local.localId),
       runId: pickString(local.runId),
+    };
+  }
+
+  if (params.deferCloudSync) {
+    const deferredRunData = canonicalizeTrackerRunData({
+      ...params.runData,
+      localId: pickString(local.localId) ?? pickString(params.runData?.localId) ?? undefined,
+    });
+
+    return {
+      ok: true,
+      queuedForCloud: false,
+      cloudUnavailable: false,
+      localOnly: false,
+      localImageCapacityReached,
+      localId: pickString(local.localId),
+      runId: pickString(local.runId),
+      cloudSyncDeferred: true,
+      backgroundSync: startDeferredRunCloudSync({
+        userId: params.userId,
+        username: params.username,
+        runData: deferredRunData,
+        canonicalRunData: params.canonicalRunData ?? null,
+        screenshot: params.screenshot ?? null,
+        deferredScreenshotSource: params.deferredScreenshotSource ?? null,
+      }),
     };
   }
 
@@ -1732,7 +1834,12 @@ export async function logRun(params: {
 export async function getLastRun(userId: string, options?: GetLastRunOptions) {
   const syncMode = options?.cloudSyncMode ?? 'full';
 
-  if (canUseCloudForUserId(userId, 'summary sync') && syncMode !== 'none') {
+  if (syncMode === 'none') {
+    const runs = await getLocalRuns(userId);
+    return summarizeRuns(runs);
+  }
+
+  if (canUseCloudForUserId(userId, 'summary sync')) {
     await syncQueuedRuns(userId);
 
     if (syncMode === 'latest') {
@@ -1772,16 +1879,150 @@ export async function editUserSettings(userId: string, settings: Record<string, 
     return true;
   } catch (error) {
     logger.warn('cloud settings update failed; local settings preserved', error);
+    const localRecord = await getLocalSettingsRecord(userId);
+    await queueCloudSettings({
+      userId,
+      settingsData: localRecord.state,
+      settingsUpdatedAt: localRecord.updatedAt ?? Date.now(),
+    });
     return true;
   }
 }
 
-export async function editRun(params: { userId: string; username: string; runData: RunRecord; canonicalRunData?: RunRecord | null; settings?: Record<string, unknown>; skipLeaderboardRefresh?: boolean }) {
+export async function getCloudLeaderboardRows(options: {
+  requestedTier: string;
+  sourceFilter: 'all' | 'tower' | 'bemerged';
+  verifiedOnly?: boolean;
+}): Promise<Array<{ rank: number; metrics: Partial<Record<typeof trackerLeaderboardCanonicalMetrics[number], CloudLeaderboardEntry>> }>> {
+  const { databases } = createAppwriteClient();
+  const { leaderboardDatabaseId, leaderboardCollectionId } = appwriteIds();
+  const bestByUserMetric = new Map<string, CloudLeaderboardEntry>();
+  let cursorAfter: string | undefined;
+
+  while (true) {
+    const page = await databases.listDocuments(leaderboardDatabaseId, leaderboardCollectionId, [
+      Query.limit(200),
+      ...(cursorAfter ? [Query.cursorAfter(cursorAfter)] : []),
+    ]);
+    const documents = Array.isArray(page.documents) ? page.documents : [];
+    if (!documents.length) {
+      break;
+    }
+
+    for (const rawDocument of documents) {
+      if (!rawDocument || typeof rawDocument !== 'object' || Array.isArray(rawDocument)) {
+        continue;
+      }
+
+      const document = rawDocument as Record<string, unknown>;
+      const documentId = pickString(document.$id) ?? null;
+      const rawBlob = (() => {
+        if (typeof document.data === 'string') {
+          try {
+            return JSON.parse(document.data) as unknown;
+          } catch {
+            return null;
+          }
+        }
+        return document;
+      })();
+      if (!rawBlob) {
+        continue;
+      }
+
+      let blob: ReturnType<typeof parseTrackerLeaderboardCompatibilityBlob>;
+      try {
+        blob = parseTrackerLeaderboardCompatibilityBlob(rawBlob);
+      } catch {
+        continue;
+      }
+
+      const fallbackUsername = pickString(blob.username) ?? null;
+      const fallbackUserId = pickString(blob.userId) ?? documentId;
+
+      for (const extractedCandidate of extractTrackerLeaderboardCompatibilityCandidates(blob, options.requestedTier, options.sourceFilter)) {
+        const normalized = normalizeTrackerLeaderboardCompatibilityCandidate(
+          extractedCandidate.metric,
+          extractedCandidate.tier,
+          extractedCandidate.candidate,
+          fallbackUsername,
+          fallbackUserId,
+        );
+        if (!normalized) {
+          continue;
+        }
+
+        const candidateRecord = extractedCandidate.candidate && typeof extractedCandidate.candidate === 'object' && !Array.isArray(extractedCandidate.candidate)
+          ? extractedCandidate.candidate as Record<string, unknown>
+          : null;
+        const verified = parseTrackerLeaderboardBooleanLike(candidateRecord?.isVerified ?? candidateRecord?.verified);
+        if (options.verifiedOnly && !verified) {
+          continue;
+        }
+
+        upsertTrackerLeaderboardBestEntry(bestByUserMetric, {
+          ...normalized,
+          verified,
+        });
+      }
+    }
+
+    if (documents.length < 200) {
+      break;
+    }
+
+    const nextCursor = documents[documents.length - 1];
+    if (!nextCursor || typeof nextCursor !== 'object' || Array.isArray(nextCursor)) {
+      break;
+    }
+
+    cursorAfter = pickString((nextCursor as Record<string, unknown>).$id);
+    if (!cursorAfter) {
+      break;
+    }
+  }
+
+  const entries = Array.from(bestByUserMetric.values());
+  const metrics = trackerLeaderboardCanonicalMetrics.filter(metric => entries.some(entry => entry.metric === metric));
+  return buildTrackerLeaderboardRankedMetricRows(entries, metrics);
+}
+
+export async function editRun(params: {
+  userId: string;
+  username: string;
+  runData: RunRecord;
+  canonicalRunData?: RunRecord | null;
+  settings?: Record<string, unknown>;
+  skipLeaderboardRefresh?: boolean;
+  deferCloudSync?: boolean;
+}) {
   const localRunPayload = buildLocalRunUpsertPayload(params.runData, params.canonicalRunData ?? null);
   const local = await upsertLocalRun(params.userId, params.username, { ...localRunPayload, updatedAt: Date.now() });
   const settings = await getLocalSettings(params.userId);
   if (!settings.cloudSyncEnabled) return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: pickString(local.localId), runId: pickString(local.runId) };
   if (!canUseCloudForUserId(params.userId, 'run edit')) return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: pickString(local.localId), runId: pickString(local.runId) };
+  if (params.deferCloudSync) {
+    const deferredRunData = canonicalizeTrackerRunData({
+      ...params.runData,
+      localId: pickString(local.localId) ?? pickString(params.runData.localId) ?? undefined,
+    });
+
+    return {
+      ok: true,
+      queuedForCloud: false,
+      cloudUnavailable: false,
+      localOnly: false,
+      localId: pickString(local.localId),
+      runId: pickString(params.runData?.runId) ?? pickString(local.runId),
+      cloudSyncDeferred: true,
+      backgroundSync: startDeferredRunCloudSync({
+        userId: params.userId,
+        username: params.username,
+        runData: deferredRunData,
+        canonicalRunData: params.canonicalRunData ?? null,
+      }),
+    };
+  }
   try {
     const ok = await cloudEditRun(params);
     await pruneResolvedUpsertQueueItems({
@@ -1832,6 +2073,7 @@ export async function getEffectiveQueueCount(userId: string): Promise<number> {
 }
 
 export async function forceSyncQueuedRuns(userId: string): Promise<number> {
+  await releaseQueuedItemsForImmediateRetry(userId);
   await syncQueuedRuns(userId);
   return getEffectiveQueueCount(userId);
 }
@@ -1942,7 +2184,8 @@ export async function submitRunSummary(params: { userId: string; username: strin
 }
 
 export async function getUserSettings(userId: string): Promise<TrackerSettings | null> {
-  const local = normalizeShareSettingsDefaults(forceWebDefaultTrackerSettings(await getLocalSettings(userId)));
+  const localRecord = await getLocalSettingsRecord(userId);
+  const local = normalizeShareSettingsDefaults(forceWebDefaultTrackerSettings(localRecord.state));
   const cloudEnabled = local.cloudSyncEnabled !== false;
   if (!cloudEnabled) return local;
   if (!canUseCloudForUserId(userId, 'settings fetch')) return local;
@@ -1950,8 +2193,18 @@ export async function getUserSettings(userId: string): Promise<TrackerSettings |
   try {
     const cloud = await cloudGetSettings(userId);
     if (!cloud) return local;
+    const remoteUpdatedAt = Date.parse(String(cloud.updatedAt ?? ''));
+    const localUpdatedAt = Number.isFinite(Number(localRecord.updatedAt)) ? Number(localRecord.updatedAt) : 0;
+    const shouldHydrateLocal = !localRecord.updatedAt || (Number.isFinite(remoteUpdatedAt) && remoteUpdatedAt > localUpdatedAt);
+    if (!shouldHydrateLocal) {
+      return local;
+    }
+
     const merged = normalizeShareSettingsDefaults(forceWebDefaultTrackerSettings({ ...local, ...cloud, cloudSyncEnabled: local.cloudSyncEnabled }));
-    await updateLocalSettings(userId, merged);
+    await updateLocalSettings(userId, {
+      ...merged,
+      updatedAt: Number.isFinite(remoteUpdatedAt) ? remoteUpdatedAt : Date.now(),
+    });
     return merged;
   } catch (error) {
     logger.warn('tracker settings fetch failed', error);

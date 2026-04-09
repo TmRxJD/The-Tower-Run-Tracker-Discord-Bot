@@ -40,15 +40,20 @@ function getSubmissionFieldLabel(key: string) {
 
 function normalizeCoverageFields(data: RunDataLike): RunDataLike {
   const totalEnemies = getFirstMeaningfulRunDataValue(data.totalEnemies, data['Total Enemies'])
+  const killsWithGoldenTower = getFirstMeaningfulRunDataValue(data.killsWithGoldenTower, data['Golden Tower'])
+  const enemiesHitByBlackHole = getFirstMeaningfulRunDataValue(data.enemiesHitByBlackHole, data['Enemies Hit By Black Hole'])
   const enemiesHitByOrbs = getFirstMeaningfulRunDataValue(data.enemiesHitByOrbs, data['Enemies Hit by Orbs'])
   const taggedByDeathWave = getFirstMeaningfulRunDataValue(data.taggedByDeathWave, data['Tagged by Death Wave'])
   const destroyedInSpotlight = getFirstMeaningfulRunDataValue(data.destroyedInSpotlight, data['Destroyed in Spotlight'])
   const destroyedInGoldenBot = getFirstMeaningfulRunDataValue(data.destroyedInGoldenBot, data['Destroyed in Golden Bot'])
+  const killsWithAmplifyBot = getFirstMeaningfulRunDataValue(data.killsWithAmplifyBot, data['Amplify Bot'])
   const summonedEnemies = getFirstMeaningfulRunDataValue(data.guardianSummonedEnemies, data['Summoned enemies'])
 
   return {
     ...data,
     ...(totalEnemies !== undefined ? { totalEnemies, ['Total Enemies']: totalEnemies } : {}),
+    ...(killsWithGoldenTower !== undefined ? { killsWithGoldenTower, ['Golden Tower']: killsWithGoldenTower } : {}),
+    ...(enemiesHitByBlackHole !== undefined ? { enemiesHitByBlackHole, ['Enemies Hit By Black Hole']: enemiesHitByBlackHole, ['Black Hole']: enemiesHitByBlackHole } : {}),
     ...(enemiesHitByOrbs !== undefined
       ? {
           enemiesHitByOrbs,
@@ -58,6 +63,7 @@ function normalizeCoverageFields(data: RunDataLike): RunDataLike {
     ...(taggedByDeathWave !== undefined ? { taggedByDeathWave, ['Tagged by Death Wave']: taggedByDeathWave } : {}),
     ...(destroyedInSpotlight !== undefined ? { destroyedInSpotlight, ['Destroyed in Spotlight']: destroyedInSpotlight } : {}),
     ...(destroyedInGoldenBot !== undefined ? { destroyedInGoldenBot, ['Destroyed in Golden Bot']: destroyedInGoldenBot } : {}),
+    ...(killsWithAmplifyBot !== undefined ? { killsWithAmplifyBot, ['Amplify Bot']: killsWithAmplifyBot } : {}),
     ...(summonedEnemies !== undefined
       ? {
           guardianSummonedEnemies: summonedEnemies,

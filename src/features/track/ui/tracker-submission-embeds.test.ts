@@ -80,6 +80,30 @@ describe('tracker submission embeds', () => {
     expect(embed.data.fields?.some(field => String(field.value).includes('Summoned: 6%'))).toBe(true)
   })
 
+  it('uses enemies-hit-by-black-hole instead of destroyed-by-black-hole for coverage', () => {
+    const embed = buildSubmissionResultEmbed({
+      data: {
+        tierDisplay: '12+',
+        wave: 3456,
+        roundDuration: '1h2m3s',
+        totalCoins: '12345',
+        totalCells: '67',
+        totalDice: '8',
+        killedBy: 'Boss',
+        type: 'Farming',
+        totalEnemies: '5000',
+        enemiesHitByBlackHole: '1250',
+        destroyedByBlackHole: '5',
+      },
+      isUpdate: false,
+      runTypeCounts: { Farming: 1 },
+      hasScreenshot: false,
+      screenshotUrl: null,
+    })
+
+    expect(embed.data.fields?.some(field => String(field.value).includes('Black Hole: 25%'))).toBe(true)
+  })
+
   it('builds the lifetime submission embed with entry date and screenshot placeholder', () => {
     const embed = buildLifetimeSubmissionResultEmbed({
       data: {

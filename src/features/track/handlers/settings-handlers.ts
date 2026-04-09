@@ -12,6 +12,18 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import {
+  formatGovernedDate,
+  formatGovernedNumber,
+  governedDateFormatOptions,
+  governedDateFormatPreferenceIds,
+  governedDecimalSeparatorOptions,
+  governedDecimalSeparatorPreferenceIds,
+  governedLanguageOptions,
+  governedLanguagePreferenceIds,
+  resolveGovernedLocaleSettings,
+  type SharedUserToolSettings,
+} from '@tmrxjd/platform/tools';
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { resolve } from 'node:path';
 import { editUserSettings, forceSyncQueuedRuns, getEffectiveQueueCount, getUserSettings, getUserStats } from '../tracker-api-client';
@@ -19,7 +31,9 @@ import { TRACKER_IDS } from '../track-custom-ids';
 import type { TrackerSettings } from '../types';
 import { logError } from './error-handlers';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
+import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
+import { getEffectiveUserSharedSettings, saveUserSharedSettings } from '../../../services/user-shared-settings-db';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
 type SettingsUpdatePayload = {
@@ -32,6 +46,48 @@ type SettingsUpdatePayload = {
 const LOG_CHANNEL_RESTRICTED_GUILD_ID = '850137217828388904';
 const LOG_CHANNEL_RESTRICTED_MESSAGE = 'Log channels are not permitted in this server. "Please invite the bot to a private server and set a log channel there. See settings for invite button."';
 const BOT_INVITE_URL = 'https://discord.com/oauth2/authorize?client_id=1345944489340043286';
+const LANGUAGE_MENU_FALLBACK_LOCALE = 'en-US';
+
+function getLanguageLocaleTag(languagePreference: SharedUserToolSettings['languagePreference']): string {
+  if (languagePreference === 'auto') {
+    return LANGUAGE_MENU_FALLBACK_LOCALE;
+  }
+
+  return governedLanguageOptions.find(option => option.id === languagePreference)?.locale ?? LANGUAGE_MENU_FALLBACK_LOCALE;
+}
+
+function formatSharedLanguageLabel(languagePreference: SharedUserToolSettings['languagePreference']): string {
+  if (languagePreference === 'auto') {
+    return 'Auto (Region Default)';
+  }
+
+  return governedLanguageOptions.find(option => option.id === languagePreference)?.label ?? languagePreference;
+}
+
+function formatDateFormatLabel(dateFormatPreference: SharedUserToolSettings['dateFormatPreference']): string {
+  if (dateFormatPreference === 'auto') {
+    return 'Auto (Region Default)';
+  }
+
+  return governedDateFormatOptions.find(option => option.id === dateFormatPreference)?.label ?? dateFormatPreference;
+}
+
+function formatDecimalSeparatorLabel(decimalSeparatorPreference: SharedUserToolSettings['decimalSeparatorPreference']): string {
+  if (decimalSeparatorPreference === 'auto') {
+    return 'Auto (Region Default)';
+  }
+
+  return governedDecimalSeparatorOptions.find(option => option.id === decimalSeparatorPreference)?.label ?? decimalSeparatorPreference;
+}
+
+function buildLocalePreview(sharedSettings: SharedUserToolSettings): string {
+  const resolved = resolveGovernedLocaleSettings(sharedSettings, {
+    localeTag: getLanguageLocaleTag(sharedSettings.languagePreference),
+  });
+  const sampleNumber = formatGovernedNumber(12345.67, resolved, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const sampleDate = formatGovernedDate('2026-04-06T15:45:00Z', resolved);
+  return `${sampleNumber} • ${sampleDate}`;
+}
 
 function extractChannelId(raw: string): string | null {
   const value = String(raw ?? '').trim();
@@ -49,7 +105,7 @@ function canUpdate(interaction: TrackMenuInteraction): interaction is MessageCom
 
 async function updateInPlace(interaction: TrackMenuInteraction, payload: SettingsUpdatePayload) {
   const files = payload.files ?? [];
-  if (canUpdate(interaction)) {
+  if (canUpdate(interaction) && !interaction.deferred && !interaction.replied) {
     await interaction.update({ content: payload.content, components: payload.components, embeds: payload.embeds, files }).catch(() => {});
     return;
   }
@@ -69,27 +125,49 @@ function getSelectedValues(interaction: TrackMenuInteraction): string[] {
 }
 
 export async function handleTrackMenuSettings(interaction: TrackMenuInteraction) {
+  const ui = getTrackUiConfig();
   try {
-    const ui = getTrackUiConfig();
+    if (canUpdate(interaction) && !interaction.deferred && !interaction.replied) {
+      await interaction.deferUpdate();
+    } else if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply();
+    }
+
     const settings = await getUserSettings(interaction.user.id);
     if (!settings) {
-      await updateInPlace(interaction, { content: ui.settings.noSettings, components: [], embeds: [] });
+      await interaction.editReply({ content: ui.settings.noSettings, components: [], embeds: [], files: [] });
       return;
     }
 
     const payload = await buildSettingsPayload(interaction.user.id, settings);
-    await updateInPlace(interaction, payload);
+    await interaction.editReply({
+      content: payload.content,
+      components: payload.components,
+      embeds: payload.embeds,
+      files: payload.files ?? [],
+    });
   } catch (error) {
-    const ui = getTrackUiConfig();
     await logError(interaction.client, interaction.user, error, 'track_menu_settings');
-    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({ content: ui.settings.loadFailed, components: [], embeds: [], files: [] }).catch(() => {});
+      return;
+    }
+
+    if (canUpdate(interaction)) {
+      await interaction.update({ content: ui.settings.loadFailed, components: [], embeds: [], files: [] }).catch(() => {});
+      return;
+    }
+
+    await interaction.reply({ content: ui.settings.loadFailed, components: [], embeds: [], files: [] }).catch(() => {});
   }
 }
 
-export async function buildSettingsPayload(userId: string, current: TrackerSettings | null | undefined) {
+export async function buildSettingsPayload(userId: string, current: TrackerSettings | null | undefined): Promise<SettingsUpdatePayload> {
   const ui = getTrackUiConfig();
   const settingsUi = ui.settings;
   const queued = await getEffectiveQueueCount(userId);
+  const sharedSettings = await getEffectiveUserSharedSettings(userId);
   const cloudEnabled = current?.cloudSyncEnabled !== false;
   const duplicatesEnabled = current?.autoDetectDuplicates !== false;
   const confirmEnabled = current?.confirmBeforeSubmit !== false;
@@ -104,7 +182,10 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
     .setDescription('Use the buttons and dropdowns below to customize your tracking experience. Your changes will be saved automatically.')
     .addFields(
       { name: settingsUi.labels.defaultRunType, value: String(defaultRunType), inline: true },
+      { name: settingsUi.labels.appLanguage ?? 'App language', value: formatSharedLanguageLabel(sharedSettings.languagePreference), inline: true },
       { name: settingsUi.labels.scanLanguage, value: String(language), inline: true },
+      { name: settingsUi.labels.dateFormat ?? 'Date format', value: formatDateFormatLabel(sharedSettings.dateFormatPreference), inline: true },
+      { name: settingsUi.labels.decimalIndicator ?? 'Decimal indicator', value: formatDecimalSeparatorLabel(sharedSettings.decimalSeparatorPreference), inline: true },
       { name: settingsUi.labels.timezone ?? 'Timezone', value: String(timezone), inline: true },
       { name: settingsUi.labels.autoDetectDuplicates, value: duplicatesEnabled ? 'On' : 'Off', inline: true },
       { name: settingsUi.labels.confirmBeforeSubmit, value: confirmEnabled ? 'On' : 'Off', inline: true },
@@ -122,13 +203,6 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
       .setCustomId(TRACKER_IDS.settings.defaultType)
       .setPlaceholder(settingsUi.placeholders.runType)
       .addOptions(...settingsUi.runTypeOptions.map((item) => ({ label: item, value: item, default: defaultRunType === item }))),
-  );
-
-  const languageRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(TRACKER_IDS.settings.language)
-      .setPlaceholder(settingsUi.placeholders.language)
-      .addOptions(...settingsUi.languageOptions.map((item) => ({ label: item, value: item, default: language === item }))),
   );
 
   const timezoneRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
@@ -153,28 +227,102 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
       .setStyle(cloudEnabled ? ButtonStyle.Danger : ButtonStyle.Success),
   );
 
-  const navigationRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const utilityRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.languageMenu).setLabel(settingsUi.buttons.languageMenu ?? 'Language & Locale').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(TRACKER_IDS.settings.logChannel).setLabel(settingsUi.buttons.setLogChannel ?? 'Set Log Channel').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(TRACKER_IDS.settings.share).setLabel(settingsUi.buttons.shareSettings).setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setLabel(settingsUi.buttons.inviteBot ?? 'Invite Bot').setStyle(ButtonStyle.Link).setURL(BOT_INVITE_URL),
-    new ButtonBuilder().setCustomId(TRACKER_IDS.flow.mainMenu).setLabel('Main Menu').setStyle(ButtonStyle.Secondary),
   );
 
-  const queueActionRows: ActionRowBuilder<ButtonBuilder>[] = [];
+  const navigationButtons: ButtonBuilder[] = [
+    new ButtonBuilder().setLabel(settingsUi.buttons.inviteBot ?? 'Invite Bot').setStyle(ButtonStyle.Link).setURL(BOT_INVITE_URL),
+    new ButtonBuilder().setCustomId(TRACKER_IDS.flow.mainMenu).setLabel('Main Menu').setStyle(ButtonStyle.Secondary),
+  ];
+
   if (queued > 0) {
-    const forceSaveRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    navigationButtons.splice(
+      2,
+      0,
       new ButtonBuilder()
         .setCustomId(TRACKER_IDS.settings.forceSave)
         .setLabel(settingsUi.buttons.forceSave ?? 'Force Save')
         .setStyle(ButtonStyle.Primary),
     );
-    queueActionRows.push(forceSaveRow);
   }
+
+  const navigationRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...navigationButtons);
 
   return {
     content: 'Select your default run type, scan language, and timezone below.',
     embeds: [settingsEmbed],
-    components: [runTypeRow, languageRow, timezoneRow, actionsRow, ...queueActionRows, navigationRow],
+    components: [runTypeRow, timezoneRow, actionsRow, utilityRow, navigationRow],
+  };
+}
+
+async function buildLanguageSettingsPayload(userId: string, current: TrackerSettings | null | undefined): Promise<SettingsUpdatePayload> {
+  const settingsUi = getTrackUiConfig().settings;
+  const sharedSettings = await getEffectiveUserSharedSettings(userId);
+  const scanLanguage = current?.scanLanguage ?? 'English';
+
+  const embed = new EmbedBuilder()
+    .setTitle('🌐 Language & Locale')
+    .setDescription('Adjust shared app locale preferences separately from the OCR scan language.')
+    .addFields(
+      { name: settingsUi.labels.appLanguage ?? 'App language', value: formatSharedLanguageLabel(sharedSettings.languagePreference), inline: true },
+      { name: settingsUi.labels.scanLanguage, value: scanLanguage, inline: true },
+      { name: settingsUi.labels.dateFormat ?? 'Date format', value: formatDateFormatLabel(sharedSettings.dateFormatPreference), inline: true },
+      { name: settingsUi.labels.decimalIndicator ?? 'Decimal indicator', value: formatDecimalSeparatorLabel(sharedSettings.decimalSeparatorPreference), inline: true },
+      { name: settingsUi.labels.localePreview ?? 'Locale preview', value: buildLocalePreview(sharedSettings), inline: false },
+    )
+    .setColor(0x3b82f6);
+
+  const appLanguageRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(TRACKER_IDS.settings.appLanguage)
+      .setPlaceholder(settingsUi.placeholders.appLanguage ?? 'App language')
+      .addOptions(...governedLanguagePreferenceIds.map(item => ({
+        label: item === 'auto' ? 'Auto (Region Default)' : (governedLanguageOptions.find(option => option.id === item)?.label ?? item),
+        value: item,
+        default: sharedSettings.languagePreference === item,
+      }))),
+  );
+
+  const scanLanguageRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(TRACKER_IDS.settings.language)
+      .setPlaceholder(settingsUi.placeholders.language)
+      .addOptions(...settingsUi.languageOptions.map((item) => ({ label: item, value: item, default: scanLanguage === item }))),
+  );
+
+  const dateFormatRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(TRACKER_IDS.settings.dateFormat)
+      .setPlaceholder(settingsUi.placeholders.dateFormat ?? 'Date format')
+      .addOptions(...governedDateFormatPreferenceIds.map(item => ({
+        label: item === 'auto' ? 'Auto (Region Default)' : (governedDateFormatOptions.find(option => option.id === item)?.label ?? item),
+        value: item,
+        default: sharedSettings.dateFormatPreference === item,
+      }))),
+  );
+
+  const decimalSeparatorRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(TRACKER_IDS.settings.decimalSeparator)
+      .setPlaceholder(settingsUi.placeholders.decimalIndicator ?? 'Decimal indicator')
+      .addOptions(...governedDecimalSeparatorPreferenceIds.map(item => ({
+        label: item === 'auto' ? 'Auto (Region Default)' : (governedDecimalSeparatorOptions.find(option => option.id === item)?.label ?? item),
+        value: item,
+        default: sharedSettings.decimalSeparatorPreference === item,
+      }))),
+  );
+
+  const navigationRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.languageBack).setLabel(settingsUi.buttons.backToSettings ?? 'Back to Settings').setStyle(ButtonStyle.Secondary),
+  );
+
+  return {
+    content: 'Update your shared app locale and tracker scan language below.',
+    embeds: [embed],
+    components: [appLanguageRow, scanLanguageRow, dateFormatRow, decimalSeparatorRow, navigationRow],
   };
 }
 
@@ -186,6 +334,7 @@ const SHARE_ELEMENT_KEYS = [
   'shareTotalCoins',
   'shareTotalCells',
   'shareTotalDice',
+  'shareDeathDefy',
   'shareCoinsPerHour',
   'shareCellsPerHour',
   'shareDicePerHour',
@@ -204,6 +353,7 @@ const SHARE_ELEMENT_LABELS: Record<ShareElementKey, string> = {
   shareTotalCoins: 'Total Coins',
   shareTotalCells: 'Total Cells',
   shareTotalDice: 'Total Dice',
+  shareDeathDefy: 'Death Defies',
   shareCoinsPerHour: 'Coins/Hr',
   shareCellsPerHour: 'Cells/Hr',
   shareDicePerHour: 'Dice/Hr',
@@ -229,11 +379,14 @@ function withPreviewCoverage(run: Record<string, unknown>): Record<string, unkno
   return {
     ...run,
     totalEnemies: '100',
-    destroyedByOrbs: '67',
-    destroyedInSpotlight: '99',
-    taggedByDeathWave: '87',
-    destroyedInGoldenBot: '59',
-    summonedEnemies: '11',
+    killsWithGoldenTower: '73',
+    enemiesHitByBlackHole: '64',
+    enemiesHitByOrbs: '67',
+    destroyedInSpotlight: '59',
+    taggedByDeathWave: '52',
+    destroyedInGoldenBot: '41',
+    killsWithAmplifyBot: '28',
+    guardianSummonedEnemies: '11',
   };
 }
 
@@ -268,6 +421,7 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
     totalCoins: '6.36Q',
     totalCells: '880.94K',
     totalDice: '398.25K',
+    deathDefy: '2',
     notes: 'Sample preview note',
     screenshotUrl: null,
   };
@@ -277,7 +431,7 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
   const previewAttachmentPath = resolve(process.cwd(), 'src', 'assets', previewAttachmentName);
 
   const preview = buildShareEmbed({
-    user: interaction.user,
+    user: buildEmbedUserFromInteraction(interaction),
     run: {
       ...sampleRun,
       screenshotUrl: `attachment://${previewAttachmentName}`,
@@ -291,6 +445,7 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
       includeTotalCoins: settings?.shareTotalCoins !== false,
       includeTotalCells: settings?.shareTotalCells !== false,
       includeTotalDice: settings?.shareTotalDice !== false,
+      includeDeathDefy: settings?.shareDeathDefy !== false,
       includeCoinsPerHour: settings?.shareCoinsPerHour !== false,
       includeCellsPerHour: settings?.shareCellsPerHour !== false,
       includeDicePerHour: settings?.shareDicePerHour !== false,
@@ -334,9 +489,12 @@ export async function handleTrackMenuToggleCloud(interaction: TrackMenuInteracti
 
 export async function handleTrackMenuForceSave(interaction: TrackMenuInteraction) {
   try {
-    await forceSyncQueuedRuns(interaction.user.id);
+    const remaining = await forceSyncQueuedRuns(interaction.user.id);
     const refreshed = await getUserSettings(interaction.user.id);
     const payload = await buildSettingsPayload(interaction.user.id, refreshed);
+    payload.content = remaining === 0
+      ? 'Queued uploads synced successfully.'
+      : `Force-save attempted. ${remaining} queued upload${remaining === 1 ? '' : 's'} remaining.`;
     await updateInPlace(interaction, payload);
   } catch (error) {
     const ui = getTrackUiConfig();
@@ -446,17 +604,86 @@ export async function handleTrackMenuShareBack(interaction: TrackMenuInteraction
   }
 }
 
-export async function handleTrackMenuSelectLanguage(interaction: TrackMenuInteraction) {
+export async function handleTrackMenuLanguageMenu(interaction: TrackMenuInteraction) {
   try {
-    const nextValue = getSelectedValues(interaction)[0] ?? 'English';
-    await editUserSettings(interaction.user.id, { scanLanguage: nextValue });
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildLanguageSettingsPayload(interaction.user.id, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_language_menu');
+    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuLanguageBack(interaction: TrackMenuInteraction) {
+  try {
     const refreshed = await getUserSettings(interaction.user.id);
     const payload = await buildSettingsPayload(interaction.user.id, refreshed);
     await updateInPlace(interaction, payload);
   } catch (error) {
     const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_language_back');
+    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuSelectLanguage(interaction: TrackMenuInteraction) {
+  try {
+    const nextValue = getSelectedValues(interaction)[0] ?? 'English';
+    await editUserSettings(interaction.user.id, { scanLanguage: nextValue });
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildLanguageSettingsPayload(interaction.user.id, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
     await logError(interaction.client, interaction.user, error, 'track_menu_select_language');
     await updateInPlace(interaction, { content: ui.settings.toggleFailed.language, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuSelectAppLanguage(interaction: TrackMenuInteraction) {
+  try {
+    const nextValue = getSelectedValues(interaction)[0] ?? 'auto';
+    const current = await getEffectiveUserSharedSettings(interaction.user.id);
+    await saveUserSharedSettings(interaction.user.id, { ...current, languagePreference: nextValue as SharedUserToolSettings['languagePreference'] });
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildLanguageSettingsPayload(interaction.user.id, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_select_app_language');
+    await updateInPlace(interaction, { content: ui.settings.toggleFailed.appLanguage ?? ui.settings.toggleFailed.language, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuSelectDateFormat(interaction: TrackMenuInteraction) {
+  try {
+    const nextValue = getSelectedValues(interaction)[0] ?? 'auto';
+    const current = await getEffectiveUserSharedSettings(interaction.user.id);
+    await saveUserSharedSettings(interaction.user.id, { ...current, dateFormatPreference: nextValue as SharedUserToolSettings['dateFormatPreference'] });
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildLanguageSettingsPayload(interaction.user.id, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_select_date_format');
+    await updateInPlace(interaction, { content: ui.settings.toggleFailed.dateFormat ?? ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuSelectDecimalSeparator(interaction: TrackMenuInteraction) {
+  try {
+    const nextValue = getSelectedValues(interaction)[0] ?? 'auto';
+    const current = await getEffectiveUserSharedSettings(interaction.user.id);
+    await saveUserSharedSettings(interaction.user.id, { ...current, decimalSeparatorPreference: nextValue as SharedUserToolSettings['decimalSeparatorPreference'] });
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildLanguageSettingsPayload(interaction.user.id, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_select_decimal_separator');
+    await updateInPlace(interaction, { content: ui.settings.toggleFailed.decimalIndicator ?? ui.settings.loadFailed, components: [], embeds: [] });
   }
 }
 

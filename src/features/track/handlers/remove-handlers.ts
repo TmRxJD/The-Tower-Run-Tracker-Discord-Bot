@@ -4,6 +4,7 @@ import { packTrackerRemoveToken, parsePrefixedTrackerToken, parseTrackerRemoveTo
 import { logError } from './error-handlers';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
+import { resolveInteractionDisplayName } from '../discord-display-name';
 import { createInitialEmbed, createMainMenuButtons } from '../ui/tracker-ui';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
@@ -15,6 +16,7 @@ async function renderMainMenuFromLatest(interaction: TrackMenuInteraction, mode:
     const latest = sorted[0] ?? null;
     const embed = createInitialEmbed({
       mode,
+      userLabel: resolveInteractionDisplayName(interaction),
       userId: interaction.user.id,
       lastRun: latest,
       runCount: sorted.length,
@@ -28,6 +30,7 @@ async function renderMainMenuFromLatest(interaction: TrackMenuInteraction, mode:
   const summary = await getLastRun(interaction.user.id, { cloudSyncMode: 'none' }).catch(() => null);
   const embed = createInitialEmbed({
     mode,
+    userLabel: resolveInteractionDisplayName(interaction),
     userId: interaction.user.id,
     lastRun: summary?.lastRun ?? null,
     runCount: summary?.allRuns?.length ?? 0,

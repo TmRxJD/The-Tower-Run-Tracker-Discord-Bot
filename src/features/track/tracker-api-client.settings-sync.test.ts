@@ -7,6 +7,11 @@ const getDocumentMock = vi.fn();
 const getDocumentOrNullMock = vi.fn();
 const updateDocumentMock = vi.fn();
 const createDocumentMock = vi.fn();
+const deleteDocumentMock = vi.fn();
+const listDocumentsMock = vi.fn();
+const createFileMock = vi.fn();
+const deleteFileMock = vi.fn();
+const getFileViewMock = vi.fn();
 
 vi.mock('../../config', () => ({
   getAppConfig: () => ({
@@ -29,13 +34,13 @@ vi.mock('../../persistence/appwrite-client', () => ({
       getDocument: getDocumentMock,
       updateDocument: updateDocumentMock,
       createDocument: createDocumentMock,
-      deleteDocument: vi.fn(),
-      listDocuments: vi.fn(),
+      deleteDocument: deleteDocumentMock,
+      listDocuments: listDocumentsMock,
     },
     storage: {
-      createFile: vi.fn(),
-      deleteFile: vi.fn(),
-      getFileView: vi.fn(),
+      createFile: createFileMock,
+      deleteFile: deleteFileMock,
+      getFileView: getFileViewMock,
     },
   }),
 }));
@@ -79,7 +84,7 @@ vi.mock('./vision-ocr-client', () => ({
   runDirectVisionOcr: vi.fn(),
 }));
 
-import { forceSyncQueuedRuns, getUserSettings } from './tracker-api-client';
+import { forceSyncQueuedRuns, getLastRun, getUserSettings, logRun } from './tracker-api-client';
 import {
   getLocalSettingsRecord,
   getQueueItems,
@@ -107,6 +112,13 @@ beforeEach(async () => {
   getDocumentOrNullMock.mockReset();
   updateDocumentMock.mockReset();
   createDocumentMock.mockReset();
+  deleteDocumentMock.mockReset();
+  listDocumentsMock.mockReset();
+  createFileMock.mockReset();
+  deleteFileMock.mockReset();
+  getFileViewMock.mockReset();
+
+  listDocumentsMock.mockResolvedValue({ documents: [], total: 0 });
 
   await clearQueue('tracker.sync.queue-local-newer');
   await clearQueue('tracker.sync.cloud-newer');
@@ -154,6 +166,7 @@ describe('tracker-api-client settings sync', () => {
         defaultRunType: 'Tournament',
         updatedAt: new Date(2_000).toISOString(),
       }),
+      undefined,
     );
     expect(await getQueueItems(userId)).toHaveLength(0);
   });
@@ -176,5 +189,122 @@ describe('tracker-api-client settings sync', () => {
     expect(settings?.defaultRunType).toBe('Tournament');
     expect(localRecord.state.defaultRunType).toBe('Tournament');
     expect(localRecord.updatedAt).toBe(2_000);
+  });
+
+  it('returns local-only summaries without replaying queued runs', async () => {
+    const userId = `tracker.sync.summary-none-${Date.now()}`;
+    await updateLocalSettings(userId, {
+      cloudSyncEnabled: true,
+      updatedAt: 1_000,
+    });
+    createDocumentMock.mockRejectedValue({
+      code: 400,
+      type: 'document_invalid_structure',
+      message: 'Invalid document structure: Unknown attribute: "createdAt"',
+    });
+
+    await logRun({
+      userId,
+      username: 'tester',
+      runData: {
+        localId: 'queued-run-1',
+        type: 'Farming',
+        tier: '4',
+        wave: '321',
+        notes: 'queued',
+      },
+    });
+
+    createDocumentMock.mockClear();
+
+    const summary = await getLastRun(userId, { cloudSyncMode: 'none' });
+
+    expect(await getQueueItems(userId)).toHaveLength(1);
+    expect(summary?.allRuns).toHaveLength(1);
+    expect(summary?.lastRun).toEqual(expect.objectContaining({
+      tier: '4',
+      wave: '321',
+      type: 'Farming',
+    }));
+    expect(createDocumentMock).not.toHaveBeenCalled();
+  });
+
+  it('retries run writes after stripping unsupported Appwrite attributes', async () => {
+    const userId = `tracker.sync.strip-unsupported-${Date.now()}`;
+    await updateLocalSettings(userId, {
+      cloudSyncEnabled: true,
+      updatedAt: 1_000,
+    });
+
+    createDocumentMock
+      .mockRejectedValueOnce({
+        code: 400,
+        type: 'document_invalid_structure',
+        message: 'Invalid document structure: Unknown attribute: "createdAt"',
+      })
+      .mockResolvedValueOnce({ $id: 'cloud-run-1' });
+
+    const result = await logRun({
+      userId,
+      username: 'tester',
+      runData: {
+        localId: 'queued-run-strip-1',
+        type: 'Farming',
+        tier: '9',
+        wave: '999',
+      },
+    });
+
+    expect(result.queuedForCloud).toBe(false);
+    expect(result.cloudUnavailable).toBe(false);
+    expect(await getQueueItems(userId)).toHaveLength(0);
+    expect(createDocumentMock).toHaveBeenCalledTimes(2);
+    expect(createDocumentMock.mock.calls[0]?.[0]).toBe('runs-db');
+    expect(createDocumentMock.mock.calls[0]?.[1]).toBe('runs');
+    expect(createDocumentMock.mock.calls[1]?.[0]).toBe('runs-db');
+    expect(createDocumentMock.mock.calls[1]?.[1]).toBe('runs');
+    expect(createDocumentMock.mock.calls[1]?.[2]).toBe(createDocumentMock.mock.calls[0]?.[2]);
+  });
+
+  it('defers cloud run sync without blocking the local save result', async () => {
+    const userId = `tracker.sync.defer-cloud-${Date.now()}`;
+    await updateLocalSettings(userId, {
+      cloudSyncEnabled: true,
+      updatedAt: 1_000,
+    });
+    createDocumentMock.mockResolvedValue({ $id: 'cloud-run-2' });
+
+    const result = await logRun({
+      userId,
+      username: 'tester',
+      runData: {
+        localId: 'queued-run-2',
+        type: 'Farming',
+        tier: '5',
+        wave: '654',
+      },
+      deferCloudSync: true,
+    });
+
+    expect(result.cloudSyncDeferred).toBe(true);
+    expect(result.backgroundSync).toBeTruthy();
+    expect(await getQueueItems(userId)).toHaveLength(0);
+
+    const backgroundResult = await result.backgroundSync;
+
+    expect(backgroundResult).toEqual({ queuedForCloud: false, cloudUnavailable: false });
+    expect(await getQueueItems(userId)).toHaveLength(0);
+    expect(createDocumentMock).toHaveBeenCalledWith(
+      'runs-db',
+      'runs',
+      expect.any(String),
+      expect.objectContaining({
+        userId,
+        username: 'tester',
+        tier: '5',
+        wave: '654',
+      }),
+      expect.any(Array),
+    );
   });
 });

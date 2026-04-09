@@ -20,7 +20,9 @@
     "platform:sync:local": "node scripts/ensure-local-platform.mjs use-local",
     "platform:use:registry": "node scripts/ensure-local-platform.mjs use-registry",
     "platform:status": "node scripts/ensure-local-platform.mjs status",
-    "dev": "cross-env DEPLOYMENT_MODE=dev NODE_ENV=development ts-node-dev --respawn --transpile-only src/bot.ts",
+    "dev": "node scripts/dev-managed.mjs --force-restart",
+    "dev:app": "cross-env NODE_OPTIONS=--inspect=localhost:5176 DEPLOYMENT_MODE=dev NODE_ENV=development ts-node-dev --respawn --transpile-only src/bot.ts",
+    "dev:managed": "node scripts/dev-managed.mjs",
     "build": "rimraf dist && tsc -p tsconfig.json",
     "start": "cross-env DEPLOYMENT_MODE=prod NODE_ENV=production node dist/bot.js",
     "deploy:install": "pnpm install --frozen-lockfile",
@@ -58,7 +60,7 @@
   "dependencies": {
     "@discordjs/rest": "^2.6.1",
     "@napi-rs/canvas": "^0.1.97",
-    "@tmrxjd/platform": "0.1.9",
+    "@tmrxjd/platform": "0.1.10",
     "dexie": "^4.0.11",
     "discord-api-types": "^0.37.120",
     "discord.js": "^14.25.1",
@@ -86,9 +88,6 @@
     "onlyBuiltDependencies": [
       "sqlite3",
       "@napi-rs/canvas"
-    ],
-    "overrides": {
-      "@tmrxjd/platform": "link:../../TrackerWebsite/the-tower-run-tracker/packages/platform"
-    }
+    ]
   }
 }

@@ -2,14 +2,14 @@ import { SlashCommandBuilder, type ChatInputCommandInteraction, MessageFlagsBitF
 import { getBotConfig } from '../config/bot-config';
 import type { TrackerBotClient } from '../core/tracker-bot-client';
 import { logger } from '../core/logger';
+import { resolveInteractionDisplayName } from '../features/track/discord-display-name';
 import { ensureRunDocumentsHydratedForUser } from '../features/track/tracker-api-client';
 import { handleTrackWorkflow } from '../features/track/track-workflow';
 
 type TrackerCommandKey = 'track' | 'lifetime';
 
-function hasPasteOption(commandConfig: Record<string, unknown>): boolean {
-  const options = commandConfig.options as Record<string, unknown> | undefined;
-  return Boolean(options && typeof options === 'object' && 'paste' in options);
+function hasPasteOption(options: object): options is { paste: { name: string; description: string } } {
+  return 'paste' in options;
 }
 
 export function buildTrackerCommandData(commandKey: TrackerCommandKey) {
@@ -21,7 +21,7 @@ export function buildTrackerCommandData(commandKey: TrackerCommandKey) {
     .setName(commandConfig.name)
     .setDescription(commandConfig.description);
 
-  if (hasPasteOption(options) && options.paste) {
+  if (hasPasteOption(options)) {
     data.addStringOption(option =>
       option.setName(options.paste.name)
         .setDescription(options.paste.description)
@@ -92,7 +92,7 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
     ? interaction.options.getAttachment(options.screenshot.name) ?? undefined
     : undefined;
 
-  await client.persistence?.users.touch(interaction.user.id, interaction.user.username).catch(() => {});
+  await client.persistence?.users.touch(interaction.user.id, resolveInteractionDisplayName(interaction)).catch(() => {});
 
   if (!settingsRequested) {
     void ensureRunDocumentsHydratedForUser(interaction.user.id).catch((error) => {

@@ -45,6 +45,7 @@
       "totalCoins": "Coins",
       "totalCells": "Cells",
       "totalDice": "Dice",
+      "deathDefy": "Death Defies",
       "killedBy": "Killed By",
       "date": "Date",
       "time": "Time",
@@ -61,6 +62,7 @@
       "totalDice": "🎲\nDice",
       "dice": "🎲\nDice",
       "rerollShards": "🎲\nDice",
+      "deathDefy": "🍀\nDeath Defies",
       "killedBy": "💀\nKilled By",
       "dateTime": "📅\nDate/Time",
       "notes": "📝\nNotes",
@@ -68,7 +70,7 @@
       "type": "📋\nRun Type"
     },
     "numericFieldKeys": ["totalCoins", "totalCells", "totalDice"],
-    "standardFieldOrder": ["tier", "wave", "duration", "totalCoins", "totalCells", "totalDice", "killedBy", "dateTime", "type", "notes"],
+    "standardFieldOrder": ["tier", "wave", "duration", "totalCoins", "totalCells", "totalDice", "deathDefy", "killedBy", "dateTime", "type", "notes"],
     "skipFieldKeys": [
       "tierDisplay", "Tierdisplay", "tierdisplay", "tierHasPlus", "tierhasplus", "Tierhasplus",
       "roundDuration", "time", "reportTimestamp", "Reporttimestamp", "reporttimestamp",
@@ -123,15 +125,15 @@
       "coinsPerHour": "🪙\nCoins/Hr",
       "cellsPerHour": "🔋\nCells/Hr",
       "dicePerHour": "🎲\nDice/Hr",
-      "runType": "📋\nRun Type",
-      "runNumber": "#️⃣\nRun #",
+      "deathDefy": "🍀\nDeath Defies",
+      "runSummary": "📋\nRun",
       "dateTime": "📅\nDate/Time",
       "runId": "🆔 Run ID",
       "notes": "📝\nNotes"
     },
     "lastRunFieldOrder": [
       "tierWave", "duration", "killedBy", "coins", "cells", "dice",
-      "coinsPerHour", "cellsPerHour", "dicePerHour", "runType", "runNumber", "dateTime"
+      "coinsPerHour", "cellsPerHour", "dicePerHour", "deathDefy", "runSummary", "dateTime"
     ],
     "mainRows": [
       [
@@ -209,10 +211,14 @@
     "importAccepted": "Import request acknowledged. This TS build currently preserves local data and will merge cloud data automatically when available.",
     "importCancelled": "Import cancelled.",
     "labels": {
+      "appLanguage": "App language",
       "defaultRunType": "Default run type",
       "defaultTracker": "Default tracker",
       "scanLanguage": "Scan language",
       "timezone": "Timezone",
+      "dateFormat": "Date format",
+      "decimalIndicator": "Decimal indicator",
+      "localePreview": "Locale preview",
       "decimalPreference": "Decimal preference",
       "autoDetectDuplicates": "Auto-detect duplicates",
       "confirmBeforeSubmit": "Confirm before submit",
@@ -226,6 +232,9 @@
     "placeholders": {
       "runType": "Default run type",
       "language": "Scan language",
+      "appLanguage": "App language",
+      "dateFormat": "Date format",
+      "decimalIndicator": "Decimal indicator",
       "timezone": "Timezone"
     },
     "runTypeOptions": ["Farming", "Overnight", "Tournament", "Milestone"],
@@ -245,6 +254,8 @@
       "enableCloud": "Enable Cloud Sync",
       "disableCloud": "Disable Cloud Sync",
       "forceSave": "Force Save",
+      "languageMenu": "Language & Locale",
+      "backToSettings": "Back to Settings",
       "setLogChannel": "Set Log Channel",
       "shareSettings": "Share Settings",
       "inviteBot": "Invite Bot",
@@ -262,6 +273,9 @@
       "shareScreenshot": "Unable to update share screenshot setting right now.",
       "forceSave": "Unable to force-save queued runs right now.",
       "language": "Unable to update language setting right now.",
+      "appLanguage": "Unable to update app language right now.",
+      "dateFormat": "Unable to update date format right now.",
+      "decimalIndicator": "Unable to update decimal indicator right now.",
       "tracker": "Unable to update tracker setting right now.",
       "runType": "Unable to update default run type right now.",
       "timezone": "Unable to update timezone setting right now."
@@ -275,7 +289,7 @@
     "countPlaceholder": "Runs per page",
     "columnsPlaceholder": "Displayed columns (text view)",
     "allTiersLabel": "All Tiers",
-    "columns": ["Tier", "Wave", "Duration", "Coins", "Cells", "Dice", "Coins/Hr", "Cells/Hr", "Dice/Hr", "Orbs", "SL", "DW", "GB", "SMN", "Type", "Date/Time"],
+    "columns": ["Tier", "Wave", "Duration", "Coins", "Cells", "Dice", "Coins/Hr", "Cells/Hr", "Dice/Hr", "Golden Tower", "Black Hole", "Spotlight", "Death Wave", "Orbs", "Golden Bot", "Amp Bot", "Summoned", "Type", "Date/Time"],
     "countOptions": [5, 10, 20, 35, 50],
     "buttons": {
       "prev": "Previous",
@@ -374,6 +388,7 @@
       "cells": "🔋\nCells",
       "dice": "🎲\nDice"
     },
+    "hourlySectionLabel": "📈 Earnings per Hour",
     "notesFieldLabel": "📝\nNotes",
     "coverageFieldLabel": "Coverage",
     "footer": "📊 Tracked with The Tower Run Tracker\nUse /track to log a run",

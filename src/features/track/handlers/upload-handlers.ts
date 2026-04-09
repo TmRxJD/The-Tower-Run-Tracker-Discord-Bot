@@ -36,7 +36,9 @@ import {
   parseRunDataFromText,
   findPotentialDuplicateRun,
 } from './upload-helpers';
-import { awaitBackgroundRunHydration, beginBackgroundRunHydration, getLastRun, getLocalLifetimeData, getUserSettings, runOCR } from '../tracker-api-client';
+import { awaitBackgroundRunHydration, beginBackgroundRunHydration, getLastRun, getLocalLifetimeData, runOCR } from '../tracker-api-client';
+import { getLocalRuns, getLocalSettings } from '../local-run-store';
+import { resolveInteractionDisplayName } from '../discord-display-name';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import type { TrackerUiMode } from '../../../config/tracker-ui-config';
 import {
@@ -273,14 +275,14 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
   let decimalPreference = 'Period (.)';
 
   try {
-    const settings = await getUserSettings(userId);
+    const settings = await getLocalSettings(userId);
     if (settings?.decimalPreference) decimalPreference = settings.decimalPreference;
     const shouldCheckDuplicate = (settings?.autoDetectDuplicates ?? true) && !hydratedRunData.runId;
 
     if (shouldCheckDuplicate) {
-      await awaitBackgroundRunHydration(userId);
-      const summary = await getLastRun(userId, { cloudSyncMode: 'none' });
-      const duplicateCheck = findPotentialDuplicateRun(hydratedRunData, summary?.allRuns ?? []);
+      void awaitBackgroundRunHydration(userId).catch(() => {});
+      const localRuns = await getLocalRuns(userId);
+      const duplicateCheck = findPotentialDuplicateRun(hydratedRunData, localRuns);
       if (duplicateCheck.isDuplicate) {
         isDuplicate = true;
         if (duplicateCheck.duplicateRunId && !hydratedRunData.runId) hydratedRunData.runId = duplicateCheck.duplicateRunId;
@@ -769,6 +771,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
   const uploadUi = getTrackerUiConfig(resolvedMode).uploadFlows;
   try {
     const userId = interaction.user.id;
+    const userLabel = resolveInteractionDisplayName(interaction);
     const summary = resolvedMode === 'lifetime'
       ? await (async () => {
           const entries = await getLocalLifetimeData(userId).catch(() => [] as Array<Record<string, unknown>>);
@@ -798,6 +801,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
     const initialSignature = summarySignature(summary);
     const embed = createInitialEmbed({
       mode: resolvedMode,
+      userLabel,
       userId,
       lastRun: summary?.lastRun ?? null,
       runCount: summary?.allRuns?.length ?? 0,
@@ -821,6 +825,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
 
         const refreshedEmbed = createInitialEmbed({
           mode: resolvedMode,
+          userLabel,
           userId,
           lastRun: refreshed.lastRun ?? null,
           runCount: refreshed.allRuns?.length ?? 0,
@@ -832,7 +837,11 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
     }
   } catch (error) {
     await logError(interaction.client as LogClient, interaction.user, error, 'render_track_menu');
-    await interaction.reply({ content: uploadUi.openMenuFailed, ephemeral: true }).catch(() => {});
+    if (interaction.replied || interaction.deferred) {
+      await interaction.editReply({ content: uploadUi.openMenuFailed, embeds: [], components: [], files: [], attachments: [] }).catch(() => {});
+    } else {
+      await interaction.reply({ content: uploadUi.openMenuFailed, ephemeral: true }).catch(() => {});
+    }
   }
 }
 

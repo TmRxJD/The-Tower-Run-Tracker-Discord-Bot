@@ -56,7 +56,7 @@ describe('local-run-store parity hydration', () => {
       ],
     });
 
-    const store = await import('./local-run-store');
+    const store = await import('./local-run-store.js');
     const items = await store.getQueueItems('user-1');
 
     expect(items).toHaveLength(1);

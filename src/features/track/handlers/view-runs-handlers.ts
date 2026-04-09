@@ -22,6 +22,7 @@ import { renderViewRunsTablePng } from '../ui/view-runs-chart';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
+import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { trimDisplayTimeSeconds } from './upload-helpers';
@@ -144,11 +145,14 @@ const TRACK_COLUMN_OPTIONS = [
   'Coins/Hr',
   'Cells/Hr',
   'Dice/Hr',
+  'Golden Tower',
+  'Black Hole',
+  'Spotlight',
+  'Death Wave',
   'Orbs',
-  'SL',
-  'DW',
-  'GB',
-  'SMN',
+  'Golden Bot',
+  'Amp Bot',
+  'Summoned',
   'Type',
   'Date/Time',
 ] as const;
@@ -162,8 +166,17 @@ function formatMetric(value: unknown): string {
   return formatNumberForDisplay(parsed);
 }
 
-function normalizeCoveragePercentages(run: RunListItem): Record<'Orbs' | 'SL' | 'DW' | 'GB' | 'SMN', string> {
-  const fallback = { Orbs: 'N/A', SL: 'N/A', DW: 'N/A', GB: 'N/A', SMN: 'N/A' };
+function normalizeCoveragePercentages(run: RunListItem): Record<'Golden Tower' | 'Black Hole' | 'Spotlight' | 'Death Wave' | 'Orbs' | 'Golden Bot' | 'Amp Bot' | 'Summoned', string> {
+  const fallback = {
+    'Golden Tower': 'N/A',
+    'Black Hole': 'N/A',
+    Spotlight: 'N/A',
+    'Death Wave': 'N/A',
+    Orbs: 'N/A',
+    'Golden Bot': 'N/A',
+    'Amp Bot': 'N/A',
+    Summoned: 'N/A',
+  };
   const coverage = generateCoverageDescription(run);
   if (!coverage) return fallback;
 
@@ -171,15 +184,18 @@ function normalizeCoveragePercentages(run: RunListItem): Record<'Orbs' | 'SL' | 
   const map = { ...fallback };
 
   for (const line of lines) {
-    const match = /^([A-Za-z]+):\s*([^\s]+)$/.exec(line);
+    const match = /^(.+?):\s*([^\s]+)$/.exec(line);
     if (!match) continue;
-    const key = match[1].toLowerCase();
+    const key = match[1].toLowerCase().trim();
     const value = match[2];
+    if (key === 'golden tower') map['Golden Tower'] = value;
+    if (key === 'black hole') map['Black Hole'] = value;
+    if (key === 'spotlight') map.Spotlight = value;
+    if (key === 'death wave') map['Death Wave'] = value;
     if (key === 'orbs') map.Orbs = value;
-    if (key === 'sl') map.SL = value;
-    if (key === 'dw') map.DW = value;
-    if (key === 'gb') map.GB = value;
-    if (key === 'summon' || key === 'summoned') map.SMN = value;
+    if (key === 'golden bot') map['Golden Bot'] = value;
+    if (key === 'amp bot') map['Amp Bot'] = value;
+    if (key === 'summon' || key === 'summoned') map.Summoned = value;
   }
 
   return map;
@@ -217,7 +233,14 @@ function buildRunIndexMap(runs: RunListItem[]): Map<string, number> {
 }
 
 function normalizeTrackColumnOrder(columns: string[]): (typeof TRACK_COLUMN_OPTIONS[number])[] {
-  const mapped = columns.map((column) => (column === 'Summon' ? 'SMN' : column));
+  const legacyMap: Record<string, typeof TRACK_COLUMN_OPTIONS[number]> = {
+    Summon: 'Summoned',
+    SMN: 'Summoned',
+    SL: 'Spotlight',
+    DW: 'Death Wave',
+    GB: 'Golden Bot',
+  };
+  const mapped = columns.map((column) => legacyMap[column] ?? column);
   const selected = new Set(mapped.filter((column): column is typeof TRACK_COLUMN_OPTIONS[number] => TRACK_COLUMN_OPTIONS.includes(column as typeof TRACK_COLUMN_OPTIONS[number])));
   if (!selected.size) {
     return [...TRACK_COLUMN_OPTIONS];
@@ -247,12 +270,15 @@ function buildTrackColumnValue(run: RunListItem, column: typeof TRACK_COLUMN_OPT
     'Cells/Hr': String(cellsHr),
     'Dice/Hr': String(diceHr),
     'Date/Time': dateTime,
-      Type: String(run.type ?? 'Farming'),
+    Type: String(run.type ?? 'Farming'),
+    'Golden Tower': coverage['Golden Tower'],
+    'Black Hole': coverage['Black Hole'],
+    Spotlight: coverage.Spotlight,
+    'Death Wave': coverage['Death Wave'],
     Orbs: coverage.Orbs,
-    SL: coverage.SL,
-    DW: coverage.DW,
-    GB: coverage.GB,
-    SMN: coverage.SMN,
+    'Golden Bot': coverage['Golden Bot'],
+    'Amp Bot': coverage['Amp Bot'],
+    Summoned: coverage.Summoned,
   };
 
   return clampCellValue(valueByColumn[column]);
@@ -772,7 +798,7 @@ export async function handleTrackMenuShareRunsConfirm(interaction: TrackMenuInte
     } else {
       const settings = await getUserSettings(session.userId).catch(() => null);
       embed = buildShareEmbed({
-        user: interaction.user,
+        user: buildEmbedUserFromInteraction(interaction),
         run,
         runTypeCounts: session.runTypeCounts,
         options: {
@@ -783,6 +809,7 @@ export async function handleTrackMenuShareRunsConfirm(interaction: TrackMenuInte
           includeTotalCoins: settings?.shareTotalCoins !== false,
           includeTotalCells: settings?.shareTotalCells !== false,
           includeTotalDice: settings?.shareTotalDice !== false,
+          includeDeathDefy: settings?.shareDeathDefy !== false,
           includeCoinsPerHour: settings?.shareCoinsPerHour !== false,
           includeCellsPerHour: settings?.shareCellsPerHour !== false,
           includeDicePerHour: settings?.shareDicePerHour !== false,

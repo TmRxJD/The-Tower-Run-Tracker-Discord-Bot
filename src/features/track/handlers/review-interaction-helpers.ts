@@ -41,7 +41,7 @@ function isTrackReplyLike(value: unknown): value is TrackReplyInteractionLike {
     && typeof record.editReply === 'function';
 }
 
-export function asTrackReplyInteraction(interaction: ReviewInteraction | MessageComponentInteraction): TrackReplyInteractionLike {
+export function asTrackReplyInteraction(interaction: unknown): TrackReplyInteractionLike {
   if (!isTrackReplyLike(interaction)) {
     throw new Error('Interaction does not satisfy the tracker reply contract');
   }
