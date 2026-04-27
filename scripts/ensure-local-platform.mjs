@@ -11,25 +11,36 @@ const localPlatformDistPath = resolve(localPlatformPath, 'dist', 'tools', 'index
 const modeFilePath = resolve(repoRoot, '.platform-mode')
 const mode = resolveMode()
 const isCi = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
-const shouldUseLocal = mode !== 'registry' && !isCi && existsSync(localPlatformPath)
+const shouldUseLocal = mode === 'local' && !isCi && existsSync(localPlatformPath)
+
+function resolveDeploymentMode() {
+  const deploymentMode = (process.env.DEPLOYMENT_MODE ?? process.env.NODE_ENV ?? '').trim().toLowerCase()
+  return deploymentMode === 'prod' || deploymentMode === 'production' ? 'prod' : 'dev'
+}
 
 function resolveMode() {
   const envMode = process.env.TMRXJD_PLATFORM_MODE?.trim().toLowerCase()
-  if (envMode === 'registry' || envMode === 'auto') {
+  if (envMode === 'registry' || envMode === 'local' || envMode === 'auto') {
     return envMode
   }
 
-  if (!existsSync(modeFilePath)) {
-    return 'auto'
+  if (process.env.DEPLOYMENT_MODE || process.env.NODE_ENV) {
+    return resolveDeploymentMode() === 'prod' ? 'registry' : 'local'
   }
 
-  const fileMode = readFileSync(modeFilePath, 'utf8').trim().toLowerCase()
-  return fileMode === 'registry' ? 'registry' : 'auto'
+  if (existsSync(modeFilePath)) {
+    const fileMode = readFileSync(modeFilePath, 'utf8').trim().toLowerCase()
+    if (fileMode === 'registry' || fileMode === 'local') {
+      return fileMode
+    }
+  }
+
+  return resolveDeploymentMode() === 'prod' ? 'registry' : 'local'
 }
 
 function setMode(nextMode) {
-  if (nextMode === 'registry') {
-    writeFileSync(modeFilePath, 'registry\n', 'utf8')
+  if (nextMode === 'registry' || nextMode === 'local') {
+    writeFileSync(modeFilePath, `${nextMode}\n`, 'utf8')
     return
   }
 
@@ -95,6 +106,31 @@ function linkLocalPlatform() {
   process.stdout.write(`[platform] linked local package from ${localPlatformPath}\n`)
 }
 
+function ensurePublishedPlatform() {
+  if (shouldUseLocal) {
+    process.stdout.write('[platform] using local package resolution\n')
+    return
+  }
+
+  if (!isSymlinkToLocalPlatform() && existsSync(installedPath)) {
+    process.stdout.write('[platform] published package already active\n')
+    return
+  }
+
+  process.stdout.write('[platform] restoring published package resolution\n')
+  rmSync(installedPath, { recursive: true, force: true })
+  reinstallForMode('registry')
+}
+
+function ensurePlatformResolution() {
+  if (shouldUseLocal) {
+    linkLocalPlatform()
+    return
+  }
+
+  ensurePublishedPlatform()
+}
+
 function printStatus() {
   if (isSymlinkToLocalPlatform()) {
     process.stdout.write(`mode=${mode}\nactive=local\npath=${localPlatformPath}\n`)
@@ -106,25 +142,32 @@ function printStatus() {
 
 function useRegistry() {
   setMode('registry')
-  rmSync(installedPath, { recursive: true, force: true })
-  reinstallForMode('registry')
+  ensurePublishedPlatform()
 }
 
 function useLocal() {
-  setMode('auto')
+  setMode('local')
   linkLocalPlatform()
+}
+
+function useAuto() {
+  setMode('auto')
+  ensurePlatformResolution()
 }
 
 switch (action) {
   case 'ensure':
   case 'link':
-    linkLocalPlatform()
+    ensurePlatformResolution()
     break
   case 'use-local':
     useLocal()
     break
   case 'use-registry':
     useRegistry()
+    break
+  case 'use-auto':
+    useAuto()
     break
   case 'status':
     printStatus()

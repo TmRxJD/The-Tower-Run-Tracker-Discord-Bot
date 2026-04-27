@@ -11,7 +11,7 @@ export type ReviewInteraction = MessageComponentInteraction | ModalSubmitInterac
 export function ensureType(value: unknown) {
   if (!value) return 'Farming';
   const text = String(value).trim();
-  const allowed = ['Farming', 'Overnight', 'Tournament', 'Milestone'];
+  const allowed = ['Farming', 'Overnight', 'Tournament', 'Milestone', 'Dissonance'];
   const match = allowed.find((option) => option.toLowerCase() === text.toLowerCase());
   return match || 'Farming';
 }

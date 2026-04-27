@@ -11,7 +11,7 @@ import type { RunDataRecord } from '../shared/track-review-records';
 
 type RawParseFieldValue = {
   value: string | null;
-  fromValuesRecord: boolean;
+  fromRawParseFields: boolean;
 };
 
 type UpdatedRawParseField = {
@@ -25,26 +25,43 @@ type UpdatedRawParseSection = {
 };
 
 function readScannedBattleReportValue(data: RunDataRecord, normalizedData: Record<string, unknown>, key: string): RawParseFieldValue {
-  const valuesRecord = data.values && typeof data.values === 'object'
-    ? data.values as Record<string, unknown>
+  const rawParseFields = data.rawParseFields && typeof data.rawParseFields === 'object'
+    ? data.rawParseFields as Record<string, unknown>
     : null;
 
-  if (valuesRecord && Object.prototype.hasOwnProperty.call(valuesRecord, key)) {
-    const value = valuesRecord[key];
+  if (rawParseFields && Object.prototype.hasOwnProperty.call(rawParseFields, key)) {
+    const value = rawParseFields[key];
     if (value === undefined || value === null) {
-      return { value: null, fromValuesRecord: true };
+      return { value: null, fromRawParseFields: true };
     }
 
     return {
       value: String(value).trim(),
-      fromValuesRecord: true,
+      fromRawParseFields: true,
     };
   }
 
+  if (key === 'battleDate') {
+    const formattedIsoBattleDate = typeof normalizedData.dateIso === 'string' && typeof normalizedData.time24h === 'string'
+      ? (() => {
+          const timestamp = new Date(`${normalizedData.dateIso}T${normalizedData.time24h}`);
+          if (Number.isNaN(timestamp.getTime())) return '';
+          return `${formatDate(timestamp)} ${formatTime(timestamp)}`;
+        })()
+      : '';
+    const battleDate = typeof normalizedData.battleDate === 'string' && normalizedData.battleDate.trim().length > 0
+      ? normalizedData.battleDate.trim()
+      : formattedIsoBattleDate || [normalizedData.date, normalizedData.time]
+          .map(value => typeof value === 'string' ? value.trim() : '')
+          .filter(Boolean)
+          .join(' ');
+    return { value: battleDate || null, fromRawParseFields: false };
+  }
+
   const value = normalizedData[key];
-  if (value === undefined || value === null) return { value: null, fromValuesRecord: false };
+  if (value === undefined || value === null) return { value: null, fromRawParseFields: false };
   const text = String(value).trim();
-  return { value: text ? text : null, fromValuesRecord: false };
+  return { value: text ? text : null, fromRawParseFields: false };
 }
 
 const UPDATED_RAW_PARSE_LAYOUT: UpdatedRawParseSection[] = [
@@ -211,7 +228,7 @@ const UPDATED_RAW_PARSE_LAYOUT: UpdatedRawParseSection[] = [
     fields: [
       { key: 'totalCoins', label: 'Coins Earned' },
       { key: 'coinsFromCoinUpgrade', label: 'Coin Bonus Upgrade' },
-      { key: 'coinsFromCoinBonuses', label: 'Coins From Coin Bonuses' },
+      { key: 'coinsFromCoinBonuses', label: 'Other Coin Bonuses' },
       { key: 'criticalCoinCoins', label: 'Critical Coin' },
       { key: 'coinsFromGoldenTower', label: 'Golden Tower' },
       { key: 'coinsFromGoldenCombo', label: 'Golden Combo' },
@@ -220,6 +237,7 @@ const UPDATED_RAW_PARSE_LAYOUT: UpdatedRawParseSection[] = [
       { key: 'coinsFromBlackhole', label: 'Black Hole' },
       { key: 'coinsFromOrbs', label: 'Orbs' },
       { key: 'goldenBotCoinsEarned', label: 'Golden Bot' },
+      { key: 'coinsPerKill', label: 'Coins / Kill' },
       { key: 'coinsFromWaveSkip', label: 'Wave Skip' },
       { key: 'coinsPerWave', label: 'Coins / Wave' },
       { key: 'coinsFetched', label: 'Coins Fetched' },
@@ -286,11 +304,11 @@ function isUpdatedBattleReportShape(data: RunDataRecord, normalizedData: Record<
 }
 
 function formatRawParseLine(field: UpdatedRawParseField, rawField: RawParseFieldValue): string | null {
-  if (rawField.value === null && !rawField.fromValuesRecord) {
+  if (rawField.value === null && !rawField.fromRawParseFields) {
     return null;
   }
 
-  if (rawField.fromValuesRecord && rawField.value === '') {
+  if (rawField.fromRawParseFields && rawField.value === '') {
     return field.label;
   }
 
@@ -344,6 +362,7 @@ export function resolveRawParseSourceData(runData: RunDataRecord, canonicalRunDa
   return {
     ...runData,
     ...canonicalRunData,
+    rawParseFields: canonicalRunData.rawParseFields ?? runData.rawParseFields,
   };
 }
 

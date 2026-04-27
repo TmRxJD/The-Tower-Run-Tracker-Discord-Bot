@@ -7,8 +7,12 @@ import {
   buildTrackerLeaderboardCloudDocument,
   buildTrackerLifetimeCloudWritePayload,
   buildTrackerRunCloudWritePayload,
+  buildTrackerRunMainDocumentPayload,
+  TRACKER_RUN_EXTENDED_FIELDS,
   buildTrackerRunIdentityKey,
   buildTrackerRunLookupUserIds,
+  TRACKER_RUN_MAIN_COLLECTION_META_FIELDS,
+  TRACKER_RUN_MAIN_COLLECTION_OPTIONAL_FIELDS,
   buildTrackerRunOwnerUserId,
   buildTrackerRunPermissionUserIds,
   createOrUpdateCloudDocumentWithFallback,
@@ -44,6 +48,8 @@ import {
   sanitizeTrackerRunCloudPayload,
   sanitizeTrackerLeaderboardDocumentId,
   stripUndefinedFields,
+  syncTrackerRunExtendedDocument,
+  TRACKER_RUN_OPTIONAL_STRING_FIELDS,
   trackerLeaderboardCanonicalMetrics,
   trackerRunsShareDuplicateIdentity,
   trackerLifetimeCloudDocumentSchema,
@@ -160,6 +166,50 @@ type GetLastRunOptions = {
   cloudSyncMode?: 'full' | 'latest' | 'none';
 };
 
+function decodeBase64UrlSegment(segment: string): string | null {
+  const normalized = segment.trim();
+  if (!normalized) return null;
+
+  const padded = normalized.replace(/-/g, '+').replace(/_/g, '/');
+  const remainder = padded.length % 4;
+  const base64 = remainder === 0 ? padded : `${padded}${'='.repeat(4 - remainder)}`;
+
+  try {
+    return Buffer.from(base64, 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function resolveDevJwtAppwriteUserId(): string | null {
+  if (getAppConfig().deploymentMode !== 'dev') {
+    return null;
+  }
+
+  const jwt = process.env.APPWRITE_JWT?.trim();
+  if (!jwt) {
+    return null;
+  }
+
+  const payloadSegment = jwt.split('.')[1]?.trim();
+  if (!payloadSegment) {
+    return null;
+  }
+
+  const decoded = decodeBase64UrlSegment(payloadSegment);
+  if (!decoded) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(decoded) as { userId?: unknown };
+    const candidate = typeof parsed.userId === 'string' ? parsed.userId.trim() : '';
+    return isTrackerAppwriteUserId(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
 function getRunCloudIdentity(userId: string): {
   ownerUserId: string;
   lookupUserIds: string[];
@@ -169,7 +219,7 @@ function getRunCloudIdentity(userId: string): {
   const canonicalCandidate = resolveCanonicalAppwriteUserId(normalized, DISCORD_TO_APPWRITE_MAP);
   const mappedAppwriteUserId = canonicalCandidate && isTrackerAppwriteUserId(canonicalCandidate)
     ? canonicalCandidate
-    : null;
+    : resolveDevJwtAppwriteUserId();
   const ownerUserId = buildTrackerRunOwnerUserId({
     discordUserId: isTrackerDiscordSnowflake(normalized) ? normalized : null,
     appwriteUserId: isTrackerAppwriteUserId(normalized) ? normalized : mappedAppwriteUserId,
@@ -319,6 +369,8 @@ function appwriteIds() {
 }
 
 const RUN_DOCUMENTS_PAGE_SIZE = 100;
+const RUNS_EXTENDED_COLLECTION_ID = 'runs_extended_data';
+const RUNS_EXTENDED_SCHEMA_VERSION = 1;
 const RUNS_HYDRATION_COOLDOWN_MS = 5 * 60 * 1000;
 const LIFETIME_HYDRATION_COOLDOWN_MS = 5 * 60 * 1000;
 const RUN_HYDRATION_MARKER_KEY_PREFIX = 'tracker:run-docs-hydrated:v1:';
@@ -419,7 +471,7 @@ async function listRunDocumentsForHydration(userId: string): Promise<RunRecord[]
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
   const { lookupUserIds } = getRunCloudIdentity(userId);
 
-  return await listCloudDocumentsByUserIds({
+  const baseDocuments = await listCloudDocumentsByUserIds({
     databases,
     databaseId: runsDatabaseId,
     collectionId: runsCollectionId,
@@ -436,6 +488,131 @@ async function listRunDocumentsForHydration(userId: string): Promise<RunRecord[]
       return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
     },
   });
+
+  const extendedDocuments = await listExtendedRunDocumentsForUser(userId);
+  return mergeRunDocumentsWithExtended(baseDocuments, extendedDocuments);
+}
+
+function isCollectionNotFoundError(error: unknown): boolean {
+  const typed = error as { code?: number; type?: string; message?: string };
+  const message = String(typed.message || '').toLowerCase();
+  return typed.code === 404
+    || typed.type === 'collection_not_found'
+    || message.includes('collection not found');
+}
+
+function shouldIgnoreExtendedRunCollectionError(error: unknown): boolean {
+  return isCollectionNotFoundError(error) || isUnauthorizedAppwriteError(error);
+}
+
+function pickExtendedRunDocumentFields(raw: Record<string, unknown>): Record<string, unknown> {
+  const direct: Record<string, unknown> = {};
+  for (const key of TRACKER_RUN_EXTENDED_FIELDS) {
+    const value = raw[key];
+    if (value !== null && value !== undefined && String(value).trim().length > 0) {
+      direct[key] = String(value);
+    }
+  }
+
+  return direct;
+}
+
+function mergeRunDocumentsWithExtended(baseDocuments: RunRecord[], extendedDocuments: RunRecord[]): RunRecord[] {
+  if (!extendedDocuments.length) return baseDocuments;
+
+  const extendedById = new Map<string, Record<string, unknown>>();
+  for (const doc of extendedDocuments) {
+    const id = typeof doc.$id === 'string' ? doc.$id.trim() : '';
+    if (!id) continue;
+    extendedById.set(id, pickExtendedRunDocumentFields(doc));
+  }
+
+  return baseDocuments.map((doc) => {
+    const id = typeof doc.$id === 'string' ? doc.$id.trim() : '';
+    const extended = id ? extendedById.get(id) : undefined;
+    return extended ? { ...doc, ...extended } : doc;
+  });
+}
+
+async function listExtendedRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
+  const { databases } = createAppwriteClient();
+  const { runsDatabaseId } = appwriteIds();
+  const { lookupUserIds } = getRunCloudIdentity(userId);
+  const documents: RunRecord[] = [];
+
+  try {
+    for (const candidateUserId of lookupUserIds) {
+      let cursorAfter: string | null = null;
+
+      while (true) {
+        const page: { documents?: unknown[] } = await databases.listDocuments(runsDatabaseId, RUNS_EXTENDED_COLLECTION_ID, [
+          Query.equal('userId', candidateUserId),
+          Query.limit(RUN_DOCUMENTS_PAGE_SIZE),
+          ...(cursorAfter ? [Query.cursorAfter(cursorAfter)] : []),
+        ]);
+
+        const pageDocuments: RunRecord[] = Array.isArray(page.documents) ? page.documents as RunRecord[] : [];
+        if (!pageDocuments.length) break;
+
+        documents.push(...pageDocuments);
+
+        const last: RunRecord | undefined = pageDocuments[pageDocuments.length - 1];
+        const lastId: string = typeof last?.$id === 'string' ? last.$id.trim() : '';
+        if (!lastId || pageDocuments.length < RUN_DOCUMENTS_PAGE_SIZE) break;
+        cursorAfter = lastId;
+      }
+    }
+  } catch (error) {
+    if (shouldIgnoreExtendedRunCollectionError(error)) {
+      logger.warn('Skipping tracker extended run document read', {
+        userId,
+        reason: error instanceof Error ? error.message : 'unavailable',
+      });
+      return [];
+    }
+    throw error;
+  }
+
+  return documents;
+}
+
+async function syncExtendedRunDocument(params: {
+  runsDatabaseId: string;
+  runId: string;
+  userId: string;
+  run: RunRecord;
+  permissionUserIds: string[];
+}): Promise<void> {
+  const permissions = params.permissionUserIds.length
+    ? params.permissionUserIds.flatMap((permissionUserId) => ([
+        Permission.read(Role.user(permissionUserId)),
+        Permission.update(Role.user(permissionUserId)),
+        Permission.delete(Role.user(permissionUserId)),
+      ]))
+    : undefined;
+
+  try {
+    await syncTrackerRunExtendedDocument({
+      databases: createAppwriteClient().databases,
+      databaseId: params.runsDatabaseId,
+      collectionId: RUNS_EXTENDED_COLLECTION_ID,
+      runId: params.runId,
+      userId: params.userId,
+      run: params.run,
+      schemaVersion: RUNS_EXTENDED_SCHEMA_VERSION,
+      ...(permissions ? { permissions } : {}),
+      shouldIgnoreCollectionError: shouldIgnoreExtendedRunCollectionError,
+    });
+  } catch (error) {
+    if (shouldIgnoreExtendedRunCollectionError(error)) {
+      logger.warn('Skipping tracker extended run document sync', {
+        runId: params.runId,
+        reason: error instanceof Error ? error.message : 'unavailable',
+      });
+      return;
+    }
+    throw error;
+  }
 }
 
 function migrationPercent(processed: number, total: number): number {
@@ -528,23 +705,11 @@ export async function ensureRunDocumentsHydratedForUser(userId: string, options?
   }
 }
 
-function toRunDocumentPayload(params: {
-  ownerUserId: string;
-  username: string;
-  run: RunRecord;
-}): Record<string, unknown> {
-  return sanitizeTrackerRunCloudPayload(buildTrackerRunCloudWritePayload({
-    userId: params.ownerUserId,
-    username: String(params.run.username ?? params.username ?? 'unknown'),
-    runData: params.run,
-  }));
-}
-
 async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
   const { lookupUserIds } = getRunCloudIdentity(userId);
-  return await listCloudDocumentsByUserIds({
+  const baseDocuments = await listCloudDocumentsByUserIds({
     databases,
     databaseId: runsDatabaseId,
     collectionId: runsCollectionId,
@@ -565,6 +730,9 @@ async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
       return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
     },
   });
+
+  const extendedDocuments = await listExtendedRunDocumentsForUser(userId);
+  return mergeRunDocumentsWithExtended(baseDocuments, extendedDocuments);
 }
 
 async function findExistingRunDocumentForCandidate(userId: string, candidate: RunRecord): Promise<RunRecord | null> {
@@ -594,10 +762,11 @@ async function writeRunDocument(params: {
     ?? pickString(params.existingDoc?.runId)
     ?? ID.unique();
 
-  const payload = toRunDocumentPayload({
-    ownerUserId,
+  const payload = buildTrackerRunMainDocumentPayload({
+    userId: ownerUserId,
     username: params.username,
     run: params.run,
+    existing: params.existingDoc ?? null,
   });
   const permissions = permissionUserIds.flatMap(userId => ([
     Permission.read(Role.user(userId)),
@@ -638,6 +807,14 @@ async function writeRunDocument(params: {
       strippedUnsupportedFields,
     });
   }
+
+  await syncExtendedRunDocument({
+    runsDatabaseId,
+    runId: documentId,
+    userId: ownerUserId,
+    run: params.run,
+    permissionUserIds,
+  });
 
   return { runId: documentId, screenshotUrl: pickString(payload.screenshotUrl) ?? null };
 }
@@ -1356,8 +1533,11 @@ async function cloudGetLatestRun(userId: string): Promise<TrackerRun | null> {
   const doc = Array.isArray(page.documents) ? page.documents[0] as RunRecord | undefined : undefined;
   if (!doc) return null;
 
-  const username = pickString(doc.username) ?? 'unknown';
-  return hydrateTrackerCloudRun(doc, userId, username) as TrackerRun;
+  const extended = await getDocumentOrNull(databases, runsDatabaseId, RUNS_EXTENDED_COLLECTION_ID, String(doc.$id ?? '')) as RunRecord | null;
+  const mergedDoc = extended ? { ...doc, ...pickExtendedRunDocumentFields(extended) } : doc;
+
+  const username = pickString(mergedDoc.username) ?? 'unknown';
+  return hydrateTrackerCloudRun(mergedDoc, userId, username) as TrackerRun;
 }
 
 async function hydrateLatestRunFromCloud(userId: string): Promise<boolean> {
@@ -1475,6 +1655,19 @@ async function cloudDeleteRun(userId: string, runId: string) {
     collectionId: runsCollectionId,
     documentId: targetId,
   });
+
+  try {
+    await deleteCloudDocumentIfExists({
+      databases: createAppwriteClient().databases,
+      databaseId: runsDatabaseId,
+      collectionId: RUNS_EXTENDED_COLLECTION_ID,
+      documentId: targetId,
+    });
+  } catch (error) {
+    if (!shouldIgnoreExtendedRunCollectionError(error)) {
+      throw error;
+    }
+  }
 
   return true;
 }

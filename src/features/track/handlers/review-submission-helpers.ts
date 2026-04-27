@@ -16,20 +16,42 @@ export type LocalRunSummary = {
   runTypeCounts: Record<string, number>;
 };
 
+function flattenRunDataValues(source: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  if (!source || typeof source !== 'object') return {};
+
+  const values = source.values && typeof source.values === 'object' && !Array.isArray(source.values)
+    ? source.values as Record<string, unknown>
+    : null;
+
+  const { values: _ignoredValues, ...rest } = source;
+  return {
+    ...(values ?? {}),
+    ...rest,
+  };
+}
+
+function canonicalizeSubmissionRunData(...sources: Array<Record<string, unknown> | null | undefined>) {
+  return canonicalizeTrackerRunData(
+    sources.reduce<Record<string, unknown>>((merged, source) => ({
+      ...merged,
+      ...flattenRunDataValues(source),
+    }), {}),
+  );
+}
+
 export function buildSubmitRunData(pending: PendingRecordLike, payloadRunData: Record<string, unknown>) {
-  return canonicalizeTrackerRunData({
-    ...(pending.canonicalRunData ?? {}),
-    ...pending.runData,
-    ...payloadRunData,
+  return canonicalizeSubmissionRunData(
+    pending.canonicalRunData ?? {},
+    pending.runData,
+    {
+      ...payloadRunData,
     screenshotUrl: pending.screenshot?.url ?? pending.runData?.screenshotUrl ?? undefined,
-  });
+    },
+  );
 }
 
 export function buildCanonicalRunData(pending: PendingRecordLike, submitRunData: Record<string, unknown>) {
-  return canonicalizeTrackerRunData({
-    ...(pending.canonicalRunData ?? {}),
-    ...submitRunData,
-  });
+  return canonicalizeSubmissionRunData(pending.canonicalRunData ?? {}, submitRunData);
 }
 
 function readTrimmedString(value: unknown): string | null {
@@ -88,8 +110,7 @@ export function resolveSubmissionIds(params: {
 }
 
 export function buildCoverageSource(canonicalRunData: Record<string, unknown>, resolvedRunId: string | null, resolvedLocalId: string | null) {
-  return canonicalizeTrackerRunData({
-    ...canonicalRunData,
+  return canonicalizeSubmissionRunData(canonicalRunData, {
     ...(resolvedRunId ? { runId: resolvedRunId } : {}),
     ...(resolvedLocalId ? { localId: resolvedLocalId } : {}),
   });

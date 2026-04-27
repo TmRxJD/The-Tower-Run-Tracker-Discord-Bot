@@ -57,7 +57,7 @@ import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '.
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { createManualHandlers } from './manual-handlers';
-import { getTrackerFlowMode } from '../flow-mode-store';
+import { getTrackerFlowMode, getTrackerInitialRunType } from '../flow-mode-store';
 import { parseLifetimeStatsFromOcrText } from './lifetime-ocr';
 
 type LooseRecord = Record<string, unknown>;
@@ -268,9 +268,12 @@ function applyAutoTournament(processedData: RunDataLike, rawTierCandidates: unkn
   }
 }
 
-async function createPendingRunWithMetadata(params: { userId: string; username: string; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null }) {
+async function createPendingRunWithMetadata(params: { userId: string; username: string; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null; defaultRunType?: string | null }) {
   const { userId, username, runData, screenshot, canonicalRunData } = params;
   const hydratedRunData = { ...runData };
+  const rawParseFields = hydratedRunData.rawParseFields && typeof hydratedRunData.rawParseFields === 'object' && !Array.isArray(hydratedRunData.rawParseFields)
+    ? { ...(hydratedRunData.rawParseFields as Record<string, unknown>) }
+    : null;
   let isDuplicate = false;
   let decimalPreference = 'Period (.)';
 
@@ -298,9 +301,11 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
     username,
     runData: canonicalizeTrackerRunData(hydratedRunData),
     canonicalRunData: canonicalRunData ? canonicalizeTrackerRunData(canonicalRunData) : null,
+    rawParseFields,
     screenshot,
     isDuplicate,
     decimalPreference,
+    defaultRunType: params.defaultRunType ?? undefined,
   });
 }
 
@@ -334,8 +339,8 @@ function buildProcessedRunDataFromParsed(
   applyTierMetadata(processedData, [runDataRecord['Tier'], runData.tier]);
   applyAutoTournament(processedData, [runDataRecord['Tier'], runData.tier]);
 
-  if (params.mode === 'track' && !processedData.type) {
-    processedData.type = params.defaultRunType || 'Farming';
+  if (params.mode === 'track') {
+    processedData.type = params.defaultRunType || processedData.type || 'Farming';
   }
 
   if (params.preNote) {
@@ -608,7 +613,7 @@ export async function handleDirectAttachment(
     };
 
     if (resolvedMode === 'track') {
-      runData.type = result.processedData.type || defaultRunType || 'Farming';
+      runData.type = defaultRunType || result.processedData.type || 'Farming';
     }
 
     const pending = await createPendingRunWithMetadata({
@@ -616,6 +621,7 @@ export async function handleDirectAttachment(
       username,
       runData,
       screenshot: { url: attachment.url, name: attachment.name ?? attachment.id, contentType: attachment.contentType ?? undefined },
+      defaultRunType: defaultRunType ?? undefined,
     });
 
     await renderDataReview(interaction, pending.token, pending);
@@ -642,13 +648,14 @@ export async function handleUploadFlow(interaction: MessageComponentInteraction 
   const modal = new ModalBuilder().setCustomId(TRACKER_IDS.flow.uploadModal).setTitle(uploadUi.uploadModalTitle);
 
   const includeTypeSelection = mode === 'track';
+  const initialRunType = getTrackerInitialRunType(userId);
   const runTypeSelect = includeTypeSelection
     ? new Builders.StringSelectMenuBuilder()
       .setCustomId(TRACKER_IDS.flow.uploadRunType)
       .setPlaceholder(ui.review.typePlaceholder)
       .setMinValues(1)
       .setMaxValues(1)
-      .addOptions(...uploadUi.runTypeOptions.map((item, idx) => ({ label: item, value: item, default: idx === 0 })))
+      .addOptions(...uploadUi.runTypeOptions.map((item) => ({ label: item, value: item, default: initialRunType ? item === initialRunType : item === 'Farming' })))
     : null;
   const labeledRunType = runTypeSelect
     ? new Builders.LabelBuilder().setLabel(uploadUi.runTypeLabel).setStringSelectMenuComponent(runTypeSelect)
@@ -682,7 +689,7 @@ export async function handleUploadFlow(interaction: MessageComponentInteraction 
       /* ignore */
     }
 
-    let selectedRunType: string | undefined = mode === 'track' ? 'Farming' : undefined;
+    const selectedRunType: string | undefined = mode === 'track' ? (getTrackerInitialRunType(userId) ?? 'Farming') : undefined;
     let normalizedAttachment: NormalizedAttachment | null = null;
 
     const assignNormalizedAttachment = (file: unknown) => {
@@ -695,11 +702,8 @@ export async function handleUploadFlow(interaction: MessageComponentInteraction 
 
     try {
       if (mode === 'track') {
-        const submittedRecord = toRecord(submitted);
-        const typeComp = findByCustomIdDeep(submittedRecord.components, TRACKER_IDS.flow.uploadRunType);
-        let values = Array.isArray(typeComp?.values) ? typeComp.values : [];
-        if (!values.length && typeComp && typeof typeComp.value === 'string') values = [typeComp.value];
-        if (values.length) selectedRunType = values[0];
+        // Modal select values can report the first option instead of the intended default.
+        // Keep the run type resolved from /track command state.
       }
     } catch {
       /* ignore */
@@ -1034,6 +1038,7 @@ export async function handleDirectTextPaste(
       runData: processedData,
       canonicalRunData: runData,
       screenshot: attachmentOrNull ? { url: attachmentOrNull.url, name: attachmentOrNull.name, contentType: attachmentOrNull.contentType } : null,
+      defaultRunType: defaultRunType ?? undefined,
     });
 
     if (resolvedMode === 'track' && attachmentOrNull) {
@@ -1087,11 +1092,11 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
       const runData = toRunDataLike(parseRunDataFromText(text));
       const processedData = buildProcessedRunDataFromParsed(runData, {
         preNote,
-        defaultRunType: 'Farming',
+        defaultRunType: getTrackerInitialRunType(userId) ?? 'Farming',
         mode,
       });
 
-      const pending = await createPendingRunWithMetadata({ userId, username, runData: processedData, canonicalRunData: runData, screenshot: null });
+      const pending = await createPendingRunWithMetadata({ userId, username, runData: processedData, canonicalRunData: runData, screenshot: null, defaultRunType: getTrackerInitialRunType(userId) ?? 'Farming' });
       await renderDataReview(interaction as unknown as TrackReplyInteractionLike, pending.token, pending);
     } catch (err: unknown) {
       if (String(err || '').includes('TIME')) {
@@ -1127,13 +1132,14 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
   const modal = new ModalBuilder().setCustomId(TRACKER_IDS.flow.addRunModal).setTitle(uploadUi.addRunModalTitle);
 
   const includeTypeSelection = mode === 'track';
+  const addRunInitialRunType = getTrackerInitialRunType(userId);
   const runTypeSelect = includeTypeSelection
     ? new Builders.StringSelectMenuBuilder()
       .setCustomId(TRACKER_IDS.flow.addRunType)
       .setPlaceholder(ui.review.typePlaceholder)
       .setMinValues(1)
       .setMaxValues(1)
-      .addOptions(...uploadUi.runTypeOptions.map((item, idx) => ({ label: item, value: item, default: idx === 0 })))
+      .addOptions(...uploadUi.runTypeOptions.map((item) => ({ label: item, value: item, default: addRunInitialRunType ? item === addRunInitialRunType : item === 'Farming' })))
     : null;
   const labeledRunType = runTypeSelect
     ? new Builders.LabelBuilder().setLabel(uploadUi.runTypeLabel).setStringSelectMenuComponent(runTypeSelect)
@@ -1185,14 +1191,11 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
       if (url) normalizedAttachment = { url, name, contentType };
     };
 
-    let selectedRunType: string | undefined = mode === 'track' ? 'Farming' : undefined;
+    const selectedRunType: string | undefined = mode === 'track' ? (getTrackerInitialRunType(userId) ?? 'Farming') : undefined;
     try {
       if (mode === 'track') {
-        const submittedRecord = toRecord(submitted);
-        const typeComp = findByCustomIdDeep(submittedRecord.components, TRACKER_IDS.flow.addRunType);
-        let values = Array.isArray(typeComp?.values) ? typeComp.values : [];
-        if (!values.length && typeComp && typeof typeComp.value === 'string') values = [typeComp.value];
-        if (values.length) selectedRunType = values[0];
+        // Modal select values can report the first option instead of the intended default.
+        // Keep the run type resolved from /track command state.
       }
     } catch {
       /* ignore */
@@ -1253,6 +1256,7 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
         runData: processedData,
         canonicalRunData: runData,
         screenshot: attachmentOrNull ? { url: attachmentOrNull.url, name: attachmentOrNull.name, contentType: attachmentOrNull.contentType } : null,
+        defaultRunType: selectedRunType ?? 'Farming',
       });
 
       if (mode === 'track' && attachmentOrNull) {

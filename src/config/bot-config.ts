@@ -59,6 +59,7 @@ export const defaultBotConfig = {
             { name: 'Overnight', value: 'Overnight' },
             { name: 'Tournament', value: 'Tournament' },
             { name: 'Milestone', value: 'Milestone' },
+            { name: 'Dissonance', value: 'Dissonance' },
           ] as const,
         },
         screenshot: { name: 'screenshot', description: 'Screenshot of your run' },

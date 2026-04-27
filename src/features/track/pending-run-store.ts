@@ -8,9 +8,11 @@ interface PendingRunRecord {
   username: string;
   runData: Record<string, unknown>;
   canonicalRunData?: Record<string, unknown> | null;
+  rawParseFields?: Record<string, unknown> | null;
   screenshot?: { url: string; name?: string; contentType?: string } | null;
   decimalPreference?: string;
   isDuplicate?: boolean;
+  defaultRunType?: string;
   runSource?: 'paste' | 'ocr' | 'manual' | 'unknown';
   createdAt: number;
 }
@@ -41,6 +43,7 @@ export async function createPendingRun(input: Omit<PendingRunRecord, 'token' | '
     ...input,
     runData: canonicalizeTrackerRunData(input.runData ?? {}),
     canonicalRunData: input.canonicalRunData ? canonicalizeTrackerRunData(input.canonicalRunData) : null,
+    rawParseFields: input.rawParseFields && typeof input.rawParseFields === 'object' ? { ...input.rawParseFields } : null,
     token,
     createdAt: Date.now(),
   };
@@ -65,6 +68,9 @@ export async function updatePendingRun(token: string, patch: Partial<PendingRunR
     canonicalRunData: patch.canonicalRunData
       ? canonicalizeTrackerRunData(patch.canonicalRunData)
       : (patch.canonicalRunData === null ? null : current.canonicalRunData),
+    rawParseFields: patch.rawParseFields
+      ? { ...patch.rawParseFields }
+      : (patch.rawParseFields === null ? null : current.rawParseFields),
   };
   cache!.set(token, next);
   await persist();

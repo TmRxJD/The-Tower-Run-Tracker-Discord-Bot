@@ -73,6 +73,19 @@ function normalizeCoverageFields(data: RunDataLike): RunDataLike {
   }
 }
 
+function parseMetricNumber(value: unknown): number {
+  const parsed = parseNumberInput(standardizeNotation(String(value ?? '0')))
+  return Number.isFinite(parsed) ? Number(parsed) : 0
+}
+
+function resolveModuleShardsTotal(data: RunDataLike): string {
+  const total = parseMetricNumber(data?.cannonShardsFetched)
+    + parseMetricNumber(data?.armorShardsFetched)
+    + parseMetricNumber(data?.generatorShardsFetched)
+    + parseMetricNumber(data?.coreShardsFetched)
+  return formatNumberForDisplay(total)
+}
+
 export function buildSubmissionResultEmbed(params: {
   data: RunDataLike
   isUpdate: boolean
@@ -98,6 +111,9 @@ export function buildSubmissionResultEmbed(params: {
   const coinsPerHour = calculateHourlyRate(String(coverageData?.totalCoins ?? coverageData?.coins ?? ''), durationRaw) || 'N/A'
   const cellsPerHour = calculateHourlyRate(String(coverageData?.totalCells ?? coverageData?.cells ?? ''), durationRaw) || 'N/A'
   const dicePerHour = calculateHourlyRate(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? ''), durationRaw) || 'N/A'
+  const moduleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(coverageData), durationRaw) || 'N/A'
+  const wavesPerHour = calculateHourlyRate(String(coverageData?.wave ?? ''), durationRaw) || 'N/A'
+  const enemiesPerHour = calculateHourlyRate(String(coverageData?.totalEnemies ?? ''), durationRaw) || 'N/A'
 
   const tierDisplay = coverageData?.tierDisplay && String(coverageData.tierDisplay).trim()
     ? String(coverageData.tierDisplay)
@@ -112,6 +128,9 @@ export function buildSubmissionResultEmbed(params: {
     coinsPerHour: String(coinsPerHour),
     cellsPerHour: String(cellsPerHour),
     dicePerHour: String(dicePerHour),
+    moduleShardsPerHour: String(moduleShardsPerHour),
+    wavesPerHour: String(wavesPerHour),
+    enemiesPerHour: String(enemiesPerHour),
     date: coverageData?.date ? (coverageData?.time ? `${String(coverageData.date)} @ ${trimDisplayTimeSeconds(coverageData.time)}` : String(coverageData.date)) : 'Now',
     type: String(formattedType),
     run: formatNumberForDisplay(typeCount),

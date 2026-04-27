@@ -15,6 +15,19 @@ function firstPresentValue(data: Record<string, unknown>, keys: string[]): strin
   return null;
 }
 
+function parseMetricNumber(value: unknown): number {
+  const parsed = parseNumberInput(standardizeNotation(String(value ?? '0')))
+  return Number.isFinite(parsed) ? Number(parsed) : 0
+}
+
+function resolveModuleShardsTotal(data: Record<string, unknown>): string {
+  const total = parseMetricNumber(data.cannonShardsFetched)
+    + parseMetricNumber(data.armorShardsFetched)
+    + parseMetricNumber(data.generatorShardsFetched)
+    + parseMetricNumber(data.coreShardsFetched)
+  return formatNumberForDisplay(total)
+}
+
 function toButtonStyle(style: string): ButtonStyle {
   switch (style) {
     case 'Primary': return ButtonStyle.Primary;
@@ -83,6 +96,13 @@ export function createDataReviewEmbed(
   const skipKeys = new Set<string>(review.skipFieldKeys as string[]);
   const standardOrder = review.standardFieldOrder as string[];
   const numericFieldKeys = new Set<string>(review.numericFieldKeys as string[]);
+  const derivedDurationRaw = String(viewData.roundDuration ?? viewData.duration ?? '');
+  const derivedModuleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(viewData), derivedDurationRaw) || 'N/A';
+  const derivedWavesPerHour = calculateHourlyRate(String(viewData.wave ?? ''), derivedDurationRaw) || 'N/A';
+  const derivedEnemiesPerHour = calculateHourlyRate(String(viewData.totalEnemies ?? ''), derivedDurationRaw) || 'N/A';
+  viewData.moduleShardsPerHour = firstPresentValue(viewData, ['moduleShardsPerHour']) ?? derivedModuleShardsPerHour;
+  viewData.wavesPerHour = firstPresentValue(viewData, ['wavesPerHour']) ?? derivedWavesPerHour;
+  viewData.enemiesPerHour = firstPresentValue(viewData, ['enemiesPerHour']) ?? derivedEnemiesPerHour;
   const durationVal = viewData.roundDuration ?? viewData.duration;
   const dateVal = viewData.date ?? viewData.runDate ?? '';
   const timeVal = trimDisplayTimeSeconds(viewData.time ?? viewData.runTime ?? '');
@@ -247,6 +267,9 @@ export function createInitialEmbed(params: {
     const coinsPerHour = calculateHourlyRate(coinsValue, durationValue) || 'N/A';
     const cellsPerHour = calculateHourlyRate(cellsValue, durationValue) || 'N/A';
     const dicePerHour = calculateHourlyRate(diceValue, durationValue) || 'N/A';
+    const moduleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(lastRun as Record<string, unknown>), durationValue) || 'N/A';
+    const wavesPerHour = calculateHourlyRate(waveValue, durationValue) || 'N/A';
+    const enemiesPerHour = calculateHourlyRate(String(lastRun.totalEnemies ?? ''), durationValue) || 'N/A';
 
     const lastRunFieldLabels = menu.lastRunFieldLabels;
     const valueByKey: Record<string, string> = {
@@ -259,6 +282,9 @@ export function createInitialEmbed(params: {
       coinsPerHour,
       cellsPerHour,
       dicePerHour,
+      moduleShardsPerHour,
+      wavesPerHour,
+      enemiesPerHour,
       deathDefy: deathDefyValue,
       runSummary: `${runType.charAt(0).toUpperCase() + runType.slice(1)} #${typeCount}`,
       dateTime: dateValue,

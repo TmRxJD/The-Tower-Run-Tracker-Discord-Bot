@@ -35,6 +35,7 @@ export type PendingRecordLike = {
   username: string
   runData: RunDataRecord
   canonicalRunData?: RunDataRecord | null
+  rawParseFields?: Record<string, unknown> | null
   screenshot?: PendingRecordScreenshot
   decimalPreference?: string
   isDuplicate?: boolean
@@ -65,6 +66,7 @@ export function toPendingRecord(value: unknown): PendingRecordLike | null {
     username: record.username,
     runData: canonicalizeTrackerRunData(toRunDataRecord(record.runData)),
     canonicalRunData: record.canonicalRunData ? canonicalizeTrackerRunData(toRunDataRecord(record.canonicalRunData)) : null,
+    rawParseFields: isRecord(record.rawParseFields) ? { ...record.rawParseFields } : null,
     screenshot,
     decimalPreference: typeof record.decimalPreference === 'string' ? record.decimalPreference : undefined,
     isDuplicate: typeof record.isDuplicate === 'boolean' ? record.isDuplicate : undefined,

@@ -118,6 +118,252 @@
 			],
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "trackerbot-serializer-probe",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node -e \"import('@tmrxjd/platform/tools').then(m=>{const out=m.serializeTrackerRunForCloudAttributes({localId:'queued-run-strip-1',type:'Farming',tier:'9',wave:'999',verified:true,spotlightDamage:'1.25Q'}); console.log(JSON.stringify(out));}).catch(err=>{console.error(err); process.exit(1);})\""
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-serializer-probe-rerun",
+			"type": "shell",
+			"command": "pwsh",
+			"args": [
+				"-Command",
+				"node -e 'import(\"@tmrxjd/platform/tools\").then(m => { const out = m.serializeTrackerRunForCloudAttributes({ localId: \"queued-run-strip-1\", type: \"Farming\", tier: \"9\", wave: \"999\", verified: true, spotlightDamage: \"1.25Q\" }); console.log(JSON.stringify(out)); }).catch(err => { console.error(err); process.exit(1); })'"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-status",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"pnpm run platform:status"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-sync-local",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"pnpm run platform:sync:local"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-force-local",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set TMRXJD_PLATFORM_MODE=auto&& node scripts/ensure-local-platform.mjs link"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-status-auto",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set TMRXJD_PLATFORM_MODE=auto&& node scripts/ensure-local-platform.mjs status"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-build-live-probe",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"pnpm run build"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-live-extended-probe",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node scripts\\probe-extended-run.cjs"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-build-live-probe-rerun",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"pnpm run build"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-live-extended-probe-rerun",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node scripts\\probe-extended-run.cjs"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-live-extended-probe-final",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node scripts\\probe-extended-run.cjs"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-status-dev-auto",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set DEPLOYMENT_MODE=dev&& node scripts/ensure-local-platform.mjs status"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-status-prod-auto",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set DEPLOYMENT_MODE=prod&& node scripts/ensure-local-platform.mjs status"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-ensure-prod-auto",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set DEPLOYMENT_MODE=prod&& node scripts/ensure-local-platform.mjs ensure"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-status-prod-postensure",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set DEPLOYMENT_MODE=prod&& node scripts/ensure-local-platform.mjs status"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-platform-use-auto-check",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"pnpm run platform:use:auto"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-review-raw-parse-check",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"vitest",
+				"run",
+				"src/features/track/handlers/review-data-helpers.test.ts"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-review-raw-parse-check-rerun",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"vitest",
+				"run",
+				"src/features/track/handlers/review-data-helpers.test.ts"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-review-raw-parse-check-after-platform-build",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"vitest",
+				"run",
+				"src/features/track/handlers/review-data-helpers.test.ts"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "trackerbot-identity-eslint",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"eslint",
+				"src/features/track/tracker-api-client.ts",
+				"--no-cache"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "trackerbot-identity-jwt-test",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"vitest",
+				"run",
+				"src/features/track/tracker-api-client.settings-sync.test.ts"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "trackerbot-identity-files-eslint",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"eslint",
+				"src/features/track/tracker-api-client.ts",
+				"src/features/track/tracker-api-client.settings-sync.test.ts",
+				"--no-cache"
+			],
+			"isBackground": false
 		}
 	]
 }

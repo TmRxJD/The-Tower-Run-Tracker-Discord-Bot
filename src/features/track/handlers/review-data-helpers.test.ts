@@ -116,7 +116,7 @@ Summoned Enemies    57.67K
 Coins
 Coins Earned    1.30Q
 Coin Bonus Upgrade    115.43q
-Coins From Coin Bonuses    583.49q
+Other Coin Bonuses    583.49q
 Critical Coin    3.35q
 Golden Tower    113.15q
 Golden Combo    713.39q
@@ -165,7 +165,7 @@ Other    0`;
 describe('review-data-helpers', () => {
   it('formats only scanned battle report fields in shared report order', () => {
     const text = buildRawParseText({
-      values: {
+      rawParseFields: {
         battleDate: 'Mar 26, 2026 06:10',
         gameTime: '20h 4m 30s',
         roundDuration: '4h 3m 56s',
@@ -204,7 +204,7 @@ describe('review-data-helpers', () => {
 
   it('formats raw parse text from canonical scanned values when conflicting aliases exist', () => {
     const text = buildRawParseText({
-      values: {
+      rawParseFields: {
         wave: '7676',
         killedBy: 'Fast',
         totalDice: '16.80K',
@@ -226,7 +226,7 @@ describe('review-data-helpers', () => {
 
   it('renders updated battle report parses in the newer section order', () => {
     const text = buildRawParseText({
-      values: {
+      rawParseFields: {
         highestCoinsPerMinute: '11.40q',
         totalEnemies: '600067',
         basic: '125176',
@@ -260,7 +260,7 @@ describe('review-data-helpers', () => {
     expect(text).toContain('\nKilled By\n');
     expect(text).toContain(['Enemies Hit By', 'Projectiles\t581.51K', 'Thorns\t41', 'Orbs\t322.60K', 'Death Ray\t0'].join('\n'));
       expect(text).toContain(['Killed With Effect Active', 'Golden Tower\t599945', 'Death Wave\t249.56K', 'Spotlight\t474861', 'Amplify Bot\t47535', 'Golden Bot\t372798', 'Death Penalty\t0'].join('\n'));
-    expect(text).toContain(['Coins', 'Coins Earned\t1.30Q', 'Coin Bonus Upgrade\t115.43q', 'Coins From Coin Bonuses\t583.49q'].join('\n'));
+    expect(text).toContain(['Coins', 'Coins Earned\t1.30Q', 'Coin Bonus Upgrade\t115.43q', 'Other Coin Bonuses\t583.49q'].join('\n'));
     expect(text).toContain(['Currencies', 'Cells Earned\t550.81K', 'Gems\t140', 'Ad Gems\t115'].join('\n'));
     expect(text).not.toContain('Killed By\tApathy');
     expect(text).not.toContain('Enemies Hit by Orbs\t322.60K');
@@ -277,7 +277,7 @@ describe('review-data-helpers', () => {
         notes: 'keep note',
       },
       {
-        values: {
+        rawParseFields: {
           taggedByDeathWave: '249.56K',
           destroyedInSpotlight: '474861',
         },
@@ -290,7 +290,7 @@ describe('review-data-helpers', () => {
       notes: 'keep note',
       taggedByDeathWave: '249.56K',
       destroyedInSpotlight: '474861',
-      values: {
+      rawParseFields: {
         taggedByDeathWave: '249.56K',
         destroyedInSpotlight: '474861',
       },

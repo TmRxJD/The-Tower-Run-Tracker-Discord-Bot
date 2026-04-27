@@ -47,6 +47,19 @@ function replaceTokens(template: string, values: Record<string, string>): string
   }, template);
 }
 
+function parseMetricNumber(value: string | null): number {
+  const parsed = parseNumberInput(standardizeNotation(String(value ?? '0')))
+  return Number.isFinite(parsed) ? Number(parsed) : 0
+}
+
+function resolveModuleShardsTotal(run: Record<string, unknown>): string {
+  const total = parseMetricNumber(firstAvailable(run, ['cannonShardsFetched']))
+    + parseMetricNumber(firstAvailable(run, ['armorShardsFetched']))
+    + parseMetricNumber(firstAvailable(run, ['generatorShardsFetched']))
+    + parseMetricNumber(firstAvailable(run, ['coreShardsFetched']))
+  return formatNumberForDisplay(total)
+}
+
 function buildDescription(run: Record<string, unknown>, options: NonNullable<ShareEmbedInput['options']>): string {
   const tierDisplayRaw = getRunString(run, 'tierDisplay');
   const tierDisplay = tierDisplayRaw && tierDisplayRaw.trim()
@@ -118,6 +131,9 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
   const coinsPerHour = calculateHourlyRate(firstAvailable(run, ['totalCoins', 'coins']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
   const cellsPerHour = calculateHourlyRate(firstAvailable(run, ['totalCells', 'cells']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
   const dicePerHour = calculateHourlyRate(firstAvailable(run, ['totalDice', 'rerollShards', 'dice']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
+  const moduleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(run), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
+  const wavesPerHour = calculateHourlyRate(firstAvailable(run, ['wave']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
+  const enemiesPerHour = calculateHourlyRate(firstAvailable(run, ['totalEnemies']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
 
   const embed = new EmbedBuilder()
     .setAuthor({
@@ -153,6 +169,9 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
   if (includeDicePerHour) {
     hourlyFields.push({ name: config.hourlyFieldLabels.dice, value: String(dicePerHour), inline: true });
   }
+  hourlyFields.push({ name: config.hourlyFieldLabels.shards, value: String(moduleShardsPerHour), inline: true });
+  hourlyFields.push({ name: config.hourlyFieldLabels.waves, value: String(wavesPerHour), inline: true });
+  hourlyFields.push({ name: config.hourlyFieldLabels.enemies, value: String(enemiesPerHour), inline: true });
   if (hourlyFields.length) {
     embed.addFields({ name: config.hourlySectionLabel, value: '\u200B', inline: false }, ...hourlyFields);
   }

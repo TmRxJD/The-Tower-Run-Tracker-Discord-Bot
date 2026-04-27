@@ -19,6 +19,7 @@
     "pretest": "node scripts/ensure-local-platform.mjs ensure",
     "platform:sync:local": "node scripts/ensure-local-platform.mjs use-local",
     "platform:use:registry": "node scripts/ensure-local-platform.mjs use-registry",
+    "platform:use:auto": "node scripts/ensure-local-platform.mjs use-auto",
     "platform:status": "node scripts/ensure-local-platform.mjs status",
     "dev": "node scripts/dev-managed.mjs --force-restart",
     "dev:app": "cross-env NODE_OPTIONS=--inspect=localhost:5176 DEPLOYMENT_MODE=dev NODE_ENV=development ts-node-dev --respawn --transpile-only src/bot.ts",
@@ -54,13 +55,12 @@
     "register:commands": "pnpm run register:commands:dev",
     "register:commands:dev": "cross-env DEPLOYMENT_MODE=dev NODE_ENV=development BOT_LOG_LEVEL=error ts-node src/scripts/register-commands.ts --mode=dev",
     "register:commands:prod": "cross-env DEPLOYMENT_MODE=prod NODE_ENV=production BOT_LOG_LEVEL=error ts-node src/scripts/register-commands.ts --mode=prod",
-    "register:commands:prod:global": "cross-env DEPLOYMENT_MODE=prod NODE_ENV=production BOT_LOG_LEVEL=error ts-node src/scripts/register-commands.ts --mode=prod --global",
     "register:commands:clear:global": "cross-env DEPLOYMENT_MODE=prod NODE_ENV=production BOT_LOG_LEVEL=error ts-node src/scripts/delete-global-commands.ts"
   },
   "dependencies": {
     "@discordjs/rest": "^2.6.1",
     "@napi-rs/canvas": "^0.1.97",
-    "@tmrxjd/platform": "0.1.10",
+    "@tmrxjd/platform": "0.1.15",
     "dexie": "^4.0.11",
     "discord-api-types": "^0.37.120",
     "discord.js": "^14.25.1",

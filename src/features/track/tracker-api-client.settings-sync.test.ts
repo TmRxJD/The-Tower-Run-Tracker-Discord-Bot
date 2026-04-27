@@ -15,6 +15,7 @@ const getFileViewMock = vi.fn();
 
 vi.mock('../../config', () => ({
   getAppConfig: () => ({
+    deploymentMode: 'dev',
     appwrite: {
       runsDatabaseId: 'runs-db',
       runsCollectionId: 'runs',
@@ -117,6 +118,7 @@ beforeEach(async () => {
   createFileMock.mockReset();
   deleteFileMock.mockReset();
   getFileViewMock.mockReset();
+  delete process.env.APPWRITE_JWT;
 
   listDocumentsMock.mockResolvedValue({ documents: [], total: 0 });
 
@@ -240,7 +242,7 @@ describe('tracker-api-client settings sync', () => {
       .mockRejectedValueOnce({
         code: 400,
         type: 'document_invalid_structure',
-        message: 'Invalid document structure: Unknown attribute: "createdAt"',
+        message: 'Invalid document structure: Unknown attribute: "verified"',
       })
       .mockResolvedValueOnce({ $id: 'cloud-run-1' });
 
@@ -252,18 +254,75 @@ describe('tracker-api-client settings sync', () => {
         type: 'Farming',
         tier: '9',
         wave: '999',
+        verified: true,
+        spotlightDamage: '1.25Q',
       },
     });
 
     expect(result.queuedForCloud).toBe(false);
     expect(result.cloudUnavailable).toBe(false);
     expect(await getQueueItems(userId)).toHaveLength(0);
-    expect(createDocumentMock).toHaveBeenCalledTimes(2);
+    expect(createDocumentMock).toHaveBeenCalledTimes(3);
     expect(createDocumentMock.mock.calls[0]?.[0]).toBe('runs-db');
     expect(createDocumentMock.mock.calls[0]?.[1]).toBe('runs');
     expect(createDocumentMock.mock.calls[1]?.[0]).toBe('runs-db');
     expect(createDocumentMock.mock.calls[1]?.[1]).toBe('runs');
     expect(createDocumentMock.mock.calls[1]?.[2]).toBe(createDocumentMock.mock.calls[0]?.[2]);
+    expect(createDocumentMock.mock.calls[2]?.[0]).toBe('runs-db');
+    expect(createDocumentMock.mock.calls[2]?.[1]).toBe('runs_extended_data');
+    expect(createDocumentMock.mock.calls[2]?.[2]).toBe(createDocumentMock.mock.calls[0]?.[2]);
+    expect(createDocumentMock.mock.calls[2]?.[3]).toEqual(expect.objectContaining({
+      runId: createDocumentMock.mock.calls[0]?.[2],
+      userId,
+      spotlightDamage: '1.25Q',
+      schemaVersion: 1,
+    }));
+  });
+
+  it('uses the dev Appwrite JWT user id for permissions when the upload user id is discord-only', async () => {
+    const userId = '371914184822095873';
+    process.env.APPWRITE_JWT = [
+      'header',
+      Buffer.from(JSON.stringify({ userId: '681ab667ce6096096b3b' })).toString('base64url'),
+      'signature',
+    ].join('.');
+
+    await updateLocalSettings(userId, {
+      cloudSyncEnabled: true,
+      updatedAt: 1_000,
+    });
+
+    createDocumentMock.mockResolvedValue({ $id: 'cloud-run-jwt-1' });
+
+    const result = await logRun({
+      userId,
+      username: 'tmrxjd',
+      runData: {
+        localId: 'queued-run-jwt-1',
+        type: 'Farming',
+        tier: '14',
+        wave: '5639',
+        coins: '131.08B',
+        coinsPerKill: '68.96B',
+      },
+    });
+
+    expect(result.queuedForCloud).toBe(false);
+    expect(createDocumentMock.mock.calls[0]?.[4]).toEqual([
+      'read("user:681ab667ce6096096b3b")',
+      'update("user:681ab667ce6096096b3b")',
+      'delete("user:681ab667ce6096096b3b")',
+    ]);
+    expect(createDocumentMock.mock.calls[1]?.[1]).toBe('runs_extended_data');
+    expect(createDocumentMock.mock.calls[1]?.[3]).toEqual(expect.objectContaining({
+      userId,
+      coinsPerKill: '68.96B',
+    }));
+    expect(createDocumentMock.mock.calls[1]?.[4]).toEqual([
+      'read("user:681ab667ce6096096b3b")',
+      'update("user:681ab667ce6096096b3b")',
+      'delete("user:681ab667ce6096096b3b")',
+    ]);
   });
 
   it('defers cloud run sync without blocking the local save result', async () => {

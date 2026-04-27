@@ -125,28 +125,7 @@ function checkPackageAccess() {
 }
 
 async function warnOnGlobalCommands() {
-  const deploymentMode = getEnv('DEPLOYMENT_MODE', 'prod')
-  if (deploymentMode !== 'dev') {
-    return
-  }
-  const token = getEnv('DEV_DISCORD_TOKEN') || getEnv('DISCORD_TOKEN')
-  const clientId = getEnv('DEV_CLIENT_ID') || getEnv('CLIENT_ID')
-  const guildId = getEnv('DEV_GUILD_ID')
-  if (!token || !clientId || !guildId) {
-    return
-  }
-  const response = await fetch(`https://discord.com/api/v10/applications/${clientId}/commands`, {
-    headers: {
-      Authorization: `Bot ${token}`,
-    },
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to inspect global commands: ${response.status} ${response.statusText}`)
-  }
-  const commands = await response.json()
-  if (Array.isArray(commands) && commands.length > 0) {
-    process.stdout.write('Warning: global Discord commands exist alongside guild deployment and can appear as duplicate commands. Consider running register:commands:clear:global once before validation.\n')
-  }
+  return
 }
 
 async function preflight() {

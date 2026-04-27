@@ -18,6 +18,34 @@ describe('review-submission-helpers', () => {
     expect(submitRunData).not.toHaveProperty('Killed By')
   });
 
+  it('promotes nested parsed values into the submission payload', () => {
+    const pending = {
+      runData: { wave: '10' },
+      canonicalRunData: {
+        values: {
+          highestCoinsPerMinute: '11.40q',
+          coinsPerKill: '4.20T',
+        },
+      },
+      screenshot: null,
+    } as const;
+
+    const submitRunData = buildSubmitRunData(pending as never, {});
+    const canonicalRunData = buildCanonicalRunData(pending as never, submitRunData);
+
+    expect(submitRunData).toMatchObject({
+      wave: '10',
+      highestCoinsPerMinute: '11.40q',
+      coinsPerKill: '4.20T',
+    });
+    expect(canonicalRunData).toMatchObject({
+      wave: '10',
+      highestCoinsPerMinute: '11.40q',
+      coinsPerKill: '4.20T',
+    });
+    expect(submitRunData).not.toHaveProperty('values');
+  });
+
   it('resolves duplicate ids and final submission ids', () => {
     const pending = {
       isDuplicate: false,

@@ -6,6 +6,7 @@ describe('review-interaction-helpers', () => {
   it('normalizes supported run types case-insensitively', () => {
     expect(ensureType('overnight')).toBe('Overnight');
     expect(ensureType('TOURNAMENT')).toBe('Tournament');
+    expect(ensureType('dissonance')).toBe('Dissonance');
   });
 
   it('falls back to Farming for empty or unsupported types', () => {

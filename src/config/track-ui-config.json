@@ -11,7 +11,7 @@
     "normalDescription": "Please review the extracted data below. Ensure all values are correct before accepting.",
     "notesFallback": "Use 'Add Note' button to attach a note",
     "typePlaceholder": "Select run type",
-    "typeOptions": ["Farming", "Overnight", "Tournament", "Milestone"],
+    "typeOptions": ["Farming", "Overnight", "Tournament", "Milestone", "Dissonance"],
     "buttons": {
       "addNote": "Add Note",
       "showFullParse": "Show Full Parse",
@@ -62,6 +62,9 @@
       "totalDice": "🎲\nDice",
       "dice": "🎲\nDice",
       "rerollShards": "🎲\nDice",
+      "moduleShardsPerHour": "🔼\nShards",
+      "wavesPerHour": "🌊\nWaves",
+      "enemiesPerHour": "🔳\nEnemies",
       "deathDefy": "🍀\nDeath Defies",
       "killedBy": "💀\nKilled By",
       "dateTime": "📅\nDate/Time",
@@ -125,6 +128,9 @@
       "coinsPerHour": "🪙\nCoins/Hr",
       "cellsPerHour": "🔋\nCells/Hr",
       "dicePerHour": "🎲\nDice/Hr",
+      "moduleShardsPerHour": "🔼\nShards/Hr",
+      "wavesPerHour": "🌊\nWaves/Hr",
+      "enemiesPerHour": "🔳\nEnemies/Hr",
       "deathDefy": "🍀\nDeath Defies",
       "runSummary": "📋\nRun",
       "dateTime": "📅\nDate/Time",
@@ -133,7 +139,7 @@
     },
     "lastRunFieldOrder": [
       "tierWave", "duration", "killedBy", "coins", "cells", "dice",
-      "coinsPerHour", "cellsPerHour", "dicePerHour", "deathDefy", "runSummary", "dateTime"
+      "coinsPerHour", "cellsPerHour", "dicePerHour", "moduleShardsPerHour", "wavesPerHour", "enemiesPerHour", "deathDefy", "runSummary", "dateTime"
     ],
     "mainRows": [
       [
@@ -168,6 +174,9 @@
       "coinsPerHour": "🪙\nCoins/Hr",
       "cellsPerHour": "🔋\nCells/Hr",
       "dicePerHour": "🎲\nDice/Hr",
+      "moduleShardsPerHour": "🔼\nShards/Hr",
+      "wavesPerHour": "🌊\nWaves/Hr",
+      "enemiesPerHour": "🔳\nEnemies/Hr",
       "killedBy": "💀\nKilled By",
       "date": "📅\nDate/Time",
       "type": "📋\nRun Type",
@@ -176,7 +185,7 @@
     },
     "fieldOrder": [
       "tierWave", "duration", "killedBy", "coins", "cells", "dice",
-      "coinsPerHour", "cellsPerHour", "dicePerHour", "date", "type", "run"
+      "coinsPerHour", "cellsPerHour", "dicePerHour", "moduleShardsPerHour", "wavesPerHour", "enemiesPerHour", "date", "type", "run"
     ],
     "coverageLabel": "Coverage",
     "footer": "Run logged. Use buttons below or start a new /track.\n\nUse Creator Code \"JDEVO\" to Support The Tower Run Tracker!"
@@ -237,7 +246,7 @@
       "decimalIndicator": "Decimal indicator",
       "timezone": "Timezone"
     },
-    "runTypeOptions": ["Farming", "Overnight", "Tournament", "Milestone"],
+    "runTypeOptions": ["Farming", "Overnight", "Tournament", "Milestone", "Dissonance"],
     "languageOptions": ["English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian"],
     "timezoneOptions": ["UTC", "EST", "CST", "MST", "PST", "CET", "JST"],
     "buttons": {
@@ -312,7 +321,7 @@
     "startFailed": "Unable to start manual entry right now.",
     "requiredCoreFields": "Please fill Tier, Wave, and Duration before continuing.",
     "typePlaceholder": "Select run type",
-    "typeOptions": ["Farming", "Overnight", "Tournament", "Milestone"],
+    "typeOptions": ["Farming", "Overnight", "Tournament", "Milestone", "Dissonance"],
     "buttons": {
       "addNote": "Add Note",
       "editCore": "Edit Core Fields",
@@ -366,7 +375,7 @@
     "providePasteOrScreenshot": "Please provide Battle Report text or attach a screenshot in the Add Run modal.",
     "addRunTimedOut": "Add run timed out. Please try again.",
     "cancelMessage": "Cancelled.",
-    "runTypeOptions": ["Farming", "Overnight", "Tournament", "Milestone"]
+    "runTypeOptions": ["Farming", "Overnight", "Tournament", "Milestone", "Dissonance"]
   },
   "share": {
     "authorTemplate": "{username} Shared a Run",
@@ -386,7 +395,10 @@
     "hourlyFieldLabels": {
       "coins": "🪙\nCoins",
       "cells": "🔋\nCells",
-      "dice": "🎲\nDice"
+      "dice": "🎲\nDice",
+      "shards": "🔼\nShards",
+      "waves": "🌊\nWaves",
+      "enemies": "🔳\nEnemies"
     },
     "hourlySectionLabel": "📈 Earnings per Hour",
     "notesFieldLabel": "📝\nNotes",

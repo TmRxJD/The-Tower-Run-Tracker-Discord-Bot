@@ -5,7 +5,7 @@ import { getUserSettings } from './tracker-api-client';
 import { asTrackReplyInteraction } from './handlers/review-interaction-helpers';
 import { renderTrackMenu, handleDirectTextPaste, handleDirectAttachment } from './handlers';
 import { buildSettingsPayload } from './handlers/settings-handlers';
-import { setTrackerFlowMode } from './flow-mode-store';
+import { setTrackerFlowMode, setTrackerInitialRunType } from './flow-mode-store';
 
 interface TrackOptions {
   mode?: 'track' | 'lifetime';
@@ -21,6 +21,9 @@ export async function handleTrackWorkflow(interaction: ChatInputCommandInteracti
   const botConfig = getBotConfig();
   const mode = options.mode ?? 'track';
   setTrackerFlowMode(interaction.user.id, mode);
+  if (options.runType) {
+    setTrackerInitialRunType(interaction.user.id, options.runType);
+  }
   const commandConfig = botConfig.commands[mode];
   const normalizedAttachment = options.attachment
     ? {

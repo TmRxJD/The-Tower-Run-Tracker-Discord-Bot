@@ -41,14 +41,14 @@ jobs:
           always-auth: true
 
       - name: Resolve deployment metadata
-        shell: pwsh
+        shell: bash
         run: |
-          if ($env:GITHUB_EVENT_NAME -eq 'repository_dispatch') {
-            "PLATFORM_VERSION=${{ github.event.client_payload.version }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          } else {
-            $platformVersion = node -p "const pkg=require('./package.json'); pkg.dependencies?.['@tmrxjd/platform'] || pkg.devDependencies?.['@tmrxjd/platform'] || ''"
-            "PLATFORM_VERSION=$platformVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          }
+          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
+            echo "PLATFORM_VERSION=${{ github.event.client_payload.version }}" >> "$GITHUB_ENV"
+          else
+            platformVersion=$(node -p "const pkg=require('./package.json'); pkg.dependencies?.['@tmrxjd/platform'] || pkg.devDependencies?.['@tmrxjd/platform'] || ''")
+            echo "PLATFORM_VERSION=$platformVersion" >> "$GITHUB_ENV"
+          fi
 
       - name: Run preflight checks
         env:
@@ -64,26 +64,37 @@ jobs:
         run: pnpm run deploy:install
 
       - name: Validate local runtime env files
-        shell: pwsh
+        shell: bash
         run: |
-          if ($env:TRACKERBOT_ENV_DIR) {
-            if (-not (Test-Path $env:TRACKERBOT_ENV_DIR)) {
-              Write-Error "TRACKERBOT_ENV_DIR does not exist: $env:TRACKERBOT_ENV_DIR"
+          if [[ -n "$TRACKERBOT_ENV_DIR" ]]; then
+            if [[ ! -d "$TRACKERBOT_ENV_DIR" ]]; then
+              echo "TRACKERBOT_ENV_DIR does not exist: $TRACKERBOT_ENV_DIR" >&2
               exit 1
-            }
-            $envRoot = (Resolve-Path $env:TRACKERBOT_ENV_DIR).Path
-          } else {
-            $envRoot = (Get-Location).Path
-          }
+            fi
+            envRoot=$(cd "$TRACKERBOT_ENV_DIR" && pwd)
+          else
+            envRoot=$(pwd)
+          fi
 
-          $expected = @('.env.prod.local', '.env.prod', '.env.local', '.env') | ForEach-Object { Join-Path $envRoot $_ }
-          $found = $expected | Where-Object { Test-Path $_ }
-          if ($found.Count -gt 0) {
-            Write-Host "Using existing local env files from the runner: $($found -join ', ')"
+          expected=(
+            "$envRoot/.env.prod.local"
+            "$envRoot/.env.prod"
+            "$envRoot/.env.local"
+            "$envRoot/.env"
+          )
+          found=()
+          for candidate in "${expected[@]}"; do
+            if [[ -f "$candidate" ]]; then
+              found+=("$candidate")
+            fi
+          done
+
+          if (( ${#found[@]} > 0 )); then
+            printf 'Using existing local env files from the runner: %s\n' "$(IFS=', '; echo "${found[*]}")"
             exit 0
-          }
+          fi
 
-          Write-Error "No local env file found on the runner. Expected one of: $($expected -join ', ')"
+          printf 'No local env file found on the runner. Expected one of: %s\n' "$(IFS=', '; echo "${expected[*]}")" >&2
           exit 1
 
       - name: Build service
@@ -97,12 +108,11 @@ jobs:
 
       - name: Commit platform dependency bump
         if: github.event_name == 'repository_dispatch'
-        shell: pwsh
+        shell: bash
         run: |
-          git diff --quiet -- package.json pnpm-lock.yaml
-          if ($LASTEXITCODE -eq 0) {
+          if git diff --quiet -- package.json pnpm-lock.yaml; then
             exit 0
-          }
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json pnpm-lock.yaml
