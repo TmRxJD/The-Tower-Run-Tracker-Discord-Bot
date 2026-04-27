@@ -27,7 +27,6 @@ import {
   hydrateTrackerCloudRun,
   hydrateTrackerRunEntryFromDocument,
   listCloudDocumentsByUserIds,
-  listFirstCloudDocument,
   normalizeTrackerLeaderboardCompatibilityCandidate,
   normalizeTrackerLifetimeDate,
   normalizeTrackerLifetimeEntryValues,
@@ -1558,21 +1557,12 @@ async function cloudGetSettings(userId: string): Promise<CloudTrackerSettings | 
   const databases = createAppwriteClient().databases;
 
   try {
-    const directDocument = await getDocumentOrNull<Record<string, unknown>>(
+    const doc = await getDocumentOrNull<Record<string, unknown>>(
       databases,
       settingsDatabaseId,
       settingsCollectionId,
       userId,
     );
-    const doc = directDocument ?? await listFirstCloudDocument<Record<string, unknown>>({
-      databases,
-      databaseId: settingsDatabaseId,
-      collectionId: settingsCollectionId,
-      queries: [
-        Query.equal('userId', userId),
-        Query.limit(1),
-      ],
-    });
     if (!doc) return null;
     return {
       defaultTracker: 'Web',
