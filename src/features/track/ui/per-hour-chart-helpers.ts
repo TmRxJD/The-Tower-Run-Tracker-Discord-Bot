@@ -75,16 +75,16 @@ export async function buildPerHourChartAttachment(
 
   const datasets = [
     ...(coinsData.some(v => v !== null)
-      ? [{ label: 'Coins Per Hour', values: coinsData, color: '#2196f3' }]
+      ? [{ label: 'Coins Per Hour', values: coinsData, color: '#F9A825' }]
       : []),
     ...(cellsData.some(v => v !== null)
-      ? [{ label: 'Cells Per Hour', values: cellsData, color: '#4caf50' }]
+      ? [{ label: 'Cells Per Hour', values: cellsData, color: '#4CAF50' }]
       : []),
     ...(diceData.some(v => v !== null)
-      ? [{ label: 'Dice Per Hour', values: diceData, color: '#ff9800' }]
+      ? [{ label: 'Dice Per Hour', values: diceData, color: '#F44336' }]
       : []),
     ...(shardsData.some(v => v !== null)
-      ? [{ label: 'Shards Per Hour', values: shardsData, color: '#ab47bc' }]
+      ? [{ label: 'Shards Per Hour', values: shardsData, color: '#42A5F5' }]
       : []),
   ];
 

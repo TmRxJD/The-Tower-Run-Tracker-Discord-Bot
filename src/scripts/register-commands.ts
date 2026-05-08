@@ -56,19 +56,34 @@ async function registerCommands() {
 
   const rest = new REST({ version: '10' }).setToken(runtime.loginToken);
   const body = commandModules.map((command: { data: unknown }) => command.data);
-  const targetGuildIds = await resolveTargetGuildIds(runtime.loginToken, options.guildId);
+  const isProd = runtime.deploymentMode === 'prod';
 
   logger.info(`Preparing command registration for ${runtime.deploymentMode} mode`);
 
-  logger.info('Clearing global commands to avoid duplicate guild/global command entries');
-  await rest.put(Routes.applicationCommands(runtime.clientId), { body: [] });
-
-  for (const guildId of targetGuildIds) {
-    logger.info(`Registering ${body.length} guild commands to ${guildId}`);
-    await rest.put(Routes.applicationGuildCommands(runtime.clientId, guildId), { body });
+  if (isProd) {
+    // Prod: register globally so commands work in every server the bot joins,
+    // including new servers added after deployment. Clear all guild-scoped
+    // overrides first to prevent duplicates.
+    const targetGuildIds = await resolveTargetGuildIds(runtime.loginToken, options.guildId);
+    for (const guildId of targetGuildIds) {
+      logger.info(`Clearing guild-scoped commands from ${guildId}`);
+      await rest.put(Routes.applicationGuildCommands(runtime.clientId, guildId), { body: [] });
+    }
+    logger.info(`Registering ${body.length} global commands`);
+    await rest.put(Routes.applicationCommands(runtime.clientId), { body });
+    logger.info('Global slash commands registered — changes propagate within ~1 hour');
+  } else {
+    // Dev: register guild-scoped for instant propagation. Clear global commands
+    // to prevent duplicates if the app previously had global commands registered.
+    logger.info('Clearing global commands to avoid duplicate guild/global command entries');
+    await rest.put(Routes.applicationCommands(runtime.clientId), { body: [] });
+    const targetGuildIds = await resolveTargetGuildIds(runtime.loginToken, options.guildId);
+    for (const guildId of targetGuildIds) {
+      logger.info(`Registering ${body.length} guild commands to ${guildId}`);
+      await rest.put(Routes.applicationGuildCommands(runtime.clientId, guildId), { body });
+    }
+    logger.info(`Slash commands refreshed across ${targetGuildIds.length} guild(s)`);
   }
-
-  logger.info(`Slash commands refreshed across ${targetGuildIds.length} guild(s)`);
 }
 
 async function resolveTargetGuildIds(loginToken: string, explicitGuildId?: string): Promise<string[]> {

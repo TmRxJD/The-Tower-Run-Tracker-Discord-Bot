@@ -47,6 +47,9 @@ export async function handleTrackWorkflow(interaction: ChatInputCommandInteracti
       }
       return;
     }
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
+    }
     await handleDirectTextPaste(trackInteraction, options.paste, normalizedAttachment, options.note ?? null, options.runType ?? null, mode);
     return;
   }
