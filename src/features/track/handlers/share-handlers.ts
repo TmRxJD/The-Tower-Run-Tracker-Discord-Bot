@@ -7,6 +7,9 @@ import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { TRACKER_IDS } from '../track-custom-ids';
 import { EmbedBuilder, Colors, type MessageComponentInteraction, type ModalSubmitInteraction } from 'discord.js';
+import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
+import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
+import { computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 
 export function recordShareableRun(userId: string, run: Record<string, unknown>, runTypeCounts: Record<string, number>, screenshotUrl?: string | null) {
   const hydratedRun = { ...run };
@@ -97,6 +100,18 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     const includeCoinsPerHour = settings?.shareCoinsPerHour !== false;
     const includeCellsPerHour = settings?.shareCellsPerHour !== false;
     const includeDicePerHour = settings?.shareDicePerHour !== false;
+    const includeTotalShards = settings?.shareTotalShards !== false;
+    const includeCoverageGoldenTower = settings?.shareCoverageGoldenTower !== false;
+    const includeCoverageBlackHole = settings?.shareCoverageBlackHole !== false;
+    const includeCoverageSpotlight = settings?.shareCoverageSpotlight !== false;
+    const includeCoverageDeathWave = settings?.shareCoverageDeathWave !== false;
+    const includeCoverageOrbs = settings?.shareCoverageOrbs !== false;
+    const includeCoverageGoldenBot = settings?.shareCoverageGoldenBot !== false;
+    const includeCoverageAmpBot = settings?.shareCoverageAmpBot !== false;
+    const includeCoverageSummoned = settings?.shareCoverageSummoned !== false;
+    const includeShardsPerHour = settings?.shareShardsPerHour !== false;
+    const includeWavesPerHour = settings?.shareWavesPerHour !== false;
+    const includeEnemiesPerHour = settings?.shareEnemiesPerHour !== false;
     let embed: EmbedBuilder | null = null;
 
     if (mode === 'lifetime') {
@@ -128,6 +143,18 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       if (includeScreenshot && typeof latest.screenshotUrl === 'string' && latest.screenshotUrl.trim()) {
         embed.setImage(latest.screenshotUrl);
       }
+
+      const channelForLifetime = interaction.channel as { send?: (payload: { embeds: unknown[] }) => Promise<unknown> } | null;
+      if (!channelForLifetime?.send) {
+        throw new Error('Unable to send share embed in this channel.');
+      }
+      try {
+        await channelForLifetime.send({ embeds: [embed] });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'unknown channel error';
+        throw new Error(`Unable to send share embed in this channel: ${reason}`);
+      }
+      await disableShareButtonOnOriginalMessage(interaction);
     } else {
       const cached = getShareableRun(userId);
       let run = cached?.run ?? null;
@@ -144,6 +171,18 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         return;
       }
 
+      const sharedSettings = await getEffectiveUserSharedSettings(userId);
+      const shouldAttachChart = settings?.shareChart !== false;
+
+      // Fetch all runs for delta baseline and chart
+      const allRunsSummary = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
+      const allRuns = (allRunsSummary?.allRuns ?? []) as Record<string, unknown>[];
+      const runType = String(run.type ?? 'Farming').trim() || 'Farming';
+
+      const deltaResult = sharedSettings.runDeltaMode !== 'disabled'
+        ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode)
+        : undefined;
+
       embed = buildShareEmbed({
         user: buildEmbedUserFromInteraction(interaction),
         run,
@@ -156,31 +195,51 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           includeTotalCoins,
           includeTotalCells,
           includeTotalDice,
+          includeTotalShards,
           includeDeathDefy,
           includeCoinsPerHour,
           includeCellsPerHour,
           includeDicePerHour,
+          includeShardsPerHour,
+          includeWavesPerHour,
+          includeEnemiesPerHour,
           includeNotes,
           includeCoverage,
+          includeCoverageGoldenTower,
+          includeCoverageBlackHole,
+          includeCoverageSpotlight,
+          includeCoverageDeathWave,
+          includeCoverageOrbs,
+          includeCoverageGoldenBot,
+          includeCoverageAmpBot,
+          includeCoverageSummoned,
           includeScreenshot,
         },
+        deltaResult,
       });
-    }
 
-    const channelWithSend = interaction.channel as { send?: (payload: { embeds: unknown[] }) => Promise<unknown> } | null;
-    if (embed) {
-      if (!channelWithSend?.send) {
-        throw new Error('Unable to send share embed in this channel.');
+      const channelWithSend = interaction.channel as { send?: (payload: { embeds: unknown[]; files?: unknown[] }) => Promise<unknown> } | null;
+      if (embed) {
+        if (!channelWithSend?.send) {
+          throw new Error('Unable to send share embed in this channel.');
+        }
+
+        const chartAttachment = shouldAttachChart && allRuns.length >= 2
+          ? await buildPerHourChartAttachment(allRuns, runType).catch(() => null)
+          : null;
+
+        if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
+
+        try {
+          await channelWithSend.send({ embeds: [embed], files: chartAttachment ? [chartAttachment] : [] });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : 'unknown channel error';
+          throw new Error(`Unable to send share embed in this channel: ${reason}`);
+        }
+
+        await disableShareButtonOnOriginalMessage(interaction);
       }
-
-      try {
-        await channelWithSend.send({ embeds: [embed] });
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : 'unknown channel error';
-        throw new Error(`Unable to send share embed in this channel: ${reason}`);
-      }
-
-      await disableShareButtonOnOriginalMessage(interaction);
+      return;
     }
   } catch (error) {
     await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'track_menu_sharelast');

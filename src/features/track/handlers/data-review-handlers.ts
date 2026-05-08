@@ -1,9 +1,10 @@
 import { MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
-import { editRun, getLocalRunSummary, getUserSettings, logRun } from '../tracker-api-client';
+import { editRun, getLastRun, getLocalRunSummary, getUserSettings, logRun } from '../tracker-api-client';
 import { createSuccessButtons, createLoadingEmbed } from '../ui/tracker-ui';
 import { buildEditFieldPickerPayload } from '../ui/tracker-review-payloads';
 import { buildSubmissionResultEmbed } from '../ui/tracker-submission-embeds';
+import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { handleError } from './error-handlers';
 import { buildSubmitPayload, resolveRawParseSourceData, sendRawParseMessage } from './review-data-helpers';
 import { asTrackReplyInteraction, ensureType, isTrackReviewFlowEnabled, resolveOwnedPendingInteraction, type ReviewInteraction, updateReviewMessage } from './review-interaction-helpers';
@@ -19,8 +20,9 @@ import { setShareableRun } from '../share/share-state';
 import { autoShareToConfiguredLogChannel } from '../share/auto-log-channel-share';
 import type { TrackerBotClient } from '../../../core/tracker-bot-client';
 import type { PendingRecordLike } from '../shared/track-review-records';
-import { ANALYTICS_EVENT_RUN_TRACKER_UPLOAD } from '@tmrxjd/platform/tools';
+import { ANALYTICS_EVENT_RUN_TRACKER_UPLOAD, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import { logger } from '../../../core/logger';
+import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 
 function reviewUi() {
   return getTrackUiConfig().review;
@@ -258,8 +260,19 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
       duplicateLocalId,
       submitRunData,
     });
+    const settings = await getUserSettings(userId).catch(() => null);
     const coverageSource = buildCoverageSource(canonicalRunData, resolvedRunId, resolvedLocalId);
-    const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts, hasScreenshot, screenshotUrl });
+
+    const allRunsSummary = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
+    const sharedSettings = await getEffectiveUserSharedSettings(userId).catch(() => ({ runDeltaMode: 'disabled' as const }));
+    const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
+    const runTypeForDelta = String(canonicalRunData.type ?? 'Farming').trim() || 'Farming';
+    const allRunsArr = (allRunsSummary?.allRuns ?? []) as Record<string, unknown>[];
+    const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 1
+      ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode) ?? undefined
+      : undefined;
+
+    const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts, hasScreenshot, screenshotUrl, deltaResult });
     const shareableRun = buildShareableRunPayload(coverageSource, screenshotUrl);
 
     setShareableRun(userId, {
@@ -268,7 +281,19 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
       screenshotUrl,
     });
 
-    await interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: [] });
+    const shouldAttachChart = settings?.shareChart !== false;
+    let chartAttachment = null;
+    if (shouldAttachChart) {
+      if (allRunsSummary?.allRuns?.length) {
+        chartAttachment = await buildPerHourChartAttachment(
+          allRunsSummary.allRuns as Record<string, unknown>[],
+          runTypeForDelta,
+        ).catch(() => null);
+      }
+    }
+
+    if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
+    await interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: chartAttachment ? [chartAttachment] : [] });
 
     if (syncResult?.backgroundSync) {
       void syncResult.backgroundSync
@@ -287,6 +312,7 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
       userId,
       run: shareableRun,
       runTypeCounts,
+      deltaResult,
     });
 
     if (syncResult?.queuedForCloud && syncResult?.cloudUnavailable) {

@@ -4,6 +4,7 @@ import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '.
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { trimDisplayTimeSeconds } from '../handlers/upload-helpers';
 import { getTrackUiConfig, getTrackerUiConfig, type TrackerUiMode } from '../../../config/tracker-ui-config';
+import { type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools';
 
 function firstPresentValue(data: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
@@ -212,10 +213,12 @@ export function createInitialEmbed(params: {
   lastRun?: Record<string, unknown> | null;
   runCount?: number;
   runTypeCounts?: Record<string, number>;
+  comparisonLabel?: string;
+  deltaResult?: TrackerRunDeltaResult;
 }) {
   const ui = getTrackerUiConfig(params.mode ?? 'track');
   const menu = ui.initialMenu;
-  const { userLabel, userId, lastRun, runCount = 0, runTypeCounts = {} } = params;
+  const { userLabel, userId, lastRun, runCount = 0, runTypeCounts = {}, deltaResult } = params;
   const mentionUserId = typeof userId === 'string' && userId.trim() ? userId.trim() : userLabel;
   const embed = new EmbedBuilder()
     .setTitle(menu.title)
@@ -225,9 +228,9 @@ export function createInitialEmbed(params: {
 
   if (lastRun) {
     const totalRuns = Math.max(1, Number(runCount) || 0);
-    embed.setDescription(menu.welcomeBackTemplate.replace('{userId}', mentionUserId).replace('{totalRuns}', String(totalRuns)));
 
     if ((params.mode ?? 'track') === 'lifetime') {
+      embed.setDescription(menu.welcomeBackTemplate.replace('{userId}', mentionUserId).replace('{totalRuns}', String(totalRuns)));
       const lastRunFieldLabels = menu.lastRunFieldLabels as Record<string, string>;
       const lifetimeOrder = menu.lastRunFieldOrder as string[];
       const fields = lifetimeOrder
@@ -271,45 +274,44 @@ export function createInitialEmbed(params: {
     const wavesPerHour = calculateHourlyRate(waveValue, durationValue) || 'N/A';
     const enemiesPerHour = calculateHourlyRate(String(lastRun.totalEnemies ?? ''), durationValue) || 'N/A';
 
-    const lastRunFieldLabels = menu.lastRunFieldLabels;
-    const valueByKey: Record<string, string> = {
-      tierWave: `${tierValue} | ${waveValue}`,
-      duration: durationValue,
-      killedBy: killedByValue,
-      coins: coinsValue,
-      cells: cellsValue,
-      dice: diceValue,
-      coinsPerHour,
-      cellsPerHour,
-      dicePerHour,
-      moduleShardsPerHour,
-      wavesPerHour,
-      enemiesPerHour,
-      deathDefy: deathDefyValue,
-      runSummary: `${runType.charAt(0).toUpperCase() + runType.slice(1)} #${typeCount}`,
-      dateTime: dateValue,
-    };
-
-    const fields = (menu.lastRunFieldOrder as string[])
-      .map((key) => {
-        const label = (lastRunFieldLabels as Record<string, string>)[key];
-        const value = valueByKey[key];
-        if (!label || value === undefined) return null;
-        return { name: label, value, inline: true };
-      })
-      .filter((f): f is { name: string; value: string; inline: boolean } => f !== null);
-
-    fields.forEach(f => embed.addFields(f));
-
-    const noteText = lastRun.notes || lastRun.note;
-    if (noteText && String(noteText).trim() !== '' && noteText !== 'N/A') {
-      embed.addFields({
-        name: lastRunFieldLabels.notes,
-        value: String(noteText).length > 1024 ? `${String(noteText).substring(0, 1021)}...` : String(noteText),
-        inline: false,
-      });
+    function delta(key: string): string {
+      if (!deltaResult) return '';
+      const annotation = getDeltaAnnotationForStat(lastRun as Record<string, unknown>, key as TrackerDeltaStatKey, deltaResult.baseline);
+      return annotation ? ` ${annotation}` : '';
     }
 
+    const comparisonLine = deltaResult?.comparisonLabel ? ` *(${deltaResult.comparisonLabel})*` : '';
+    const noteText = lastRun.notes || lastRun.note;
+
+    const descLines: string[] = [
+      menu.welcomeBackTemplate.replace('{userId}', mentionUserId).replace('{totalRuns}', String(totalRuns)) + comparisonLine,
+      `⚙️ Type: **${runType.charAt(0).toUpperCase() + runType.slice(1)} #${typeCount}**`,
+      `📅 Date: **${dateValue}**`,
+      `🔢 Tier: **${tierValue}**`,
+      `🌊 Wave: **${waveValue}**${delta('wave')}`,
+      `⏱️ Duration: **${durationValue}**${delta('duration')}`,
+      `💀 Killed By: **${killedByValue}**`,
+      `🪙 Coins: **${coinsValue}**${delta('coins')}`,
+      `🔋 Cells: **${cellsValue}**${delta('cells')}`,
+      `🎲 Dice: **${diceValue}**${delta('rerollShards')}`,
+      `🔼 Shards: **${resolveModuleShardsTotal(lastRun as Record<string, unknown>)}**${delta('moduleShards')}`,
+      `🍀 Death Defies: **${deathDefyValue}**${delta('deathDefy')}`,
+      '',
+      `**📊 Per Hour**`,
+      `🪙 Coins/Hr   **${coinsPerHour}**${delta('coinsPerHour')}`,
+      `🔋 Cells/Hr   **${cellsPerHour}**${delta('cellsPerHour')}`,
+      `🎲 Dice/Hr    **${dicePerHour}**${delta('rerollShardsPerHour')}`,  
+      `🔼 Shards/Hr  **${moduleShardsPerHour}**${delta('moduleShardsPerHour')}`,
+      `🌊 Waves/Hr   **${wavesPerHour}**${delta('wavesPerHour')}`,
+      `🔳 Enemies/Hr **${enemiesPerHour}**${delta('enemiesPerHour')}`,
+    ];
+
+    if (noteText && String(noteText).trim() !== '' && noteText !== 'N/A') {
+      const noteStr = String(noteText);
+      descLines.push('', `📝 **Notes:** ${noteStr.length > 200 ? `${noteStr.substring(0, 197)}...` : noteStr}`);
+    }
+
+    embed.setDescription(descLines.join('\n'));
     embed.addFields({ name: '\u200B', value: menu.availableOptionsHeader });
   } else {
     embed.setDescription(menu.welcomeNewTemplate.replace('{userId}', mentionUserId));
@@ -334,6 +336,7 @@ export function createMainMenuButtons(mode: TrackerUiMode = 'track') {
     viewRuns: TRACKER_IDS.flow.viewRuns,
     support: TRACKER_IDS.flow.support,
     settings: TRACKER_IDS.settings.menu,
+    analysis: TRACKER_IDS.analysis.menu,
     cancel: TRACKER_IDS.flow.cancel,
   };
 

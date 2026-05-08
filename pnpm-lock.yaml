@@ -15,8 +15,8 @@ importers:
         specifier: ^0.1.97
         version: 0.1.97
       '@tmrxjd/platform':
-        specifier: 0.1.15
-        version: 0.1.15
+        specifier: 0.1.16
+        version: 0.1.16
       dexie:
         specifier: ^4.0.11
         version: 4.3.0
@@ -39,8 +39,8 @@ importers:
         specifier: ^5.1.7
         version: 5.1.7
       zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@eslint/js':
         specifier: ^9.21.0
@@ -881,8 +881,8 @@ packages:
   '@techstark/opencv-js@4.9.0-release.3':
     resolution: {integrity: sha512-y+KoLLlkXVUHWozYlN1vmMD9TQMPJObqml5nPA5vPWgHtOgm8q5O74UtzM23eayidvmeFX6tF5e2gDdyxcpy3Q==}
 
-  '@tmrxjd/platform@0.1.15':
-    resolution: {integrity: sha512-Hp0JwFd1hShLPcZvI6o+p9xr2BUdBLmbZMISoMKsUqBdjoos/z2wTc60IV04xJ+W6kwqkYIG64o4qkSD6T3FUA==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.1.15/d0e7b906c595529faf0544017dcf18a4b46678e4}
+  '@tmrxjd/platform@0.1.16':
+    resolution: {integrity: sha512-Mi1UgUE+Xn4wzun1yTZFdeqM8o/WzrdUbel3fQcbb4NUDl9qkpL4CsbjipzFFLOGDUzXdP0EttFV24ubUw8LQg==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.1.16/6af1a92b07d7047d34e3e26e34839b9ac2471203}
 
   '@tootallnate/once@1.1.2':
     resolution: {integrity: sha512-RbzJvlNzmRq5c3O09UipeuXno4tA1FE6ikOjxZK0tuxVv3412l64l5t1W5pj4+rJq9vpkm/kwiR07aZXnsKPxw==}
@@ -2389,8 +2389,8 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.3.6:
+    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
 snapshots:
 
@@ -2995,7 +2995,7 @@ snapshots:
 
   '@techstark/opencv-js@4.9.0-release.3': {}
 
-  '@tmrxjd/platform@0.1.15':
+  '@tmrxjd/platform@0.1.16':
     dependencies:
       '@gutenye/ocr-node': 1.4.8
       '@huggingface/transformers': 3.8.1
@@ -3007,7 +3007,7 @@ snapshots:
       sharp: 0.34.5
       sqlite3: 5.1.7
       typescript: 5.8.3
-      zod: 3.25.76
+      zod: 4.3.6
     transitivePeerDependencies:
       - bluebird
       - supports-color
@@ -4701,4 +4701,4 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod@3.25.76: {}
+  zod@4.3.6: {}

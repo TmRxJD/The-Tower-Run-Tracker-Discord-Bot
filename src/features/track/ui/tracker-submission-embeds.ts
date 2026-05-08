@@ -1,5 +1,5 @@
 import { Colors, EmbedBuilder } from 'discord.js'
-import { getFirstMeaningfulRunDataValue } from '@tmrxjd/platform/tools'
+import { getFirstMeaningfulRunDataValue, type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools'
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math'
 import { getTrackUiConfig } from '../../../config/tracker-ui-config'
 import { calculateHourlyRate } from '../tracker-helpers'
@@ -92,10 +92,11 @@ export function buildSubmissionResultEmbed(params: {
   runTypeCounts: Record<string, number>
   hasScreenshot: boolean
   screenshotUrl?: string | null
+  deltaResult?: TrackerRunDeltaResult
 }) {
   const ui = getTrackUiConfig()
   const submissionUi = ui.submission
-  const { data, isUpdate, runTypeCounts, hasScreenshot, screenshotUrl } = params
+  const { data, isUpdate, runTypeCounts, hasScreenshot, screenshotUrl, deltaResult } = params
   const coverageData = normalizeCoverageFields(data)
   const runType = (coverageData?.type || 'Farming').toString()
   const formattedType = runType.charAt(0).toUpperCase() + runType.slice(1)
@@ -104,10 +105,13 @@ export function buildSubmissionResultEmbed(params: {
   const totalRuns = Math.max(1, Object.values(runTypeCounts || {}).reduce((a, b) => a + b, 0))
 
   const descriptionTemplate = isUpdate ? submissionUi.descriptionUpdated : submissionUi.descriptionLogged
-  const description = descriptionTemplate.replace('{totalRuns}', String(totalRuns))
+  const descriptionHeader = descriptionTemplate.replace('{totalRuns}', String(totalRuns))
 
-  const duration = formatDurationForEmbed(String(coverageData?.roundDuration ?? coverageData?.duration ?? ''))
   const durationRaw = String(coverageData?.roundDuration ?? coverageData?.duration ?? '')
+  const duration = formatDurationForEmbed(durationRaw)
+  const coinsStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalCoins ?? coverageData?.coins ?? '0'))))
+  const cellsStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalCells ?? coverageData?.cells ?? '0'))))
+  const diceStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? '0'))))
   const coinsPerHour = calculateHourlyRate(String(coverageData?.totalCoins ?? coverageData?.coins ?? ''), durationRaw) || 'N/A'
   const cellsPerHour = calculateHourlyRate(String(coverageData?.totalCells ?? coverageData?.cells ?? ''), durationRaw) || 'N/A'
   const dicePerHour = calculateHourlyRate(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? ''), durationRaw) || 'N/A'
@@ -118,38 +122,46 @@ export function buildSubmissionResultEmbed(params: {
   const tierDisplay = coverageData?.tierDisplay && String(coverageData.tierDisplay).trim()
     ? String(coverageData.tierDisplay)
     : formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.tier ?? '0'))))
-  const valueByKey: Record<string, string> = {
-    tierWave: `${String(tierDisplay)} | ${String(coverageData?.wave ?? '')}`,
-    duration: String(duration),
-    killedBy: String(coverageData?.killedBy || 'Unknown'),
-    coins: formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalCoins ?? coverageData?.coins ?? '0')))),
-    cells: formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalCells ?? coverageData?.cells ?? '0')))),
-    dice: formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? '0')))),
-    coinsPerHour: String(coinsPerHour),
-    cellsPerHour: String(cellsPerHour),
-    dicePerHour: String(dicePerHour),
-    moduleShardsPerHour: String(moduleShardsPerHour),
-    wavesPerHour: String(wavesPerHour),
-    enemiesPerHour: String(enemiesPerHour),
-    date: coverageData?.date ? (coverageData?.time ? `${String(coverageData.date)} @ ${trimDisplayTimeSeconds(coverageData.time)}` : String(coverageData.date)) : 'Now',
-    type: String(formattedType),
-    run: formatNumberForDisplay(typeCount),
+  const waveStr = String(coverageData?.wave ?? 'N/A')
+  const dateStr = coverageData?.date
+    ? (coverageData?.time ? `${String(coverageData.date)} @ ${trimDisplayTimeSeconds(coverageData.time)}` : String(coverageData.date))
+    : 'Now'
+
+  function delta(key: string): string {
+    if (!deltaResult) return ''
+    const annotation = getDeltaAnnotationForStat(coverageData, key as TrackerDeltaStatKey, deltaResult.baseline)
+    return annotation ? ` ${annotation}` : ''
   }
 
-  const fields = (submissionUi.fieldOrder as string[])
-    .map((key) => {
-      const label = getSubmissionFieldLabel(key)
-      const value = valueByKey[key]
-      if (!label || value === undefined) return null
-      return { name: label, value, inline: true }
-    })
-    .filter((field): field is { name: string; value: string; inline: boolean } => field !== null)
+  const comparisonLine = deltaResult?.comparisonLabel ? ` *(${deltaResult.comparisonLabel})*` : ''
+
+  const descLines: string[] = [
+    descriptionHeader + comparisonLine,
+    `⚙️ Type: **${formattedType} #${typeCount}**`,
+    `📅 Date: **${dateStr}**`,
+    `🔢 Tier: **${tierDisplay}**`,
+    `🌊 Wave: **${waveStr}**${delta('wave')}`,
+    `⏱️ Duration: **${duration}**${delta('duration')}`,
+    `💀 Killed By: **${String(coverageData?.killedBy || 'Unknown')}**`,
+    `🪙 Coins: **${coinsStr}**${delta('coins')}`,
+    `🔋 Cells: **${cellsStr}**${delta('cells')}`,
+    `🎲 Dice: **${diceStr}**${delta('rerollShards')}`,
+    `🔼 Shards: **${resolveModuleShardsTotal(coverageData)}**${delta('moduleShards')}`,
+    `🍀 Death Defies: **${String(coverageData?.deathDefy ?? 'N/A')}**${delta('deathDefy')}`,
+    '',
+    `**📊 Per Hour**`,
+    `🪙 Coins: **${coinsPerHour}**${delta('coinsPerHour')}`,
+    `🔋 Cells: **${cellsPerHour}**${delta('cellsPerHour')}`,
+    `🎲 Dice: **${dicePerHour}**${delta('rerollShardsPerHour')}`,
+    `🔼 Shards: **${moduleShardsPerHour}**${delta('moduleShardsPerHour')}`,
+    `🌊 Waves: **${wavesPerHour}**${delta('wavesPerHour')}`,
+    `🔳 Enemies: **${enemiesPerHour}**${delta('enemiesPerHour')}`,
+  ]
 
   const embed = new EmbedBuilder()
     .setTitle(submissionUi.title)
     .setURL(submissionUi.url)
-    .setDescription(description)
-    .addFields(fields)
+    .setDescription(descLines.join('\n'))
     .setColor(isUpdate ? Colors.Orange : Colors.Green)
 
   const noteText = coverageData?.notes || coverageData?.note
@@ -157,15 +169,21 @@ export function buildSubmissionResultEmbed(params: {
     embed.addFields({ name: getSubmissionFieldLabel('notes'), value: String(noteText), inline: false })
   }
 
-  const coverage = generateCoverageDescription(coverageData)
+  const deltaCallbackForCoverage = deltaResult
+    ? (key: string) => {
+        const annotation = getDeltaAnnotationForStat(coverageData, key as TrackerDeltaStatKey, deltaResult.baseline)
+        return annotation ? ` ${annotation}` : ''
+      }
+    : undefined
+  const coverage = generateCoverageDescription(coverageData, { getDeltaAnnotation: deltaCallbackForCoverage })
   if (coverage) {
     embed.addFields({ name: submissionUi.coverageLabel, value: coverage, inline: false })
   }
 
   if (screenshotUrl && String(screenshotUrl).trim()) {
-    embed.setImage(String(screenshotUrl))
+    embed.setThumbnail(String(screenshotUrl))
   } else if (hasScreenshot) {
-    embed.setImage('attachment://screenshot.png')
+    embed.setThumbnail('attachment://screenshot.png')
   }
 
   embed.setFooter({ text: submissionUi.footer })

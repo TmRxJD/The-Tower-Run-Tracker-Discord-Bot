@@ -3,14 +3,24 @@ import { generateCoverageDescription, formatDuration as formatRunDuration } from
 import { calculateHourlyRate } from '../tracker-helpers';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
+import { type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools';
 
 export type ShareEmbedInput = {
   user: { username: string; displayName?: string; displayAvatarURL?: () => string | null };
   run: Record<string, unknown>;
   runTypeCounts: Record<string, number>;
+  deltaResult?: TrackerRunDeltaResult;
   options?: {
     includeNotes?: boolean;
     includeCoverage?: boolean;
+    includeCoverageGoldenTower?: boolean;
+    includeCoverageBlackHole?: boolean;
+    includeCoverageSpotlight?: boolean;
+    includeCoverageDeathWave?: boolean;
+    includeCoverageOrbs?: boolean;
+    includeCoverageGoldenBot?: boolean;
+    includeCoverageAmpBot?: boolean;
+    includeCoverageSummoned?: boolean;
     includeScreenshot?: boolean;
     includeTier?: boolean;
     includeWave?: boolean;
@@ -19,10 +29,14 @@ export type ShareEmbedInput = {
     includeTotalCoins?: boolean;
     includeTotalCells?: boolean;
     includeTotalDice?: boolean;
+    includeTotalShards?: boolean;
     includeDeathDefy?: boolean;
     includeCoinsPerHour?: boolean;
     includeCellsPerHour?: boolean;
     includeDicePerHour?: boolean;
+    includeShardsPerHour?: boolean;
+    includeWavesPerHour?: boolean;
+    includeEnemiesPerHour?: boolean;
   };
 };
 
@@ -60,7 +74,12 @@ function resolveModuleShardsTotal(run: Record<string, unknown>): string {
   return formatNumberForDisplay(total)
 }
 
-function buildDescription(run: Record<string, unknown>, options: NonNullable<ShareEmbedInput['options']>): string {
+function buildDescription(
+  run: Record<string, unknown>,
+  options: NonNullable<ShareEmbedInput['options']>,
+  hourlyRates: { coinsPerHour: string; cellsPerHour: string; dicePerHour: string; moduleShardsPerHour: string; wavesPerHour: string; enemiesPerHour: string },
+  deltaResult?: TrackerRunDeltaResult,
+): string {
   const tierDisplayRaw = getRunString(run, 'tierDisplay');
   const tierDisplay = tierDisplayRaw && tierDisplayRaw.trim()
     ? tierDisplayRaw
@@ -74,43 +93,80 @@ function buildDescription(run: Record<string, unknown>, options: NonNullable<Sha
   const totalDice = firstAvailable(run, ['totalDice', 'rerollShards', 'dice']) ?? '0';
   const deathDefy = firstAvailable(run, ['deathDefy']) ?? '0';
 
+  function delta(key: string): string {
+    if (!deltaResult) return '';
+    const annotation = getDeltaAnnotationForStat(run, key as TrackerDeltaStatKey, deltaResult.baseline);
+    return annotation ? ` ${annotation}` : '';
+  }
+
   const parts: string[] = [];
   if (options.includeTier !== false) {
-    parts.push(`🔢 Tier: **${tierDisplay}**`);
+    const tierLabel = deltaResult?.comparisonLabel ? ` *(${deltaResult.comparisonLabel})*` : '';
+    parts.push(`🔢 Tier: **${tierDisplay}**${tierLabel}`);
   }
   if (options.includeWave !== false) {
-    parts.push(`🌊 Wave: **${wave}**`);
+    parts.push(`🌊 Wave: **${wave}**${delta('wave')}`);
   }
   if (options.includeDuration !== false) {
-    parts.push(`⏱️ Duration: **${formatRunDuration(duration)}**`);
+    parts.push(`⏱️ Duration: **${formatRunDuration(duration)}**${delta('duration')}`);
   }
   if (options.includeKilledBy !== false) {
     parts.push(`💀 Killed By: **${killedBy}**`);
   }
   if (options.includeTotalCoins !== false) {
-    parts.push(`🪙 Total Coins: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCoins)))}**`);
+    parts.push(`🪙 Coins: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCoins)))}**${delta('coins')}`);
   }
   if (options.includeTotalCells !== false) {
-    parts.push(`🔋 Total Cells: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCells)))}**`);
+    parts.push(`🔋 Cells: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCells)))}**${delta('cells')}`);
   }
   if (options.includeTotalDice !== false) {
-    parts.push(`🎲 Total Dice: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalDice)))}**`);
+    parts.push(`🎲 Dice: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalDice)))}**${delta('rerollShards')}`);
+  }
+  const totalShards = resolveModuleShardsTotal(run);
+  if (options.includeTotalShards !== false && totalShards !== '0') {
+    parts.push(`🔼 Shards: **${totalShards}**${delta('moduleShards')}`);
   }
   if (options.includeDeathDefy !== false) {
-    parts.push(`🍀 Death Defies: **${deathDefy}**`);
+    parts.push(`🍀 Death Defies: **${deathDefy}**${delta('deathDefy')}`);
   }
   if (!parts.length) {
     return 'No primary share elements are enabled. Use Share Settings to enable fields.';
   }
 
+  const hourlyLines: string[] = [];
+  if (options.includeCoinsPerHour !== false) hourlyLines.push(`🪙 Coins: **${hourlyRates.coinsPerHour}**${delta('coinsPerHour')}`);
+  if (options.includeCellsPerHour !== false) hourlyLines.push(`🔋 Cells: **${hourlyRates.cellsPerHour}**${delta('cellsPerHour')}`);
+  if (options.includeDicePerHour !== false) hourlyLines.push(`🎲 Dice: **${hourlyRates.dicePerHour}**${delta('rerollShardsPerHour')}`);
+  if (options.includeShardsPerHour !== false) hourlyLines.push(`🔼 Shards: **${hourlyRates.moduleShardsPerHour}**${delta('moduleShardsPerHour')}`);
+  if (options.includeWavesPerHour !== false) hourlyLines.push(`🌊 Waves: **${hourlyRates.wavesPerHour}**${delta('wavesPerHour')}`);
+  if (options.includeEnemiesPerHour !== false) hourlyLines.push(`🔳 Enemies: **${hourlyRates.enemiesPerHour}**${delta('enemiesPerHour')}`);
+  if (hourlyLines.length) {
+    parts.push('\n**📊 Per Hour**\n' + hourlyLines.join('\n'));
+  }
+
   return parts.join('\n');
 }
 
-export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbedInput): EmbedBuilder {
+export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options }: ShareEmbedInput): EmbedBuilder {
   const config = getTrackUiConfig().share;
   const includeNotes = options?.includeNotes !== false;
   const includeCoverage = options?.includeCoverage !== false;
   const includeScreenshot = options?.includeScreenshot !== false;
+  const enabledCoverageMetrics: Set<string> | undefined = (() => {
+    const keys: Record<string, string> = {
+      goldenTower: 'includeCoverageGoldenTower',
+      blackHole: 'includeCoverageBlackHole',
+      spotlight: 'includeCoverageSpotlight',
+      deathWave: 'includeCoverageDeathWave',
+      orbs: 'includeCoverageOrbs',
+      goldenBot: 'includeCoverageGoldenBot',
+      ampBot: 'includeCoverageAmpBot',
+      summoned: 'includeCoverageSummoned',
+    };
+    const hasAnyDisabled = Object.values(keys).some((k) => options?.[k as keyof typeof options] === false);
+    if (!hasAnyDisabled) return undefined;
+    return new Set(Object.entries(keys).filter(([, optKey]) => options?.[optKey as keyof typeof options] !== false).map(([k]) => k));
+  })();
   const includeTier = options?.includeTier !== false;
   const includeWave = options?.includeWave !== false;
   const includeDuration = options?.includeDuration !== false;
@@ -122,18 +178,23 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
   const includeCoinsPerHour = options?.includeCoinsPerHour !== false;
   const includeCellsPerHour = options?.includeCellsPerHour !== false;
   const includeDicePerHour = options?.includeDicePerHour !== false;
+  const includeShardsPerHour = options?.includeShardsPerHour !== false;
+  const includeWavesPerHour = options?.includeWavesPerHour !== false;
+  const includeEnemiesPerHour = options?.includeEnemiesPerHour !== false;
+  const includeTotalShards = options?.includeTotalShards !== false;
   const runTypeRaw = firstAvailable(run, ['type']) ?? 'Farming';
   const runType = runTypeRaw;
   const formattedType = runType.charAt(0).toUpperCase() + runType.slice(1);
   const rawTypeCount = runTypeCounts[runType] ?? runTypeCounts[formattedType] ?? 0;
   const typeCount = Math.max(1, Number(rawTypeCount) || 0);
 
-  const coinsPerHour = calculateHourlyRate(firstAvailable(run, ['totalCoins', 'coins']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
-  const cellsPerHour = calculateHourlyRate(firstAvailable(run, ['totalCells', 'cells']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
-  const dicePerHour = calculateHourlyRate(firstAvailable(run, ['totalDice', 'rerollShards', 'dice']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
-  const moduleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(run), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
-  const wavesPerHour = calculateHourlyRate(firstAvailable(run, ['wave']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
-  const enemiesPerHour = calculateHourlyRate(firstAvailable(run, ['totalEnemies']), firstAvailable(run, ['roundDuration', 'duration'])) || '0';
+  const durationRaw = firstAvailable(run, ['roundDuration', 'duration']);
+  const coinsPerHour = calculateHourlyRate(firstAvailable(run, ['totalCoins', 'coins']), durationRaw) || '0';
+  const cellsPerHour = calculateHourlyRate(firstAvailable(run, ['totalCells', 'cells']), durationRaw) || '0';
+  const dicePerHour = calculateHourlyRate(firstAvailable(run, ['totalDice', 'rerollShards', 'dice']), durationRaw) || '0';
+  const moduleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(run), durationRaw) || '0';
+  const wavesPerHour = calculateHourlyRate(firstAvailable(run, ['wave']), durationRaw) || '0';
+  const enemiesPerHour = calculateHourlyRate(firstAvailable(run, ['totalEnemies']), durationRaw) || '0';
 
   const embed = new EmbedBuilder()
     .setAuthor({
@@ -152,29 +213,16 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
       includeTotalCoins,
       includeTotalCells,
       includeTotalDice,
+      includeTotalShards,
       includeDeathDefy,
       includeCoinsPerHour,
       includeCellsPerHour,
       includeDicePerHour,
-    }))
+      includeShardsPerHour,
+      includeWavesPerHour,
+      includeEnemiesPerHour,
+    }, { coinsPerHour, cellsPerHour, dicePerHour, moduleShardsPerHour, wavesPerHour, enemiesPerHour }, deltaResult))
     .setFooter({ text: config.footer });
-
-  const hourlyFields: Array<{ name: string; value: string; inline: true }> = [];
-  if (includeCoinsPerHour) {
-    hourlyFields.push({ name: config.hourlyFieldLabels.coins, value: String(coinsPerHour), inline: true });
-  }
-  if (includeCellsPerHour) {
-    hourlyFields.push({ name: config.hourlyFieldLabels.cells, value: String(cellsPerHour), inline: true });
-  }
-  if (includeDicePerHour) {
-    hourlyFields.push({ name: config.hourlyFieldLabels.dice, value: String(dicePerHour), inline: true });
-  }
-  hourlyFields.push({ name: config.hourlyFieldLabels.shards, value: String(moduleShardsPerHour), inline: true });
-  hourlyFields.push({ name: config.hourlyFieldLabels.waves, value: String(wavesPerHour), inline: true });
-  hourlyFields.push({ name: config.hourlyFieldLabels.enemies, value: String(enemiesPerHour), inline: true });
-  if (hourlyFields.length) {
-    embed.addFields({ name: config.hourlySectionLabel, value: '\u200B', inline: false }, ...hourlyFields);
-  }
 
   const noteText = firstAvailable(run, ['notes', 'note']);
   if (includeNotes && noteText && noteText.trim() && noteText !== 'N/A') {
@@ -185,14 +233,20 @@ export function buildShareEmbed({ user, run, runTypeCounts, options }: ShareEmbe
   const coverageSource = typeof fullRunData === 'object' && fullRunData !== null
     ? { ...(fullRunData as Record<string, unknown>), ...run }
     : run;
-  const coverage = generateCoverageDescription(coverageSource);
+  const deltaCallbackForCoverage = deltaResult
+    ? (key: string) => {
+        const annotation = getDeltaAnnotationForStat(coverageSource, key as TrackerDeltaStatKey, deltaResult.baseline);
+        return annotation ? ` ${annotation}` : '';
+      }
+    : undefined;
+  const coverage = generateCoverageDescription(coverageSource, { getDeltaAnnotation: deltaCallbackForCoverage, enabledMetrics: enabledCoverageMetrics });
   if (includeCoverage && coverage) {
     embed.addFields({ name: config.coverageFieldLabel, value: coverage, inline: false });
   }
 
   const screenshotUrl = firstAvailable(run, ['screenshotUrl']);
-  if (includeScreenshot && screenshotUrl) {
-    embed.setImage(screenshotUrl);
+  if (screenshotUrl) {
+    embed.setThumbnail(screenshotUrl);
   }
 
   return embed;

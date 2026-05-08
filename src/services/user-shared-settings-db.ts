@@ -65,7 +65,8 @@ function hasMeaningfulSharedSettings(candidate: SharedUserToolSettings): boolean
     || candidate.chartDataAlignment !== defaultSharedUserToolSettings.chartDataAlignment
     || candidate.languagePreference !== defaultSharedUserToolSettings.languagePreference
     || candidate.dateFormatPreference !== defaultSharedUserToolSettings.dateFormatPreference
-    || candidate.decimalSeparatorPreference !== defaultSharedUserToolSettings.decimalSeparatorPreference;
+    || candidate.decimalSeparatorPreference !== defaultSharedUserToolSettings.decimalSeparatorPreference
+    || candidate.runDeltaMode !== defaultSharedUserToolSettings.runDeltaMode;
 }
 
 export async function getUserSharedSettings(userId: string): Promise<SharedUserToolSettings> {

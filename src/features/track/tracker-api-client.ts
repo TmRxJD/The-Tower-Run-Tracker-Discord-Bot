@@ -1832,10 +1832,31 @@ function shouldHydrateByCooldown(map: Map<string, number>, userId: string, coold
   return Date.now() - last >= cooldownMs;
 }
 
+function normalizeDateStrForSort(raw: string): string {
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw;
+  const parts = raw.split(/[/-]/);
+  if (parts.length === 3) {
+    const [a, b, c] = parts;
+    if (c.length === 4) {
+      const month = parseInt(a, 10) > 12 ? b : a;
+      const day = parseInt(a, 10) > 12 ? a : b;
+      return `${c}-${String(parseInt(month, 10)).padStart(2, '0')}-${String(parseInt(day, 10)).padStart(2, '0')}`;
+    }
+    if (c.length <= 2) {
+      const year = `20${c}`;
+      const month = parseInt(a, 10) > 12 ? b : a;
+      const day = parseInt(a, 10) > 12 ? a : b;
+      return `${year}-${String(parseInt(month, 10)).padStart(2, '0')}-${String(parseInt(day, 10)).padStart(2, '0')}`;
+    }
+  }
+  return raw;
+}
+
 function summarizeRuns(runs: TrackerRun[]) {
   const byRunDateTimeDesc = (left: TrackerRun, right: TrackerRun): number => {
-    const leftRunDate = String(left.runDate ?? left.date ?? '');
-    const rightRunDate = String(right.runDate ?? right.date ?? '');
+    const leftRunDate = normalizeDateStrForSort(String(left.runDate ?? left.date ?? ''));
+    const rightRunDate = normalizeDateStrForSort(String(right.runDate ?? right.date ?? ''));
     const runDateCompare = rightRunDate.localeCompare(leftRunDate);
     if (runDateCompare !== 0) return runDateCompare;
 
@@ -1844,8 +1865,8 @@ function summarizeRuns(runs: TrackerRun[]) {
     const runTimeCompare = rightRunTime.localeCompare(leftRunTime);
     if (runTimeCompare !== 0) return runTimeCompare;
 
-    const leftDate = String(left.date ?? left.runDate ?? '');
-    const rightDate = String(right.date ?? right.runDate ?? '');
+    const leftDate = normalizeDateStrForSort(String(left.date ?? left.runDate ?? ''));
+    const rightDate = normalizeDateStrForSort(String(right.date ?? right.runDate ?? ''));
     const dateCompare = rightDate.localeCompare(leftDate);
     if (dateCompare !== 0) return dateCompare;
 

@@ -22,6 +22,7 @@ import {
   governedLanguageOptions,
   governedLanguagePreferenceIds,
   resolveGovernedLocaleSettings,
+  type RunDeltaMode,
   type SharedUserToolSettings,
 } from '@tmrxjd/platform/tools';
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
@@ -33,6 +34,7 @@ import { logError } from './error-handlers';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
+import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { getEffectiveUserSharedSettings, saveUserSharedSettings } from '../../../services/user-shared-settings-db';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
@@ -78,6 +80,17 @@ function formatDecimalSeparatorLabel(decimalSeparatorPreference: SharedUserToolS
   }
 
   return governedDecimalSeparatorOptions.find(option => option.id === decimalSeparatorPreference)?.label ?? decimalSeparatorPreference;
+}
+
+function formatDeltaModeLabel(mode: RunDeltaMode): string {
+  switch (mode) {
+    case 'disabled': return 'Disabled';
+    case '1day': return '1-Day Average';
+    case '3day': return '3-Day Average';
+    case '7day': return '7-Day Average';
+    case 'last': return 'Last Run';
+    default: return 'Unknown';
+  }
 }
 
 function buildLocalePreview(sharedSettings: SharedUserToolSettings): string {
@@ -191,6 +204,7 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
       { name: settingsUi.labels.confirmBeforeSubmit, value: confirmEnabled ? 'On' : 'Off', inline: true },
       { name: settingsUi.labels.cloudSync, value: cloudEnabled ? 'On' : 'Off', inline: true },
       { name: settingsUi.labels.logChannel ?? 'Log channel', value: logChannelDisplay, inline: true },
+      { name: 'Comparison Mode', value: formatDeltaModeLabel(sharedSettings.runDeltaMode), inline: true },
     )
     .setColor(0x3b82f6);
 
@@ -212,7 +226,7 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
       .addOptions(...settingsUi.timezoneOptions.map((item) => ({ label: item, value: item, default: timezone === item }))),
   );
 
-  const actionsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const actionsButtons: ButtonBuilder[] = [
     new ButtonBuilder()
       .setCustomId(TRACKER_IDS.settings.duplicates)
       .setLabel(duplicatesEnabled ? settingsUi.buttons.disableDuplicates : settingsUi.buttons.enableDuplicates)
@@ -225,23 +239,10 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
       .setCustomId(TRACKER_IDS.settings.cloudToggle)
       .setLabel(cloudEnabled ? settingsUi.buttons.disableCloud : settingsUi.buttons.enableCloud)
       .setStyle(cloudEnabled ? ButtonStyle.Danger : ButtonStyle.Success),
-  );
-
-  const utilityRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.languageMenu).setLabel(settingsUi.buttons.languageMenu ?? 'Language & Locale').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.logChannel).setLabel(settingsUi.buttons.setLogChannel ?? 'Set Log Channel').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.share).setLabel(settingsUi.buttons.shareSettings).setStyle(ButtonStyle.Primary),
-  );
-
-  const navigationButtons: ButtonBuilder[] = [
-    new ButtonBuilder().setLabel(settingsUi.buttons.inviteBot ?? 'Invite Bot').setStyle(ButtonStyle.Link).setURL(BOT_INVITE_URL),
-    new ButtonBuilder().setCustomId(TRACKER_IDS.flow.mainMenu).setLabel('Main Menu').setStyle(ButtonStyle.Secondary),
   ];
 
   if (queued > 0) {
-    navigationButtons.splice(
-      2,
-      0,
+    actionsButtons.push(
       new ButtonBuilder()
         .setCustomId(TRACKER_IDS.settings.forceSave)
         .setLabel(settingsUi.buttons.forceSave ?? 'Force Save')
@@ -249,12 +250,34 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
     );
   }
 
-  const navigationRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...navigationButtons);
+  const actionsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...actionsButtons);
+
+  const deltaModeRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(TRACKER_IDS.settings.deltaMode)
+      .setPlaceholder('Comparison mode')
+      .addOptions(
+        { label: 'Disabled', value: 'disabled', description: 'No stat comparison shown', default: sharedSettings.runDeltaMode === 'disabled' },
+        { label: '1-Day Average', value: '1day', description: 'Compare vs rolling 1-day average (same type)', default: sharedSettings.runDeltaMode === '1day' },
+        { label: '3-Day Average', value: '3day', description: 'Compare vs rolling 3-day average (same type)', default: sharedSettings.runDeltaMode === '3day' },
+        { label: '7-Day Average', value: '7day', description: 'Compare vs rolling 7-day average (same type)', default: sharedSettings.runDeltaMode === '7day' },
+        { label: 'Last Run', value: 'last', description: 'Compare vs previous run of same type', default: sharedSettings.runDeltaMode === 'last' },
+      ),
+  );
+
+  // Merge utility + navigation into one row (max 5 buttons, within Discord limit)
+  const utilityNavRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.languageMenu).setLabel(settingsUi.buttons.languageMenu ?? 'Language & Locale').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.logChannel).setLabel(settingsUi.buttons.setLogChannel ?? 'Set Log Channel').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.share).setLabel(settingsUi.buttons.shareSettings).setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setLabel(settingsUi.buttons.inviteBot ?? 'Invite Bot').setStyle(ButtonStyle.Link).setURL(BOT_INVITE_URL),
+    new ButtonBuilder().setCustomId(TRACKER_IDS.flow.mainMenu).setLabel('Main Menu').setStyle(ButtonStyle.Secondary),
+  );
 
   return {
     content: 'Select your default run type, scan language, and timezone below.',
     embeds: [settingsEmbed],
-    components: [runTypeRow, timezoneRow, actionsRow, utilityRow, navigationRow],
+    components: [runTypeRow, timezoneRow, deltaModeRow, actionsRow, utilityNavRow],
   };
 }
 
@@ -334,13 +357,24 @@ const SHARE_ELEMENT_KEYS = [
   'shareTotalCoins',
   'shareTotalCells',
   'shareTotalDice',
+  'shareTotalShards',
   'shareDeathDefy',
   'shareCoinsPerHour',
   'shareCellsPerHour',
   'shareDicePerHour',
+  'shareShardsPerHour',
+  'shareWavesPerHour',
+  'shareEnemiesPerHour',
   'shareNotes',
-  'shareCoverage',
-  'shareScreenshot',
+  'shareCoverageGoldenTower',
+  'shareCoverageBlackHole',
+  'shareCoverageSpotlight',
+  'shareCoverageDeathWave',
+  'shareCoverageOrbs',
+  'shareCoverageGoldenBot',
+  'shareCoverageAmpBot',
+  'shareCoverageSummoned',
+  'shareChart',
 ] as const;
 
 type ShareElementKey = (typeof SHARE_ELEMENT_KEYS)[number];
@@ -353,13 +387,24 @@ const SHARE_ELEMENT_LABELS: Record<ShareElementKey, string> = {
   shareTotalCoins: 'Total Coins',
   shareTotalCells: 'Total Cells',
   shareTotalDice: 'Total Dice',
+  shareTotalShards: 'Total Shards',
   shareDeathDefy: 'Death Defies',
   shareCoinsPerHour: 'Coins/Hr',
   shareCellsPerHour: 'Cells/Hr',
   shareDicePerHour: 'Dice/Hr',
+  shareShardsPerHour: 'Shards/Hr',
+  shareWavesPerHour: 'Waves/Hr',
+  shareEnemiesPerHour: 'Enemies/Hr',
   shareNotes: 'Notes',
-  shareCoverage: 'Coverage',
-  shareScreenshot: 'Screenshot',
+  shareCoverageGoldenTower: 'Coverage: Golden Tower',
+  shareCoverageBlackHole: 'Coverage: Black Hole',
+  shareCoverageSpotlight: 'Coverage: Spotlight',
+  shareCoverageDeathWave: 'Coverage: Death Wave',
+  shareCoverageOrbs: 'Coverage: Orbs',
+  shareCoverageGoldenBot: 'Coverage: Golden Bot',
+  shareCoverageAmpBot: 'Coverage: Amp Bot',
+  shareCoverageSummoned: 'Coverage: Summoned',
+  shareChart: '📊 Per-Hour Chart',
 };
 
 function getShareElementValues(settings: TrackerSettings | null | undefined): ShareElementKey[] {
@@ -424,11 +469,53 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
     deathDefy: '2',
     notes: 'Sample preview note',
     screenshotUrl: null,
+    cannonShardsFetched: '120K',
+    armorShardsFetched: '95K',
+    generatorShardsFetched: '88K',
+    coreShardsFetched: '95.25K',
   };
   const sampleRun = withPreviewCoverage(sampleRunBase);
   const sampleCounts = { Farming: 1 };
   const previewAttachmentName = 'battle_report_example.png';
   const previewAttachmentPath = resolve(process.cwd(), 'src', 'assets', previewAttachmentName);
+
+  // Dummy baseline for delta annotations in the preview
+  const demoBaseline = {
+    wave: 4155,
+    coins: 6_250_000_000_000_000,
+    cells: 868_000,
+    rerollShards: 392_000,
+    moduleShards: 390_000,
+    deathDefy: 1,
+    coinsPerHour: 2_134_000_000_000_000,
+    cellsPerHour: 296_000,
+    rerollShardsPerHour: 133_000,
+    moduleShardsPerHour: 133_000,
+    wavesPerHour: 1419,
+    enemiesPerHour: 32,
+    killsWithGoldenTowerPercentage: 70,
+    destroyedByBlackHolePercentage: 61,
+    hitByOrbsPercentage: 64,
+    destroyedInSpotlightPercentage: 56,
+    taggedByDeathWavePercentage: 49,
+    destroyedInGoldenBotPercentage: 38,
+    killsWithAmplifyBotPercentage: 25,
+    summonedEnemiesPercentage: 10,
+  };
+  const demoResult = {
+    mode: 'last' as const,
+    baseline: demoBaseline,
+    comparisonLabel: 'Last Run',
+  };
+
+  // Dummy runs for chart rendering
+  const dummyRuns: Record<string, unknown>[] = [
+    { type: 'Farming', date: '2025-01-10', totalCoins: '5.8Q', totalCells: '820K', totalDice: '365K', cannonShardsFetched: '110K', armorShardsFetched: '87K', generatorShardsFetched: '80K', coreShardsFetched: '88K', duration: '2h48m10s', wave: '3980' },
+    { type: 'Farming', date: '2025-01-12', totalCoins: '6.0Q', totalCells: '845K', totalDice: '375K', cannonShardsFetched: '113K', armorShardsFetched: '89K', generatorShardsFetched: '82K', coreShardsFetched: '90K', duration: '2h51m30s', wave: '4050' },
+    { type: 'Farming', date: '2025-01-14', totalCoins: '6.15Q', totalCells: '858K', totalDice: '386K', cannonShardsFetched: '116K', armorShardsFetched: '91K', generatorShardsFetched: '85K', coreShardsFetched: '92K', duration: '2h53m20s', wave: '4100' },
+    { type: 'Farming', date: '2025-01-15', totalCoins: '6.25Q', totalCells: '868K', totalDice: '392K', cannonShardsFetched: '118K', armorShardsFetched: '93K', generatorShardsFetched: '86K', coreShardsFetched: '93K', duration: '2h55m40s', wave: '4155' },
+    { type: 'Farming', date: '2025-01-16', totalCoins: '6.36Q', totalCells: '880.94K', totalDice: '398.25K', cannonShardsFetched: '120K', armorShardsFetched: '95K', generatorShardsFetched: '88K', coreShardsFetched: '95.25K', duration: '2h57m49s', wave: '4195' },
+  ];
 
   const preview = buildShareEmbed({
     user: buildEmbedUserFromInteraction(interaction),
@@ -437,6 +524,7 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
       screenshotUrl: `attachment://${previewAttachmentName}`,
     },
     runTypeCounts: sampleCounts,
+    deltaResult: demoResult,
     options: {
       includeTier: settings?.shareTier !== false,
       includeWave: settings?.shareWave !== false,
@@ -445,13 +533,24 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
       includeTotalCoins: settings?.shareTotalCoins !== false,
       includeTotalCells: settings?.shareTotalCells !== false,
       includeTotalDice: settings?.shareTotalDice !== false,
+      includeTotalShards: settings?.shareTotalShards !== false,
       includeDeathDefy: settings?.shareDeathDefy !== false,
       includeCoinsPerHour: settings?.shareCoinsPerHour !== false,
       includeCellsPerHour: settings?.shareCellsPerHour !== false,
       includeDicePerHour: settings?.shareDicePerHour !== false,
+      includeShardsPerHour: settings?.shareShardsPerHour !== false,
+      includeWavesPerHour: settings?.shareWavesPerHour !== false,
+      includeEnemiesPerHour: settings?.shareEnemiesPerHour !== false,
       includeNotes: settings?.shareNotes !== false,
-      includeCoverage: settings?.shareCoverage !== false,
-      includeScreenshot: settings?.shareScreenshot !== false,
+      includeCoverage: true,
+      includeCoverageGoldenTower: settings?.shareCoverageGoldenTower !== false,
+      includeCoverageBlackHole: settings?.shareCoverageBlackHole !== false,
+      includeCoverageSpotlight: settings?.shareCoverageSpotlight !== false,
+      includeCoverageDeathWave: settings?.shareCoverageDeathWave !== false,
+      includeCoverageOrbs: settings?.shareCoverageOrbs !== false,
+      includeCoverageGoldenBot: settings?.shareCoverageGoldenBot !== false,
+      includeCoverageAmpBot: settings?.shareCoverageAmpBot !== false,
+      includeCoverageSummoned: settings?.shareCoverageSummoned !== false,
     },
   });
 
@@ -460,11 +559,19 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
     text: `${currentFooter}\n\nUse the dropdown below to select which elements you want to include in your share messages.\nThe display will update in real time to show how your selections will affect the appearance of your share messages.`,
   });
 
+  const chartAttachment = settings?.shareChart !== false
+    ? await buildPerHourChartAttachment(dummyRuns, 'Farming').catch(() => null)
+    : null;
+  if (chartAttachment) preview.setImage('attachment://per-hour-chart.png');
+
   return {
     content: '',
     components: [selectRow, backRow],
     embeds: [preview],
-    files: [new AttachmentBuilder(previewAttachmentPath, { name: previewAttachmentName })],
+    files: [
+      new AttachmentBuilder(previewAttachmentPath, { name: previewAttachmentName }),
+      ...(chartAttachment ? [chartAttachment] : []),
+    ],
   };
 }
 
@@ -580,6 +687,9 @@ export async function handleTrackMenuToggleShareScreenshot(interaction: TrackMen
 
 export async function handleTrackMenuShareElements(interaction: TrackMenuInteraction) {
   try {
+    if (canUpdate(interaction) && !interaction.deferred && !interaction.replied) {
+      await interaction.deferUpdate().catch(() => {});
+    }
     const selected = getSelectedValues(interaction);
     await editUserSettings(interaction.user.id, toShareSettingsPatch(selected));
     const refreshed = await getUserSettings(interaction.user.id);
@@ -861,5 +971,35 @@ export async function handleTrackMenuImportNo(interaction: TrackMenuInteraction)
   if (canUpdate(interaction)) {
     const ui = getTrackUiConfig();
     await interaction.update({ content: ui.settings.importCancelled, components: [], embeds: [] }).catch(() => {});
+  }
+}
+
+export async function handleTrackMenuSelectDeltaMode(interaction: TrackMenuInteraction) {
+  try {
+    const nextValue = (getSelectedValues(interaction)[0] ?? '7day') as RunDeltaMode;
+    const current = await getEffectiveUserSharedSettings(interaction.user.id);
+    await saveUserSharedSettings(interaction.user.id, { ...current, runDeltaMode: nextValue });
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildSettingsPayload(interaction.user.id, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_select_delta_mode');
+    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuToggleShareChart(interaction: TrackMenuInteraction) {
+  try {
+    const current = await getUserSettings(interaction.user.id);
+    const nextValue = !(current?.shareChart !== false);
+    await editUserSettings(interaction.user.id, { shareChart: nextValue });
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildShareSettingsPayload(interaction, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_toggle_share_chart');
+    await updateInPlace(interaction, { content: ui.settings.toggleFailed.shareNotes, components: [], embeds: [] });
   }
 }

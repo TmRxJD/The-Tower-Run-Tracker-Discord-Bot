@@ -63,7 +63,15 @@ import {
   handleManualTypeSelection,
   handleTrackMenuShareLast,
   handleTrackMenuMainMenu,
+  handleTrackMenuSelectDeltaMode,
+  handleTrackMenuToggleShareChart,
 } from '../features/track/handlers';
+import {
+  handleTrackMenuAnalysis,
+  handleTrackMenuAnalysisPrev,
+  handleTrackMenuAnalysisNext,
+  handleTrackMenuAnalysisSelect,
+} from '../features/track/handlers/analysis-handlers';
 import { TRACKER_IDS } from '../features/track/track-custom-ids';
 
 export function registerComponentHandlers(client: TrackerBotClient) {
@@ -135,5 +143,11 @@ export function registerComponentHandlers(client: TrackerBotClient) {
     { prefix: TRACKER_IDS.settings.importNo, handler: handleTrackMenuImportNo },
     { prefix: TRACKER_IDS.settings.import, handler: handleTrackMenuImport },
     { prefix: TRACKER_IDS.flow.cancel, handler: handleTrackMenuCancel },
+    { prefix: TRACKER_IDS.settings.deltaMode, handler: handleTrackMenuSelectDeltaMode },
+    { prefix: TRACKER_IDS.settings.shareChart, handler: handleTrackMenuToggleShareChart },
+    { prefix: TRACKER_IDS.analysis.menu, handler: handleTrackMenuAnalysis },
+    { prefix: TRACKER_IDS.analysis.prev, handler: handleTrackMenuAnalysisPrev },
+    { prefix: TRACKER_IDS.analysis.next, handler: handleTrackMenuAnalysisNext },
+    { prefix: TRACKER_IDS.analysis.select, handler: handleTrackMenuAnalysisSelect },
   ]);
 }

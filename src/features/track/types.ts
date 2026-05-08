@@ -36,6 +36,15 @@ export interface TrackerSettings {
   confirmBeforeSubmit?: boolean;
   shareNotes?: boolean;
   shareCoverage?: boolean;
+  shareCoverageGoldenTower?: boolean;
+  shareCoverageBlackHole?: boolean;
+  shareCoverageSpotlight?: boolean;
+  shareCoverageDeathWave?: boolean;
+  shareCoverageOrbs?: boolean;
+  shareCoverageGoldenBot?: boolean;
+  shareCoverageAmpBot?: boolean;
+  shareCoverageSummoned?: boolean;
+  shareTotalShards?: boolean;
   shareScreenshot?: boolean;
   shareTier?: boolean;
   shareWave?: boolean;
@@ -48,6 +57,9 @@ export interface TrackerSettings {
   shareCoinsPerHour?: boolean;
   shareCellsPerHour?: boolean;
   shareDicePerHour?: boolean;
+  shareShardsPerHour?: boolean;
+  shareWavesPerHour?: boolean;
+  shareEnemiesPerHour?: boolean;
   logChannelId?: string;
   logChannelGuildId?: string;
   logChannelCategoryId?: string;
@@ -57,6 +69,7 @@ export interface TrackerSettings {
   reactionNotificationsEnabled?: boolean;
   replyNotificationsEnabled?: boolean;
   cloudSyncEnabled?: boolean;
+  shareChart?: boolean;
 }
 
 export const trackerSettingsSchema = z.object({
@@ -69,6 +82,15 @@ export const trackerSettingsSchema = z.object({
   confirmBeforeSubmit: z.boolean().optional(),
   shareNotes: z.boolean().optional(),
   shareCoverage: z.boolean().optional(),
+  shareCoverageGoldenTower: z.boolean().optional(),
+  shareCoverageBlackHole: z.boolean().optional(),
+  shareCoverageSpotlight: z.boolean().optional(),
+  shareCoverageDeathWave: z.boolean().optional(),
+  shareCoverageOrbs: z.boolean().optional(),
+  shareCoverageGoldenBot: z.boolean().optional(),
+  shareCoverageAmpBot: z.boolean().optional(),
+  shareCoverageSummoned: z.boolean().optional(),
+  shareTotalShards: z.boolean().optional(),
   shareScreenshot: z.boolean().optional(),
   shareTier: z.boolean().optional(),
   shareWave: z.boolean().optional(),
@@ -81,6 +103,9 @@ export const trackerSettingsSchema = z.object({
   shareCoinsPerHour: z.boolean().optional(),
   shareCellsPerHour: z.boolean().optional(),
   shareDicePerHour: z.boolean().optional(),
+  shareShardsPerHour: z.boolean().optional(),
+  shareWavesPerHour: z.boolean().optional(),
+  shareEnemiesPerHour: z.boolean().optional(),
   logChannelId: z.string().optional(),
   logChannelGuildId: z.string().optional(),
   logChannelCategoryId: z.string().optional(),
@@ -90,6 +115,7 @@ export const trackerSettingsSchema = z.object({
   reactionNotificationsEnabled: z.boolean().optional(),
   replyNotificationsEnabled: z.boolean().optional(),
   cloudSyncEnabled: z.boolean().optional(),
+  shareChart: z.boolean().optional(),
 });
 
 export const trackerStoredSettingsSchema = trackerSettingsSchema.extend({

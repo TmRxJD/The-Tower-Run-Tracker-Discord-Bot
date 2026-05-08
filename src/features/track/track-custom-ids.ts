@@ -104,10 +104,19 @@ export const TRACKER_IDS = {
     logChannelCategory: 'tracker_setting_log_channel_category',
     logChannelName: 'tracker_setting_log_channel_name',
     share: 'tracker_setting_share',
+    deltaMode: 'tracker_setting_delta_mode',
+    shareChart: 'tracker_setting_share_chart',
     stats: 'tracker_stats',
     import: 'tracker_import',
     importYes: 'tracker_import_yes',
     importNo: 'tracker_import_no',
+  },
+  analysis: {
+    menu: 'tracker_analysis_menu',
+    prev: 'tracker_analysis_prev',
+    next: 'tracker_analysis_next',
+    select: 'tracker_analysis_select',
+    pagePrefix: 'tracker_analysis_page:',
   },
 } as const;
 

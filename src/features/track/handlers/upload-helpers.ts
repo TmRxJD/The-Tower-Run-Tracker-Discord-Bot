@@ -437,7 +437,13 @@ export function findPotentialDuplicateRun(extractedData: RunLike | null | undefi
   };
 }
 
-export function generateCoverageDescription(runData: RunLike | null | undefined): string {
+export function generateCoverageDescription(
+  runData: RunLike | null | undefined,
+  options?: {
+    getDeltaAnnotation?: (deltaKey: string) => string;
+    enabledMetrics?: Set<string>;
+  },
+): string {
   if (!runData) return '';
   const totalEnemies = parseNumberInput(String(runData['Total Enemies'] ?? runData.totalEnemies ?? 0));
   const hasValidTotalEnemies = Number.isFinite(totalEnemies) && totalEnemies > 0;
@@ -475,20 +481,29 @@ export function generateCoverageDescription(runData: RunLike | null | undefined)
     return `${filledChar.repeat(filled)}${'⬛'.repeat(empty)}`;
   };
 
-  const metrics = [
-    { label: 'Golden Tower', value: toPct(killsWithGoldenTower), block: '🟨' },
-    { label: 'Black Hole', value: toPct(enemiesHitByBlackHole), block: '🟪' },
-    { label: 'Spotlight', value: toPct(destroyedInSpotlight), block: '⬜' },
-    { label: 'Death Wave', value: toPct(taggedByDeathWave), block: '🟥' },
-    { label: 'Orbs', value: toPct(enemiesHitByOrbs), block: '🟪' },
-    { label: 'Golden Bot', value: toPct(destroyedInGoldenBot), block: '🟨' },
-    { label: 'Amp Bot', value: toPct(killsWithAmplifyBot), block: '🟦' },
-    { label: 'Summoned', value: toPct(summonedEnemies), block: '🟪' },
-  ].filter((metric): metric is { label: string; value: number; block: string } => typeof metric.value === 'number');
+  const allMetrics: { label: string; value: number | null; block: string; deltaKey: string; metricKey: string }[] = [
+    { label: 'Golden Tower', value: toPct(killsWithGoldenTower), block: '🟨', deltaKey: 'killsWithGoldenTowerPercentage', metricKey: 'goldenTower' },
+    { label: 'Black Hole',   value: toPct(enemiesHitByBlackHole), block: '🟪', deltaKey: 'destroyedByBlackHolePercentage', metricKey: 'blackHole' },
+    { label: 'Spotlight',    value: toPct(destroyedInSpotlight), block: '⬜', deltaKey: 'destroyedInSpotlightPercentage', metricKey: 'spotlight' },
+    { label: 'Death Wave',   value: toPct(taggedByDeathWave), block: '🟥', deltaKey: 'taggedByDeathWavePercentage', metricKey: 'deathWave' },
+    { label: 'Orbs',         value: toPct(enemiesHitByOrbs), block: '🟪', deltaKey: 'hitByOrbsPercentage', metricKey: 'orbs' },
+    { label: 'Golden Bot',   value: toPct(destroyedInGoldenBot), block: '🟨', deltaKey: 'destroyedInGoldenBotPercentage', metricKey: 'goldenBot' },
+    { label: 'Amp Bot',      value: toPct(killsWithAmplifyBot), block: '🟦', deltaKey: 'killsWithAmplifyBotPercentage', metricKey: 'ampBot' },
+    { label: 'Summoned',     value: toPct(summonedEnemies), block: '🟪', deltaKey: 'summonedEnemiesPercentage', metricKey: 'summoned' },
+  ];
+
+  const metrics = allMetrics.filter(
+    (m): m is typeof m & { value: number } =>
+      typeof m.value === 'number' &&
+      (options?.enabledMetrics === undefined || options.enabledMetrics.has(m.metricKey)),
+  );
 
   if (!metrics.length) return '';
   return metrics
-    .map((metric) => `${metric.label}: ${metric.value}%\n${toBar(metric.value, metric.block)}`)
+    .map((metric) => {
+      const annotation = options?.getDeltaAnnotation ? options.getDeltaAnnotation(metric.deltaKey) : '';
+      return `${metric.label}: ${metric.value}%${annotation}\n${toBar(metric.value, metric.block)}`;
+    })
     .join('\n');
 }
 

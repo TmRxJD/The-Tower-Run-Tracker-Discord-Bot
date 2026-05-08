@@ -1,5 +1,5 @@
 import * as Discord from 'discord.js';
-import { canonicalizeRunDataForOutput, canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
+import { canonicalizeRunDataForOutput, canonicalizeTrackerRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import {
   extractTrackerImageText,
   preprocessTrackerImageForOcr,
@@ -59,6 +59,7 @@ import type { TrackReplyInteractionLike } from '../interaction-types';
 import { createManualHandlers } from './manual-handlers';
 import { getTrackerFlowMode, getTrackerInitialRunType } from '../flow-mode-store';
 import { parseLifetimeStatsFromOcrText } from './lifetime-ocr';
+import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 
 type LooseRecord = Record<string, unknown>;
 
@@ -803,6 +804,13 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
     };
 
     const initialSignature = summarySignature(summary);
+    const sharedSettings = await getEffectiveUserSharedSettings(userId);
+    const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
+    const lastRunType = typeof summary?.lastRun?.type === 'string' && summary.lastRun.type.trim() ? summary.lastRun.type : 'Farming';
+    const allRunsArr = (summary?.allRuns ?? []) as Record<string, unknown>[];
+    const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 0
+      ? computeTrackerRunDeltaBaseline(allRunsArr, lastRunType, deltaMode) ?? undefined
+      : undefined;
     const embed = createInitialEmbed({
       mode: resolvedMode,
       userLabel,
@@ -810,6 +818,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
       lastRun: summary?.lastRun ?? null,
       runCount: summary?.allRuns?.length ?? 0,
       runTypeCounts: summary?.runTypeCounts ?? {},
+      deltaResult,
     });
     const rows = createMainMenuButtons(resolvedMode);
     if (interaction.replied || interaction.deferred) {
@@ -827,6 +836,11 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
         const refreshedSignature = summarySignature(refreshed);
         if (refreshedSignature === initialSignature) return;
 
+        const refreshedAllRuns = (refreshed.allRuns ?? []) as Record<string, unknown>[];
+        const refreshedRunType = typeof refreshed.lastRun?.type === 'string' && refreshed.lastRun.type.trim() ? refreshed.lastRun.type : 'Farming';
+        const refreshedDelta = deltaMode !== 'disabled' && refreshedAllRuns.length > 0
+          ? computeTrackerRunDeltaBaseline(refreshedAllRuns, refreshedRunType, deltaMode) ?? undefined
+          : undefined;
         const refreshedEmbed = createInitialEmbed({
           mode: resolvedMode,
           userLabel,
@@ -834,6 +848,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
           lastRun: refreshed.lastRun ?? null,
           runCount: refreshed.allRuns?.length ?? 0,
           runTypeCounts: refreshed.runTypeCounts ?? {},
+          deltaResult: refreshedDelta,
         });
         const refreshedRows = createMainMenuButtons(resolvedMode);
         await interaction.editReply({ content: '', embeds: [refreshedEmbed], components: refreshedRows, files: [], attachments: [] }).catch(() => {});

@@ -24,6 +24,8 @@ import { getTrackerFlowMode } from '../flow-mode-store';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
+import { computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { trimDisplayTimeSeconds } from './upload-helpers';
 
@@ -797,10 +799,19 @@ export async function handleTrackMenuShareRunsConfirm(interaction: TrackMenuInte
       });
     } else {
       const settings = await getUserSettings(session.userId).catch(() => null);
+      const sharedSettings = await getEffectiveUserSharedSettings(session.userId).catch(() => null);
+      const allRunsSummary = await getLastRun(session.userId, { cloudSyncMode: 'none' }).catch(() => null);
+      const allRunsArr = (allRunsSummary?.allRuns ?? []) as Record<string, unknown>[];
+      const runTypeForDelta = String(run.type ?? 'Farming').trim() || 'Farming';
+      const deltaMode = sharedSettings?.runDeltaMode ?? '7day';
+      const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 1
+        ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode) ?? undefined
+        : undefined;
       embed = buildShareEmbed({
         user: buildEmbedUserFromInteraction(interaction),
         run,
         runTypeCounts: session.runTypeCounts,
+        deltaResult,
         options: {
           includeTier: settings?.shareTier !== false,
           includeWave: settings?.shareWave !== false,

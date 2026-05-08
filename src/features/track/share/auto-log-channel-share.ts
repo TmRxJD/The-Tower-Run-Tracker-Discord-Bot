@@ -4,6 +4,7 @@ import { logError } from '../handlers/error-handlers';
 import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from './share-embed';
 import { getAutoLogMessageRef, setAutoLogMessageRef } from './log-channel-state';
+import type { TrackerRunDeltaResult } from '@tmrxjd/platform/tools';
 
 const LOG_CHANNEL_RESTRICTED_GUILD_ID = '850137217828388904';
 
@@ -19,6 +20,7 @@ export async function autoShareToConfiguredLogChannel(params: {
   userId: string;
   run: Record<string, unknown>;
   runTypeCounts: Record<string, number>;
+  deltaResult?: TrackerRunDeltaResult;
 }) {
   const settings = await getUserSettings(params.userId).catch(() => null);
   const logChannelId = typeof settings?.logChannelId === 'string' ? settings.logChannelId.trim() : '';
@@ -44,6 +46,7 @@ export async function autoShareToConfiguredLogChannel(params: {
     user: buildEmbedUserFromInteraction(params.interaction),
     run: params.run,
     runTypeCounts: params.runTypeCounts,
+    deltaResult: params.deltaResult,
     options: {
       includeTier,
       includeWave,

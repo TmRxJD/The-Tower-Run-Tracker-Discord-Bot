@@ -184,8 +184,7 @@
       "notes": "📝\nNotes"
     },
     "fieldOrder": [
-      "tierWave", "duration", "killedBy", "coins", "cells", "dice",
-      "coinsPerHour", "cellsPerHour", "dicePerHour", "moduleShardsPerHour", "wavesPerHour", "enemiesPerHour", "date", "type", "run"
+      "tierWave", "duration", "killedBy", "coins", "cells", "dice", "deathDefy", "date", "type", "run"
     ],
     "coverageLabel": "Coverage",
     "footer": "Run logged. Use buttons below or start a new /track.\n\nUse Creator Code \"JDEVO\" to Support The Tower Run Tracker!"

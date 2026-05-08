@@ -22,6 +22,7 @@ const sharedSettingsCloudDocumentSchema = z.object({
   languagePreference: z.string().optional(),
   dateFormatPreference: z.string().optional(),
   decimalSeparatorPreference: z.string().optional(),
+  runDeltaMode: z.string().optional(),
   updatedAt: z.string().optional(),
   $updatedAt: z.string().optional(),
 }).passthrough();
@@ -33,6 +34,7 @@ const sharedSettingsCloudWriteSchema = z.object({
   languagePreference: z.string(),
   dateFormatPreference: z.string(),
   decimalSeparatorPreference: z.string(),
+  runDeltaMode: z.string().optional(),
 });
 
 const legacySharedSettingsCloudWriteSchema = z.object({
@@ -63,6 +65,7 @@ function normalizeSharedSettingsDoc(doc: Record<string, unknown>): SharedUserToo
     languagePreference: parsed.languagePreference,
     dateFormatPreference: parsed.dateFormatPreference,
     decimalSeparatorPreference: parsed.decimalSeparatorPreference,
+    runDeltaMode: parsed.runDeltaMode as import('@tmrxjd/platform/tools').RunDeltaMode | undefined,
   });
 }
 
@@ -152,6 +155,7 @@ export async function saveUserSharedSettingsCloud(userId: string, settings: Shar
       languagePreference: normalized.languagePreference,
       dateFormatPreference: normalized.dateFormatPreference,
       decimalSeparatorPreference: normalized.decimalSeparatorPreference,
+      runDeltaMode: normalized.runDeltaMode,
     });
     const legacyPayload = legacySharedSettingsCloudWriteSchema.parse({
       cloudSyncEnabled: normalized.cloudSyncEnabled,
