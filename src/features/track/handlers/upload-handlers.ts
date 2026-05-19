@@ -134,6 +134,15 @@ type ModalLookup = {
 
 type LogClient = { channels: { fetch: (id: string) => Promise<unknown> } };
 
+// Tracks which render of the main menu is the "active" one for a given user.
+// Any component interaction (button click, select) clears this, so the background
+// hydration update from renderTrackMenu will not stomp a screen the user has navigated to.
+const mainMenuSessionByUser = new Map<string, string>();
+
+export function clearMainMenuSession(userId: string): void {
+  mainMenuSessionByUser.delete(userId);
+}
+
 function toRecord(value: unknown): LooseRecord {
   return typeof value === 'object' && value !== null ? (value as LooseRecord) : {};
 }
@@ -821,6 +830,8 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
       deltaResult,
     });
     const rows = createMainMenuButtons(resolvedMode);
+    // Show immediately with a syncing indicator — background hydration will update the embed
+    embed.setFooter({ text: '🔄 Syncing with Appwrite...' });
     if (interaction.replied || interaction.deferred) {
       await interaction.editReply({ content: '', embeds: [embed], components: rows, files: [], attachments: [] }).catch(() => {});
     } else {
@@ -828,27 +839,29 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
     }
 
     if (resolvedMode !== 'lifetime') {
+      const menuSessionNonce = `${Date.now()}-${Math.random()}`;
+      mainMenuSessionByUser.set(userId, menuSessionNonce);
       beginBackgroundRunHydration(userId);
       void (async () => {
         await awaitBackgroundRunHydration(userId).catch(() => {});
+        // If the user navigated away from the main menu, skip the update entirely.
+        if (mainMenuSessionByUser.get(userId) !== menuSessionNonce) return;
+        // Always update after hydration to clear the syncing footer, using refreshed data if available
         const refreshed = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
-        if (!refreshed) return;
-        const refreshedSignature = summarySignature(refreshed);
-        if (refreshedSignature === initialSignature) return;
-
-        const refreshedAllRuns = (refreshed.allRuns ?? []) as Record<string, unknown>[];
-        const refreshedRunType = typeof refreshed.lastRun?.type === 'string' && refreshed.lastRun.type.trim() ? refreshed.lastRun.type : 'Farming';
-        const refreshedDelta = deltaMode !== 'disabled' && refreshedAllRuns.length > 0
-          ? computeTrackerRunDeltaBaseline(refreshedAllRuns, refreshedRunType, deltaMode) ?? undefined
+        const effectiveSummary = refreshed ?? summary;
+        const effectiveAllRuns = (effectiveSummary?.allRuns ?? []) as Record<string, unknown>[];
+        const effectiveRunType = typeof effectiveSummary?.lastRun?.type === 'string' && effectiveSummary.lastRun.type.trim() ? effectiveSummary.lastRun.type : 'Farming';
+        const effectiveDelta = deltaMode !== 'disabled' && effectiveAllRuns.length > 0
+          ? computeTrackerRunDeltaBaseline(effectiveAllRuns, effectiveRunType, deltaMode) ?? undefined
           : undefined;
         const refreshedEmbed = createInitialEmbed({
           mode: resolvedMode,
           userLabel,
           userId,
-          lastRun: refreshed.lastRun ?? null,
-          runCount: refreshed.allRuns?.length ?? 0,
-          runTypeCounts: refreshed.runTypeCounts ?? {},
-          deltaResult: refreshedDelta,
+          lastRun: effectiveSummary?.lastRun ?? null,
+          runCount: effectiveSummary?.allRuns?.length ?? 0,
+          runTypeCounts: effectiveSummary?.runTypeCounts ?? {},
+          deltaResult: effectiveDelta,
         });
         const refreshedRows = createMainMenuButtons(resolvedMode);
         await interaction.editReply({ content: '', embeds: [refreshedEmbed], components: refreshedRows, files: [], attachments: [] }).catch(() => {});

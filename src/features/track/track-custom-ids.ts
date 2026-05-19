@@ -13,6 +13,9 @@ export const TRACKER_IDS = {
     noteText: 'tracker_note_text',
     editModalPrefix: 'tracker_edit_modal:',
     editValue: 'tracker_edit_value',
+    notePanelPrimarySelect: 'tracker_note_primary',
+    notePanelAssistSelect: 'tracker_note_assist',
+    noteRangeInput: 'tracker_note_range_input',
   },
   manual: {
     typePrefix: 'tracker_manual_type:',

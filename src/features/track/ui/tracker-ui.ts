@@ -1,5 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
-import { calculateHourlyRate } from '../tracker-helpers';
+import { calculateHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { trimDisplayTimeSeconds } from '../handlers/upload-helpers';
@@ -105,8 +105,10 @@ export function createDataReviewEmbed(
   viewData.wavesPerHour = firstPresentValue(viewData, ['wavesPerHour']) ?? derivedWavesPerHour;
   viewData.enemiesPerHour = firstPresentValue(viewData, ['enemiesPerHour']) ?? derivedEnemiesPerHour;
   const durationVal = viewData.roundDuration ?? viewData.duration;
-  const dateVal = viewData.date ?? viewData.runDate ?? '';
-  const timeVal = trimDisplayTimeSeconds(viewData.time ?? viewData.runTime ?? '');
+  const rawDateVal = String(viewData.runDate ?? viewData.date ?? '').trim();
+  const rawTimeVal = String(viewData.runTime ?? viewData.time ?? '').trim();
+  const dateVal = rawDateVal ? formatDateToISO(rawDateVal) : '';
+  const timeVal = rawTimeVal ? trimDisplayTimeSeconds(formatTimeTo24h(rawTimeVal)) : '';
   const reviewDescriptionLines = [
     isDuplicate ? review.duplicateDescription : review.normalDescription,
   ];
@@ -265,7 +267,9 @@ export function createInitialEmbed(params: {
     const cellsValue = String(lastRun.cells || lastRun.totalCells || 'N/A');
     const diceValue = String(lastRun.rerollShards || lastRun.totalDice || 'N/A');
     const deathDefyValue = String(lastRun.deathDefy || 'N/A');
-    const dateValue = `${lastRun.date || lastRun.runDate || 'Unknown'} ${trimDisplayTimeSeconds(lastRun.time || lastRun.runTime || '')}`.trim();
+    const rawRunDate = String(lastRun.runDate || lastRun.date || '').trim();
+    const rawRunTime = String(lastRun.runTime || lastRun.time || '').trim();
+    const dateValue = `${(rawRunDate ? formatDateToISO(rawRunDate) : '') || 'Unknown'} ${rawRunTime ? trimDisplayTimeSeconds(formatTimeTo24h(rawRunTime)) : ''}`.trim();
 
     const coinsPerHour = calculateHourlyRate(coinsValue, durationValue) || 'N/A';
     const cellsPerHour = calculateHourlyRate(cellsValue, durationValue) || 'N/A';

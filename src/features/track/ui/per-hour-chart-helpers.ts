@@ -47,52 +47,139 @@ function resolveRunTimestamp(run: Record<string, unknown>): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/** Return the ISO date string (YYYY-MM-DD) for a timestamp, or null. */
+function toDateKey(ts: number): string | null {
+  if (!ts) return null;
+  const d = new Date(ts);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Average an array of numbers, ignoring nulls. Returns null if no values. */
+function avgOf(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((s, v) => s + v, 0) / values.length;
+}
+
 /**
- * Build a per-hour rolling average chart attachment for a given run type.
- * Returns null if there is insufficient data (fewer than 2 runs).
+ * Linear-interpolate null slots between known data points.
+ * Leading and trailing nulls are left as-is (no extrapolation).
+ */
+function interpolateNulls(values: (number | null)[]): (number | null)[] {
+  const result = [...values];
+  let left = -1;
+  for (let i = 0; i < result.length; i++) {
+    if (result[i] !== null) {
+      if (left >= 0 && i - left > 1) {
+        const leftVal = result[left] as number;
+        const rightVal = result[i] as number;
+        const steps = i - left;
+        for (let j = left + 1; j < i; j++) {
+          result[j] = leftVal + (rightVal - leftVal) * ((j - left) / steps);
+        }
+      }
+      left = i;
+    }
+  }
+  return result;
+}
+
+/**
+ * Build a per-hour 7-day trend chart attachment for a given run type.
+ * Groups runs by calendar day over the last 7 days and plots daily averages,
+ * showing trend/momentum rather than raw historical run counts.
+ * Returns null if there is insufficient data (fewer than 2 days with data).
  */
 export async function buildPerHourChartAttachment(
   allRuns: Record<string, unknown>[],
   runType: string,
 ): Promise<AttachmentBuilder | null> {
+  const nowMs = Date.now();
+  const sevenDaysAgoMs = nowMs - 7 * 24 * 60 * 60 * 1000;
+
   const sameType = allRuns
     .filter(r => String(r.type ?? 'Farming').trim().toLowerCase() === runType.trim().toLowerCase())
+    .filter(r => {
+      const ts = resolveRunTimestamp(r);
+      return ts > 0 && ts >= sevenDaysAgoMs;
+    })
     .sort((a, b) => resolveRunTimestamp(a) - resolveRunTimestamp(b));
 
-  const sliced = sameType.slice(-30);
-  if (sliced.length < 2) return null;
+  if (sameType.length < 1) return null;
 
-  const labels = sliced.map(r => {
-    const raw = String(r.date ?? r.runDate ?? '').trim()
-    return raw.length >= 10 ? raw.slice(5, 10) : raw || `${sliced.indexOf(r) + 1}`
-  })
-  const coinsData: (number | null)[] = sliced.map(r => toNum(r.coinsPerHour) ?? perHour(r.totalCoins ?? r.coins, r));
-  const cellsData: (number | null)[] = sliced.map(r => toNum(r.cellsPerHour) ?? perHour(r.totalCells ?? r.cells, r));
-  const diceData: (number | null)[] = sliced.map(r =>
-    toNum(r.rerollShardsPerHour ?? r.dicePerHour) ?? perHour(r.totalDice ?? r.rerollShards ?? r.dice, r),
+  // Build ordered list of the 7 calendar days (today and the 6 before it)
+  const dayKeys: string[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(nowMs - i * 24 * 60 * 60 * 1000);
+    dayKeys.push(d.toISOString().slice(0, 10));
+  }
+
+  // Group runs by calendar day
+  const byDay = new Map<string, Record<string, unknown>[]>();
+  for (const r of sameType) {
+    const key = toDateKey(resolveRunTimestamp(r));
+    if (!key) continue;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key)!.push(r);
+  }
+
+  const daysWithData = dayKeys.filter(k => byDay.has(k));
+  if (daysWithData.length < 1) return null;
+
+  // Only chart days that have actual run data — no empty slots
+  const activeKeys = daysWithData;
+  const labels = activeKeys.map(k => k.slice(5)); // MM-DD
+
+  function dailyAvg(key: string, fn: (r: Record<string, unknown>) => number | null): number | null {
+    const runs = byDay.get(key);
+    if (!runs || runs.length === 0) return null;
+    const vals = runs.map(fn).filter((v): v is number => v !== null);
+    return avgOf(vals);
+  }
+
+  const coinsData: (number | null)[] = activeKeys.map(k =>
+    dailyAvg(k, r => toNum(r.coinsPerHour) ?? perHour(r.totalCoins ?? r.coins, r)),
   );
-  const shardsData: (number | null)[] = sliced.map(r => { const s = moduleShards(r); return s > 0 ? perHour(s, r) : null; });
+  const cellsData: (number | null)[] = activeKeys.map(k =>
+    dailyAvg(k, r => toNum(r.cellsPerHour) ?? perHour(r.totalCells ?? r.cells, r)),
+  );
+  const diceData: (number | null)[] = activeKeys.map(k =>
+    dailyAvg(k, r => toNum(r.rerollShardsPerHour ?? r.dicePerHour) ?? perHour(r.totalDice ?? r.rerollShards ?? r.dice, r)),
+  );
+  const shardsData: (number | null)[] = activeKeys.map(k =>
+    dailyAvg(k, r => { const s = moduleShards(r); return s > 0 ? perHour(s, r) : null; }),
+  );
 
+  // Order: [Coins, Dice, Cells, Shards] so that the renderer's alternating left/right
+  // axis assignment (even=left, odd=right) places Coins+Cells on the left and Dice+Shards on the right.
+  // legendOrder remaps display to [Coins, Cells, Dice, Shards].
   const datasets = [
     ...(coinsData.some(v => v !== null)
-      ? [{ label: 'Coins Per Hour', values: coinsData, color: '#F9A825' }]
-      : []),
-    ...(cellsData.some(v => v !== null)
-      ? [{ label: 'Cells Per Hour', values: cellsData, color: '#4CAF50' }]
+      ? [{ label: 'Coins/hr', values: coinsData, color: '#F9A825' }]
       : []),
     ...(diceData.some(v => v !== null)
-      ? [{ label: 'Dice Per Hour', values: diceData, color: '#F44336' }]
+      ? [{ label: 'Dice/hr', values: diceData, color: '#F44336' }]
+      : []),
+    ...(cellsData.some(v => v !== null)
+      ? [{ label: 'Cells/hr', values: cellsData, color: '#4CAF50' }]
       : []),
     ...(shardsData.some(v => v !== null)
-      ? [{ label: 'Shards Per Hour', values: shardsData, color: '#42A5F5' }]
+      ? [{ label: 'Shards/hr', values: shardsData, color: '#42A5F5' }]
       : []),
   ];
 
   if (datasets.length === 0) return null;
 
+  // Build legendOrder: indices into datasets that produce display order [Coins, Cells, Dice, Shards].
+  // Dataset build order is [Coins(0), Dice(1), Cells(2), Shards(3)] when all four are present.
+  // Map label names back to their indices for robustness when some metrics are absent.
+  const labelToIdx = new Map(datasets.map((ds, i) => [ds.label, i]));
+  const legendOrder = ['Coins/hr', 'Cells/hr', 'Dice/hr', 'Shards/hr']
+    .map(l => labelToIdx.get(l))
+    .filter((i): i is number => i !== undefined);
+
   try {
     const png = await renderAnalyticsLineChartPng(
-      { title: 'Rolling Avg (7 Days) Per-Hour', labels, datasets, width: 900, height: 380, separateAxes: true },
+      { title: '7-Day Per-Hour Trend', labels, datasets, width: 900, height: 380, separateAxes: true, legendOrder },
       runtime,
     );
     return new AttachmentBuilder(Buffer.from(png), { name: 'per-hour-chart.png' });

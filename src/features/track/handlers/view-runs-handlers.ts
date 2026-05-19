@@ -10,10 +10,10 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { randomUUID } from 'node:crypto';
-import { getLastRun, getLocalLifetimeData, getUserSettings, removeLastRun, removeLifetimeEntry } from '../tracker-api-client';
+import { awaitBackgroundRunHydration, beginBackgroundRunHydration, getLastRun, getLocalLifetimeData, getUserSettings, removeLastRun, removeLifetimeEntry } from '../tracker-api-client';
 import { createPendingRun } from '../pending-run-store';
 import { renderEditFieldPicker } from './data-review-handlers';
-import { calculateHourlyRate } from '../tracker-helpers';
+import { calculateHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
 import { getViewRunsState, updateViewRunsState } from '../view-runs-store';
 import { parsePrefixedTrackerToken, parseViewRunsOrientationTarget, TRACKER_IDS, withToken, withViewRunsOrientationTarget } from '../track-custom-ids';
 import { logError } from './error-handlers';
@@ -258,7 +258,9 @@ function buildTrackColumnValue(run: RunListItem, column: typeof TRACK_COLUMN_OPT
   const coinsHr = calculateHourlyRate(coins, duration) || 'N/A';
   const cellsHr = calculateHourlyRate(cells, duration) || 'N/A';
   const diceHr = calculateHourlyRate(dice, duration) || 'N/A';
-  const dateTime = `${String(run.date ?? run.runDate ?? 'Unknown')} ${trimDisplayTimeSeconds(run.time ?? run.runTime ?? '')}`.trim();
+  const rawDate = String(run.runDate ?? run.date ?? '').trim();
+  const rawTime = String(run.runTime ?? run.time ?? '').trim();
+  const dateTime = `${(rawDate ? formatDateToISO(rawDate) : '') || 'Unknown'} ${rawTime ? trimDisplayTimeSeconds(formatTimeTo24h(rawTime)) : ''}`.trim();
   const coverage = normalizeCoveragePercentages(run);
 
   const valueByColumn: Record<typeof TRACK_COLUMN_OPTIONS[number], string> = {
@@ -362,6 +364,18 @@ export async function handleTrackMenuViewRuns(interaction: TrackMenuInteraction)
       : asRunListItems((await getLastRun(interaction.user.id, { cloudSyncMode: 'none' }))?.allRuns ?? []);
     const state = getViewRunsState(interaction.user.id);
     await renderViewRunsPanel(interaction, runs, state, mode);
+
+    // Silently sync latest runs in background and refresh panel if new data arrived
+    if (mode !== 'lifetime') {
+      beginBackgroundRunHydration(interaction.user.id);
+      void (async () => {
+        await awaitBackgroundRunHydration(interaction.user.id).catch(() => {});
+        const refreshed = (await getLastRun(interaction.user.id, { cloudSyncMode: 'none' }).catch(() => null))?.allRuns;
+        if (!refreshed || refreshed.length === runs.length) return;
+        const freshState = getViewRunsState(interaction.user.id);
+        await renderViewRunsPanel(interaction, asRunListItems(refreshed), freshState, mode);
+      })();
+    }
   } catch (error) {
     await logError(interaction.client, interaction.user, error, 'track_menu_viewruns');
     await interaction.editReply({ content: 'Unable to load runs right now.', embeds: [], components: [] }).catch(() => {});

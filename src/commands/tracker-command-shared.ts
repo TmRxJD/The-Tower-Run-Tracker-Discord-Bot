@@ -1,12 +1,39 @@
-import { SlashCommandBuilder, type ChatInputCommandInteraction, MessageFlagsBitField } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, Colors, type ChatInputCommandInteraction, MessageFlagsBitField } from 'discord.js';
 import { getBotConfig } from '../config/bot-config';
 import type { TrackerBotClient } from '../core/tracker-bot-client';
 import { logger } from '../core/logger';
 import { resolveInteractionDisplayName } from '../features/track/discord-display-name';
-import { ensureRunDocumentsHydratedForUser } from '../features/track/tracker-api-client';
+import { ensureRunDocumentsHydratedForUser, getLocalRunSummary } from '../features/track/tracker-api-client';
 import { handleTrackWorkflow } from '../features/track/track-workflow';
 
 type TrackerCommandKey = 'track' | 'lifetime';
+
+function buildProgressBar(percent: number, width = 20): string {
+  const filled = Math.round((percent / 100) * width);
+  return `[${'█'.repeat(filled)}${'░'.repeat(width - filled)}] ${percent}%`;
+}
+
+function buildCloudImportEmbed(processed: number, total: number, percent: number): EmbedBuilder {
+  if (total === 0) {
+    return new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle('📥 Cloud Sync')
+      .setDescription("No runs found in your Appwrite account. You're ready to start tracking!");
+  }
+  if (processed >= total) {
+    return new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle('✅ Cloud Import Complete')
+      .setDescription(`Imported **${total.toLocaleString()}** run${total === 1 ? '' : 's'}.\nLoading your tracker...`);
+  }
+  const description = processed === 0
+    ? `Found **${total.toLocaleString()}** run${total === 1 ? '' : 's'} in Appwrite.\nSaving to local storage...`
+    : `${buildProgressBar(percent)}\n**${processed.toLocaleString()}** / **${total.toLocaleString()}** runs saved`;
+  return new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle('📥 Importing Runs from Cloud')
+    .setDescription(description);
+}
 
 function hasPasteOption(options: object): options is { paste: { name: string; description: string } } {
   return 'paste' in options;
@@ -95,9 +122,33 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
   await client.persistence?.users.touch(interaction.user.id, resolveInteractionDisplayName(interaction)).catch(() => {});
 
   if (!settingsRequested) {
-    void ensureRunDocumentsHydratedForUser(interaction.user.id).catch((error) => {
-      logger.warn('Background run hydration warmup failed; continuing with local workflow', error);
-    });
+    const { totalRuns } = await getLocalRunSummary(interaction.user.id).catch(() => ({ totalRuns: -1, runTypeCounts: {} as Record<string, number> }));
+
+    if (totalRuns === 0) {
+      // First-time user: show a live progress embed while the full cloud import runs.
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle('📥 Cloud Sync').setDescription('Connecting to Appwrite...')],
+      }).catch(() => {});
+
+      let lastProgressUpdate = 0;
+      await ensureRunDocumentsHydratedForUser(interaction.user.id, {
+        onProgress: async ({ processed, total, percent }: { processed: number; total: number; percent: number }) => {
+          const now = Date.now();
+          const isFirst = processed === 0;
+          const isLast = processed >= total && total > 0;
+          if (!isFirst && !isLast && now - lastProgressUpdate < 750) return;
+          lastProgressUpdate = now;
+          await interaction.editReply({ embeds: [buildCloudImportEmbed(processed, total, percent)] }).catch(() => {});
+        },
+      }).catch((error) => {
+        logger.warn('Initial cloud import failed; continuing with local workflow', error);
+      });
+    } else {
+      // Returning user: background warmup (non-blocking).
+      void ensureRunDocumentsHydratedForUser(interaction.user.id).catch((error) => {
+        logger.warn('Background run hydration warmup failed; continuing with local workflow', error);
+      });
+    }
   }
 
   await handleTrackWorkflow(interaction, {

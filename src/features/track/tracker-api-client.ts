@@ -367,7 +367,7 @@ function appwriteIds() {
   };
 }
 
-const RUN_DOCUMENTS_PAGE_SIZE = 100;
+const RUN_DOCUMENTS_PAGE_SIZE = 5000;
 const RUNS_EXTENDED_COLLECTION_ID = 'runs_extended_data';
 const RUNS_EXTENDED_SCHEMA_VERSION = 1;
 const RUNS_HYDRATION_COOLDOWN_MS = 5 * 60 * 1000;
@@ -470,25 +470,28 @@ async function listRunDocumentsForHydration(userId: string): Promise<RunRecord[]
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
   const { lookupUserIds } = getRunCloudIdentity(userId);
 
-  const baseDocuments = await listCloudDocumentsByUserIds({
-    databases,
-    databaseId: runsDatabaseId,
-    collectionId: runsCollectionId,
-    userIds: lookupUserIds,
-    schema: trackerRunCloudDocumentSchema,
-    pageSize: RUN_DOCUMENTS_PAGE_SIZE,
-    buildQueries: (candidateUserId, cursorAfter, pageSize) => [
-      Query.equal('userId', candidateUserId),
-      Query.limit(pageSize),
-      ...(cursorAfter ? [Query.cursorAfter(cursorAfter)] : []),
-    ],
-    getDocumentId: doc => {
-      const id = doc.$id;
-      return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
-    },
-  });
+  // Run base docs and extended docs in parallel — they query different collections
+  const [baseDocuments, extendedDocuments] = await Promise.all([
+    listCloudDocumentsByUserIds({
+      databases,
+      databaseId: runsDatabaseId,
+      collectionId: runsCollectionId,
+      userIds: lookupUserIds,
+      schema: trackerRunCloudDocumentSchema,
+      pageSize: RUN_DOCUMENTS_PAGE_SIZE,
+      buildQueries: (candidateUserId, cursorAfter, pageSize) => [
+        Query.equal('userId', candidateUserId),
+        Query.limit(pageSize),
+        ...(cursorAfter ? [Query.cursorAfter(cursorAfter)] : []),
+      ],
+      getDocumentId: doc => {
+        const id = doc.$id;
+        return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
+      },
+    }),
+    listExtendedRunDocumentsForUser(userId),
+  ]);
 
-  const extendedDocuments = await listExtendedRunDocumentsForUser(userId);
   return mergeRunDocumentsWithExtended(baseDocuments, extendedDocuments);
 }
 
@@ -537,10 +540,11 @@ async function listExtendedRunDocumentsForUser(userId: string): Promise<RunRecor
   const { databases } = createAppwriteClient();
   const { runsDatabaseId } = appwriteIds();
   const { lookupUserIds } = getRunCloudIdentity(userId);
-  const documents: RunRecord[] = [];
 
   try {
-    for (const candidateUserId of lookupUserIds) {
+    // Fetch all lookupUser extended docs in parallel instead of sequentially
+    const perUserResults = await Promise.all(lookupUserIds.map(async (candidateUserId) => {
+      const docs: RunRecord[] = [];
       let cursorAfter: string | null = null;
 
       while (true) {
@@ -553,14 +557,17 @@ async function listExtendedRunDocumentsForUser(userId: string): Promise<RunRecor
         const pageDocuments: RunRecord[] = Array.isArray(page.documents) ? page.documents as RunRecord[] : [];
         if (!pageDocuments.length) break;
 
-        documents.push(...pageDocuments);
+        docs.push(...pageDocuments);
 
         const last: RunRecord | undefined = pageDocuments[pageDocuments.length - 1];
         const lastId: string = typeof last?.$id === 'string' ? last.$id.trim() : '';
         if (!lastId || pageDocuments.length < RUN_DOCUMENTS_PAGE_SIZE) break;
         cursorAfter = lastId;
       }
-    }
+      return docs;
+    }));
+
+    return perUserResults.flat();
   } catch (error) {
     if (shouldIgnoreExtendedRunCollectionError(error)) {
       logger.warn('Skipping tracker extended run document read', {
@@ -571,8 +578,6 @@ async function listExtendedRunDocumentsForUser(userId: string): Promise<RunRecor
     }
     throw error;
   }
-
-  return documents;
 }
 
 async function syncExtendedRunDocument(params: {
@@ -687,6 +692,11 @@ export async function ensureRunDocumentsHydratedForUser(userId: string, options?
       if (!marker) {
         await setRunHydrationMarker(normalizedUserId, localRunsBefore.length);
       }
+      // Always do a lightweight recent-25 sync so new cloud runs appear even
+      // when the user already has local data (e.g. dev bot after prod-bot uploads).
+      if (canUseCloudForUserId(normalizedUserId, 'recent sync warmup')) {
+        await hydrateRecentRunsFromCloud(normalizedUserId, 25);
+      }
       return;
     }
 
@@ -708,29 +718,33 @@ async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
   const { lookupUserIds } = getRunCloudIdentity(userId);
-  const baseDocuments = await listCloudDocumentsByUserIds({
-    databases,
-    databaseId: runsDatabaseId,
-    collectionId: runsCollectionId,
-    userIds: lookupUserIds,
-    schema: trackerRunCloudDocumentSchema,
-    pageSize: 100,
-    buildQueries: (candidateUserId, cursorAfter, pageSize) => {
-      const queries: string[] = [
-        Query.equal('userId', candidateUserId),
-        Query.limit(pageSize),
-        Query.orderDesc('$createdAt'),
-      ];
-      if (cursorAfter) queries.push(Query.cursorAfter(cursorAfter));
-      return queries;
-    },
-    getDocumentId: doc => {
-      const id = doc.$id;
-      return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
-    },
-  });
 
-  const extendedDocuments = await listExtendedRunDocumentsForUser(userId);
+  // Run base docs and extended docs in parallel — they query different collections
+  const [baseDocuments, extendedDocuments] = await Promise.all([
+    listCloudDocumentsByUserIds({
+      databases,
+      databaseId: runsDatabaseId,
+      collectionId: runsCollectionId,
+      userIds: lookupUserIds,
+      schema: trackerRunCloudDocumentSchema,
+      pageSize: 100,
+      buildQueries: (candidateUserId, cursorAfter, pageSize) => {
+        const queries: string[] = [
+          Query.equal('userId', candidateUserId),
+          Query.limit(pageSize),
+          Query.orderDesc('$createdAt'),
+        ];
+        if (cursorAfter) queries.push(Query.cursorAfter(cursorAfter));
+        return queries;
+      },
+      getDocumentId: doc => {
+        const id = doc.$id;
+        return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
+      },
+    }),
+    listExtendedRunDocumentsForUser(userId),
+  ]);
+
   return mergeRunDocumentsWithExtended(baseDocuments, extendedDocuments);
 }
 
@@ -1552,6 +1566,92 @@ async function hydrateLatestRunFromCloud(userId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Fetches the most recent `limit` run documents from Appwrite using all known
+ * lookup user IDs (Appwrite-mapped and raw Discord IDs). Returns hydrated runs.
+ *
+ * Uses a 2-phase batch strategy: first fetch base docs (1 query per lookupUserId),
+ * then fetch ALL matching extended docs in parallel (1 query per lookupUserId).
+ * This reduces N+1 sequential HTTP calls (e.g. 26 for 25 runs) to ~3-4 parallel calls.
+ */
+async function cloudGetRecentRuns(userId: string, limit: number): Promise<TrackerRun[]> {
+  const { databases } = createAppwriteClient();
+  const { runsDatabaseId, runsCollectionId } = appwriteIds();
+  const { lookupUserIds } = getRunCloudIdentity(userId);
+  const seen = new Set<string>();
+  const baseDocs: RunRecord[] = [];
+
+  for (const candidateId of lookupUserIds) {
+    if (baseDocs.length >= limit) break;
+    const remaining = limit - baseDocs.length;
+    const page = await databases.listDocuments(runsDatabaseId, runsCollectionId, [
+      Query.equal('userId', candidateId),
+      Query.orderDesc('$createdAt'),
+      Query.limit(remaining),
+    ]);
+    for (const rawDoc of (Array.isArray(page.documents) ? page.documents : [])) {
+      const doc = rawDoc as RunRecord;
+      const docId = String(doc.$id ?? '');
+      if (!docId || seen.has(docId)) continue;
+      seen.add(docId);
+      baseDocs.push(doc);
+    }
+  }
+
+  if (!baseDocs.length) return [];
+
+  // Batch-fetch extended docs in parallel — one listDocuments per lookupUserId
+  // instead of one getDocument per run, cutting ~25 sequential calls to 1-2 parallel calls.
+  const extendedByDocId = new Map<string, RunRecord>();
+  try {
+    await Promise.all(lookupUserIds.map(async (candidateId) => {
+      const extPage = await databases.listDocuments(runsDatabaseId, RUNS_EXTENDED_COLLECTION_ID, [
+        Query.equal('userId', candidateId),
+        Query.orderDesc('$createdAt'),
+        Query.limit(limit),
+      ]);
+      for (const rawExtDoc of (Array.isArray(extPage.documents) ? extPage.documents : [])) {
+        const extDoc = rawExtDoc as RunRecord;
+        const extDocId = String(extDoc.$id ?? '');
+        if (extDocId && !extendedByDocId.has(extDocId)) {
+          extendedByDocId.set(extDocId, extDoc);
+        }
+      }
+    }));
+  } catch (error) {
+    if (!shouldIgnoreExtendedRunCollectionError(error)) {
+      logger.warn('batch extended run fetch failed, continuing without extended data', error);
+    }
+  }
+
+  return baseDocs.map(doc => {
+    const docId = String(doc.$id ?? '');
+    const extended = extendedByDocId.get(docId);
+    const mergedDoc = extended ? { ...doc, ...pickExtendedRunDocumentFields(extended) } : doc;
+    const username = pickString(mergedDoc.username) ?? 'unknown';
+    return hydrateTrackerCloudRun(mergedDoc, userId, username) as TrackerRun;
+  });
+}
+
+/**
+ * Fetches the most recent `limit` runs from cloud and merges them into local.
+ * Intentionally does NOT update `runsHydratedAtByUser` so the full-sync cooldown
+ * is unaffected and background hydration can still proceed normally.
+ */
+async function hydrateRecentRunsFromCloud(userId: string, limit = 25): Promise<boolean> {
+  try {
+    const settings = await getLocalSettings(userId);
+    if (!settings.cloudSyncEnabled) return false;
+    const recent = await cloudGetRecentRuns(userId, limit);
+    if (!recent.length) return false;
+    const mergeResult = await mergeCloudRuns(userId, recent);
+    return mergeResult.added > 0 || mergeResult.updated > 0;
+  } catch (error) {
+    logger.warn('recent runs cloud hydration skipped due to error', error);
+    return false;
+  }
+}
+
 async function cloudGetSettings(userId: string): Promise<CloudTrackerSettings | null> {
   const { settingsDatabaseId, settingsCollectionId } = appwriteIds();
   const databases = createAppwriteClient().databases;
@@ -2047,11 +2147,15 @@ export async function getLastRun(userId: string, options?: GetLastRunOptions) {
     await syncQueuedRuns(userId);
 
     if (syncMode === 'latest') {
-      await hydrateLatestRunFromCloud(userId);
+      // Always check the most recent 25 runs without touching the full-sync cooldown
+      await hydrateRecentRunsFromCloud(userId, 25);
     } else {
       const localRunsBefore = await getLocalRuns(userId);
       if (localRunsBefore.length === 0 || shouldHydrateByCooldown(runsHydratedAtByUser, userId, RUNS_HYDRATION_COOLDOWN_MS)) {
         await hydrateLocalRunsFromCloud(userId, 'unknown');
+      } else {
+        // Within full-sync cooldown: still check the last 25 for any recent changes
+        await hydrateRecentRunsFromCloud(userId, 25);
       }
 
       const localLifetimeBefore = await getLocalLifetime(userId);

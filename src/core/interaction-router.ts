@@ -2,6 +2,7 @@ import { Interaction, MessageFlagsBitField } from 'discord.js';
 import { logger } from './logger';
 import { TrackerBotClient } from './tracker-bot-client';
 import { ANALYTICS_EVENT_COMMAND_INVOKED } from '@tmrxjd/platform/tools';
+import { clearMainMenuSession } from '../features/track/handlers/upload-handlers';
 
 export function registerInteractionRouter(client: TrackerBotClient) {
   client.on('interactionCreate', async (interaction: Interaction) => {
@@ -37,6 +38,9 @@ export function registerInteractionRouter(client: TrackerBotClient) {
         || interaction.isChannelSelectMenu()
         || interaction.isModalSubmit()
       ) {
+        // Any component interaction means the user has navigated — clear the main menu
+        // background update so it doesn't stomp whatever screen they've moved to.
+        clearMainMenuSession(interaction.user.id);
         const handled = await client.components.dispatch(interaction);
         if (!handled) {
           return;

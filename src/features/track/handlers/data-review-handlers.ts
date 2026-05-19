@@ -9,6 +9,7 @@ import { handleError } from './error-handlers';
 import { buildSubmitPayload, resolveRawParseSourceData, sendRawParseMessage } from './review-data-helpers';
 import { asTrackReplyInteraction, ensureType, isTrackReviewFlowEnabled, resolveOwnedPendingInteraction, type ReviewInteraction, updateReviewMessage } from './review-interaction-helpers';
 import { applySubmittedReviewEditValues, buildCurrentReviewReplyPayload, buildReviewEditFieldModal, buildReviewNoteModal, buildTypeSelectionReviewReplyPayload, getSelectedReviewFields, getSelectedReviewValue, renderDataReviewOrSubmit, renderUpdatedReviewAfterNote, resolveUpdatedPendingOrReplyExpired, resolveUpdatedPendingOrUpdateReviewMessage } from './review-edit-modal-helpers';
+import { openNoteModal } from './note-panel-handlers';
 import { submitLifetimePendingRun } from './review-lifetime-submission';
 import { buildCanonicalRunData, buildCoverageSource, buildRunTypeCounts, buildShareableRunPayload, buildSubmitRunData, resolveDuplicateRunInfo, resolveScreenshotUrl, resolveSubmissionIds, type LocalRunSummary, type SubmissionSyncResult } from './review-submission-helpers';
 import { updatePendingRun, deletePendingRun } from '../pending-run-store';
@@ -99,7 +100,6 @@ export async function handleEditNotesRequest(interaction: ReviewInteraction) {
 
 async function handleNoteModal(interaction: ReviewInteraction, returnMode: 'review' | 'edit') {
   try {
-    const ui = reviewUi();
     const component = interaction as MessageComponentInteraction;
     const resolved = await resolveOwnedPendingInteraction(interaction);
     if (!resolved) {
@@ -107,32 +107,16 @@ async function handleNoteModal(interaction: ReviewInteraction, returnMode: 'revi
     }
     const { token, pending } = resolved;
 
-    const currentNote = pending.runData?.notes || pending.runData?.note || '';
-    const modal = buildReviewNoteModal({
+    await openNoteModal(
+      component,
       token,
-      title: ui.modals.addNoteTitle,
-      label: ui.modals.noteLabel,
-      placeholder: ui.modals.notePlaceholder,
-      currentNote,
-    });
-
-    await component.showModal(modal);
-
-    const submitted = await awaitOwnedModalSubmit(component, withToken(TRACKER_IDS.review.noteModalPrefix, token));
-    try {
-      await submitted.deferUpdate();
-    } catch {
-      /* already acknowledged or expired */
-    }
-    const noteValue = submitted.fields.getTextInputValue(TRACKER_IDS.review.noteText) || '';
-    const updated = await updatePendingRun(token, { runData: { ...pending.runData, notes: noteValue } });
-    const updatedPending = await resolveUpdatedPendingOrReplyExpired(component, updated, getTrackUiConfig().manual.sessionExpired);
-    if (!updatedPending) {
-      return;
-    }
-
-    await renderUpdatedReviewAfterNote(asTrackReplyInteraction(component), token, updatedPending, returnMode, renderEditFieldPicker);
+      pending,
+      interaction.user.id,
+      returnMode,
+      renderEditFieldPicker,
+    );
   } catch (error) {
+    logger.error('[handleNoteModal] error:', error);
     await handleError({ client: interaction.client, user: interaction.user, error, context: returnMode === 'edit' ? 'edit_note' : 'add_note' });
   }
 }
