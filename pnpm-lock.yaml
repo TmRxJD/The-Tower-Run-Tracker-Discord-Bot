@@ -15,8 +15,8 @@ importers:
         specifier: ^0.1.97
         version: 0.1.97
       '@tmrxjd/platform':
-        specifier: 0.1.16
-        version: 0.1.16
+        specifier: 0.1.17
+        version: 0.1.17
       dexie:
         specifier: ^4.0.11
         version: 4.3.0
@@ -881,8 +881,8 @@ packages:
   '@techstark/opencv-js@4.9.0-release.3':
     resolution: {integrity: sha512-y+KoLLlkXVUHWozYlN1vmMD9TQMPJObqml5nPA5vPWgHtOgm8q5O74UtzM23eayidvmeFX6tF5e2gDdyxcpy3Q==}
 
-  '@tmrxjd/platform@0.1.16':
-    resolution: {integrity: sha512-Mi1UgUE+Xn4wzun1yTZFdeqM8o/WzrdUbel3fQcbb4NUDl9qkpL4CsbjipzFFLOGDUzXdP0EttFV24ubUw8LQg==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.1.16/6af1a92b07d7047d34e3e26e34839b9ac2471203}
+  '@tmrxjd/platform@0.1.17':
+    resolution: {integrity: sha512-CN5yJQoIFwyci8rLSvHhJbt5KZUYfhmizra8WI2XL0DOYkdshsmfn7I6CQSmS3z2h2+Gq2CXxBpVWQHxu/ypTA==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.1.17/d21b3535b6f5ccc47b51fd1f4fe449c286ea1333}
 
   '@tootallnate/once@1.1.2':
     resolution: {integrity: sha512-RbzJvlNzmRq5c3O09UipeuXno4tA1FE6ikOjxZK0tuxVv3412l64l5t1W5pj4+rJq9vpkm/kwiR07aZXnsKPxw==}
@@ -2989,7 +2989,7 @@ snapshots:
 
   '@techstark/opencv-js@4.9.0-release.3': {}
 
-  '@tmrxjd/platform@0.1.16':
+  '@tmrxjd/platform@0.1.17':
     dependencies:
       '@gutenye/ocr-node': 1.4.8
       '@huggingface/transformers': 3.8.1
