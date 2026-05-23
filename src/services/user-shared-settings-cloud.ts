@@ -11,20 +11,18 @@ import { z } from 'zod';
 import { getAppConfig } from '../config';
 import { logger } from '../core/logger';
 import { createAppwriteClient } from '../persistence/appwrite-client';
-import { parseDiscordToAppwriteMapFromEnv, resolveCanonicalAppwriteUserId } from '@tmrxjd/platform/tools';
-
-const DISCORD_TO_APPWRITE_MAP = parseDiscordToAppwriteMapFromEnv(process.env);
+import { resolveAppwriteIdForDiscordUser } from './discord-identity-resolver';
 
 const sharedSettingsCloudDocumentSchema = z.object({
   cloudSyncEnabled: z.boolean().optional(),
-  chartPalettePreset: z.string().optional(),
-  chartDataAlignment: z.string().optional(),
-  languagePreference: z.string().optional(),
-  dateFormatPreference: z.string().optional(),
-  decimalSeparatorPreference: z.string().optional(),
-  runDeltaMode: z.string().optional(),
-  updatedAt: z.string().optional(),
-  $updatedAt: z.string().optional(),
+  chartPalettePreset: z.string().nullish(),
+  chartDataAlignment: z.string().nullish(),
+  languagePreference: z.string().nullish(),
+  dateFormatPreference: z.string().nullish(),
+  decimalSeparatorPreference: z.string().nullish(),
+  runDeltaMode: z.string().nullish(),
+  updatedAt: z.string().nullish(),
+  $updatedAt: z.string().nullish(),
 }).passthrough();
 
 const sharedSettingsCloudWriteSchema = z.object({
@@ -48,10 +46,10 @@ export type SharedSettingsCloudLoadResult = {
   updatedAt: number | null;
 };
 
-function resolveCloudUserIdCandidates(userId: string): string[] {
-  const canonical = resolveCanonicalAppwriteUserId(userId, DISCORD_TO_APPWRITE_MAP);
+async function resolveCloudUserIdCandidates(userId: string): Promise<string[]> {
+  const appwriteId = await resolveAppwriteIdForDiscordUser(userId);
   return Array.from(new Set([
-    typeof canonical === 'string' ? canonical.trim() : '',
+    appwriteId ?? '',
     userId.trim(),
   ].filter(Boolean)));
 }
@@ -60,12 +58,12 @@ function normalizeSharedSettingsDoc(doc: Record<string, unknown>): SharedUserToo
   const parsed = sharedSettingsCloudDocumentSchema.parse(doc);
   return normalizeSharedUserToolSettings({
     cloudSyncEnabled: parsed.cloudSyncEnabled,
-    chartPalettePreset: parsed.chartPalettePreset,
-    chartDataAlignment: parsed.chartDataAlignment,
-    languagePreference: parsed.languagePreference,
-    dateFormatPreference: parsed.dateFormatPreference,
-    decimalSeparatorPreference: parsed.decimalSeparatorPreference,
-    runDeltaMode: parsed.runDeltaMode as import('@tmrxjd/platform/tools').RunDeltaMode | undefined,
+    chartPalettePreset: parsed.chartPalettePreset ?? undefined,
+    chartDataAlignment: parsed.chartDataAlignment ?? undefined,
+    languagePreference: parsed.languagePreference ?? undefined,
+    dateFormatPreference: parsed.dateFormatPreference ?? undefined,
+    decimalSeparatorPreference: parsed.decimalSeparatorPreference ?? undefined,
+    runDeltaMode: (parsed.runDeltaMode ?? undefined) as import('@tmrxjd/platform/tools').RunDeltaMode | undefined,
   });
 }
 
@@ -80,7 +78,7 @@ async function getResolvedSettingsDocument(userId: string): Promise<{ documentId
     databases: client.databases,
     databaseId: cfg.appwrite.settingsDatabaseId,
     collectionId: cfg.appwrite.settingsCollectionId,
-    candidateDocumentIds: resolveCloudUserIdCandidates(userId),
+    candidateDocumentIds: await resolveCloudUserIdCandidates(userId),
   });
 }
 
@@ -163,7 +161,7 @@ export async function saveUserSharedSettingsCloud(userId: string, settings: Shar
       chartDataAlignment: normalized.chartDataAlignment,
     });
 
-    const candidates = resolveCloudUserIdCandidates(userId);
+    const candidates = await resolveCloudUserIdCandidates(userId);
     const targetDocumentId = candidates[0] ?? userId;
     const existing = await getResolvedSettingsDocument(userId);
 

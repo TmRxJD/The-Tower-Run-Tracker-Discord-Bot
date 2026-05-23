@@ -161,6 +161,56 @@ function assembleNoteText(parts: {
   return result.join('\n');
 }
 
+// ─── Display normalizer ───────────────────────────────────────────────────────
+
+/** Module initials sorted longest-first for greedy left-to-right matching. */
+const SORTED_INITIALS = [...UNIQUE_MODULES]
+  .map(m => m.initials as string)
+  .sort((a, b) => b.length - a.length);
+
+/** Split a concatenated initials string (e.g. "ASACPBHDDC") into spaced tokens ("AS ACP BHD DC"). */
+function splitModuleInitials(raw: string): string {
+  const tokens: string[] = [];
+  let remaining = raw;
+  while (remaining.length > 0) {
+    const matched = SORTED_INITIALS.find(init => remaining.startsWith(init));
+    if (matched) {
+      tokens.push(matched);
+      remaining = remaining.slice(matched.length);
+    } else {
+      tokens.push(remaining);
+      break;
+    }
+  }
+  return tokens.join(' ');
+}
+
+/**
+ * Converts the old compact note format (TowerRange:30mPrimaryModules:...AssistModules:...)
+ * to the human-readable multi-line format used by the current modal.
+ * Notes already in the new format are returned unchanged.
+ */
+export function normalizeNoteForDisplay(note: string): string {
+  const str = note.trim();
+  if (!str) return str;
+  // Already in new format — has spaced key names
+  if (/Tower Range:|Primary Modules:|Assist Modules:/.test(str)) return str;
+  // Not an old compact note either — free-text note, pass through
+  if (!/TowerRange:|PrimaryModules:|AssistModules:/.test(str)) return str;
+
+  const lines: string[] = [];
+  const trMatch = str.match(/TowerRange:(\d+(?:\.\d+)?)/i);
+  if (trMatch) lines.push(`Tower Range: ${trMatch[1]}m`);
+
+  const pmMatch = str.match(/PrimaryModules:([A-Z]+)(?=[A-Z][a-z]|$)/);
+  if (pmMatch) lines.push(`Primary Modules: ${splitModuleInitials(pmMatch[1])}`);
+
+  const amMatch = str.match(/AssistModules:([A-Z]+)(?=[A-Z][a-z]|$)/);
+  if (amMatch) lines.push(`Assist Modules: ${splitModuleInitials(amMatch[1])}`);
+
+  return lines.length ? lines.join('\n') : str;
+}
+
 // ─── Public: open the note modal ─────────────────────────────────────────────
 
 export async function openNoteModal(

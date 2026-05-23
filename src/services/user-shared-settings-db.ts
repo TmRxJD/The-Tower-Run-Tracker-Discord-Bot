@@ -8,9 +8,7 @@ import {
 import { logger } from '../core/logger';
 import { getTrackerKv, setTrackerKv } from './idb';
 import { loadUserSharedSettingsCloud, saveUserSharedSettingsCloud } from './user-shared-settings-cloud';
-import { parseDiscordToAppwriteMapFromEnv, resolveCanonicalAppwriteUserId } from '@tmrxjd/platform/tools';
-
-const DISCORD_TO_APPWRITE_MAP = parseDiscordToAppwriteMapFromEnv(process.env);
+import { resolveAppwriteIdForDiscordUser } from './discord-identity-resolver';
 const SHARED_SETTINGS_PREFIX = 'tracker-shared-settings:';
 
 type LocalSharedSettingsRecord = {
@@ -32,11 +30,6 @@ export type SharedSettingsReconcileResult = {
 
 function getStorageKey(userId: string): string {
   return `${SHARED_SETTINGS_PREFIX}${userId}`;
-}
-
-function resolveCanonicalSharedUserId(userId: string): string | null {
-  const resolved = resolveCanonicalAppwriteUserId(userId, DISCORD_TO_APPWRITE_MAP);
-  return typeof resolved === 'string' && resolved.trim().length > 0 ? resolved.trim() : null;
 }
 
 async function loadLocalSharedSettings(userId: string): Promise<{ state: SharedUserToolSettings; updatedAt: number | null }> {
@@ -81,9 +74,9 @@ export async function getUserSharedSettings(userId: string): Promise<SharedUserT
 
 export async function getEffectiveUserSharedSettings(discordUserId: string): Promise<SharedUserToolSettings> {
   const primary = await getUserSharedSettings(discordUserId);
-  const canonicalUserId = resolveCanonicalSharedUserId(discordUserId);
+  const appwriteId = await resolveAppwriteIdForDiscordUser(discordUserId);
 
-  if (!canonicalUserId || canonicalUserId === discordUserId) {
+  if (!appwriteId) {
     return primary;
   }
 
@@ -91,7 +84,7 @@ export async function getEffectiveUserSharedSettings(discordUserId: string): Pro
     return primary;
   }
 
-  const canonical = await getUserSharedSettings(canonicalUserId);
+  const canonical = await getUserSharedSettings(appwriteId);
   if (hasMeaningfulSharedSettings(canonical)) {
     return canonical;
   }

@@ -15,6 +15,7 @@ interface PendingRunRecord {
   defaultRunType?: string;
   runSource?: 'paste' | 'ocr' | 'manual' | 'unknown';
   createdAt: number;
+  lastActivity: number;
 }
 
 const STORE_KEY = 'tracker-pending-runs:v1';
@@ -36,16 +37,20 @@ async function persist() {
   await setTrackerKv(STORE_KEY, all);
 }
 
-export async function createPendingRun(input: Omit<PendingRunRecord, 'token' | 'createdAt'>) {
+export async function createPendingRun(input: Omit<PendingRunRecord, 'token' | 'createdAt' | 'lastActivity'>) {
   await ensureLoaded();
+  // Purge stale sessions before creating a new one so abandoned flows don't accumulate.
+  await cleanupStalePendingRuns();
   const token = randomUUID();
+  const now = Date.now();
   const record: PendingRunRecord = {
     ...input,
     runData: canonicalizeTrackerRunData(input.runData ?? {}),
     canonicalRunData: input.canonicalRunData ? canonicalizeTrackerRunData(input.canonicalRunData) : null,
     rawParseFields: input.rawParseFields && typeof input.rawParseFields === 'object' ? { ...input.rawParseFields } : null,
     token,
-    createdAt: Date.now(),
+    createdAt: now,
+    lastActivity: now,
   };
   cache!.set(token, record);
   await persist();
@@ -71,6 +76,7 @@ export async function updatePendingRun(token: string, patch: Partial<PendingRunR
     rawParseFields: patch.rawParseFields
       ? { ...patch.rawParseFields }
       : (patch.rawParseFields === null ? null : current.rawParseFields),
+    lastActivity: Date.now(),
   };
   cache!.set(token, next);
   await persist();
@@ -83,12 +89,13 @@ export async function deletePendingRun(token: string) {
   await persist();
 }
 
-export async function cleanupStalePendingRuns(maxAgeMs = 1000 * 60 * 60 * 6) {
+export async function cleanupStalePendingRuns(maxInactivityMs = 1000 * 60 * 5) {
   await ensureLoaded();
-  const cutoff = Date.now() - maxAgeMs;
+  const cutoff = Date.now() - maxInactivityMs;
   let changed = false;
   for (const [token, record] of cache!) {
-    if (record.createdAt < cutoff) {
+    const lastActive = record.lastActivity ?? record.createdAt;
+    if (lastActive < cutoff) {
       cache!.delete(token);
       changed = true;
     }

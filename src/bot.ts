@@ -11,6 +11,7 @@ import { commandModules } from './commands';
 import { registerComponentHandlers } from './interactions';
 import { createPersistence } from './persistence';
 import { assertTrackerKvPersistentStorage, getTrackerKvStorageStatus } from './services/idb';
+import { cleanupStalePendingRuns } from './features/track/pending-run-store';
 
 function registerShutdownHandlers(cleanup: (reason: string, error?: unknown) => Promise<void>): void {
   process.once('SIGINT', () => {
@@ -56,6 +57,7 @@ async function bootstrap() {
     await assertTrackerKvPersistentStorage();
     const kvStatus = await getTrackerKvStorageStatus();
     logger.info('Tracker KV storage initialized', kvStatus);
+    await cleanupStalePendingRuns();
 
     const client = new TrackerBotClient(
       {

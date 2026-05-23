@@ -3,6 +3,7 @@ import { calculateHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracke
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { trimDisplayTimeSeconds } from '../handlers/upload-helpers';
+import { normalizeNoteForDisplay } from '../handlers/note-panel-handlers';
 import { getTrackUiConfig, getTrackerUiConfig, type TrackerUiMode } from '../../../config/tracker-ui-config';
 import { type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools';
 
@@ -302,17 +303,18 @@ export function createInitialEmbed(params: {
       `🍀 Death Defies: **${deathDefyValue}**${delta('deathDefy')}`,
       '',
       `**📊 Per Hour**`,
-      `🪙 Coins/Hr   **${coinsPerHour}**${delta('coinsPerHour')}`,
-      `🔋 Cells/Hr   **${cellsPerHour}**${delta('cellsPerHour')}`,
-      `🎲 Dice/Hr    **${dicePerHour}**${delta('rerollShardsPerHour')}`,  
-      `🔼 Shards/Hr  **${moduleShardsPerHour}**${delta('moduleShardsPerHour')}`,
-      `🌊 Waves/Hr   **${wavesPerHour}**${delta('wavesPerHour')}`,
-      `🔳 Enemies/Hr **${enemiesPerHour}**${delta('enemiesPerHour')}`,
+      `🪙 Coins/Hr: **${coinsPerHour}**${delta('coinsPerHour')}`,
+      `🔋 Cells/Hr: **${cellsPerHour}**${delta('cellsPerHour')}`,
+      `🎲 Dice/Hr: **${dicePerHour}**${delta('rerollShardsPerHour')}`,
+      `🔼 Shards/Hr: **${moduleShardsPerHour}**${delta('moduleShardsPerHour')}`,
+      `🌊 Waves/Hr: **${wavesPerHour}**${delta('wavesPerHour')}`,
+      `🔳 Enemies/Hr: **${enemiesPerHour}**${delta('enemiesPerHour')}`,
     ];
 
     if (noteText && String(noteText).trim() !== '' && noteText !== 'N/A') {
-      const noteStr = String(noteText);
-      descLines.push('', `📝 **Notes:** ${noteStr.length > 200 ? `${noteStr.substring(0, 197)}...` : noteStr}`);
+      const noteStr = normalizeNoteForDisplay(String(noteText));
+      const truncatedNote = noteStr.length > 400 ? `${noteStr.substring(0, 397)}...` : noteStr;
+      descLines.push('', `📝 **Notes:**\n${truncatedNote}`);
     }
 
     embed.setDescription(descLines.join('\n'));

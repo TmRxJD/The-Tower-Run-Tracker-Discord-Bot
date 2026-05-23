@@ -10,7 +10,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { randomUUID } from 'node:crypto';
-import { awaitBackgroundRunHydration, beginBackgroundRunHydration, getLastRun, getLocalLifetimeData, getUserSettings, removeLastRun, removeLifetimeEntry } from '../tracker-api-client';
+import { getLastRun, getLocalLifetimeData, getUserSettings, removeLastRun, removeLifetimeEntry } from '../tracker-api-client';
 import { createPendingRun } from '../pending-run-store';
 import { renderEditFieldPicker } from './data-review-handlers';
 import { calculateHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
@@ -364,18 +364,6 @@ export async function handleTrackMenuViewRuns(interaction: TrackMenuInteraction)
       : asRunListItems((await getLastRun(interaction.user.id, { cloudSyncMode: 'none' }))?.allRuns ?? []);
     const state = getViewRunsState(interaction.user.id);
     await renderViewRunsPanel(interaction, runs, state, mode);
-
-    // Silently sync latest runs in background and refresh panel if new data arrived
-    if (mode !== 'lifetime') {
-      beginBackgroundRunHydration(interaction.user.id);
-      void (async () => {
-        await awaitBackgroundRunHydration(interaction.user.id).catch(() => {});
-        const refreshed = (await getLastRun(interaction.user.id, { cloudSyncMode: 'none' }).catch(() => null))?.allRuns;
-        if (!refreshed || refreshed.length === runs.length) return;
-        const freshState = getViewRunsState(interaction.user.id);
-        await renderViewRunsPanel(interaction, asRunListItems(refreshed), freshState, mode);
-      })();
-    }
   } catch (error) {
     await logError(interaction.client, interaction.user, error, 'track_menu_viewruns');
     await interaction.editReply({ content: 'Unable to load runs right now.', embeds: [], components: [] }).catch(() => {});

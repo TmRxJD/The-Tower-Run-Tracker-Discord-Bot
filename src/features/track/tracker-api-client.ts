@@ -9,11 +9,9 @@ import {
   buildTrackerRunCloudWritePayload,
   buildTrackerRunMainDocumentPayload,
   TRACKER_RUN_EXTENDED_FIELDS,
-  buildTrackerRunIdentityKey,
   buildTrackerRunLookupUserIds,
   TRACKER_RUN_MAIN_COLLECTION_META_FIELDS,
   TRACKER_RUN_MAIN_COLLECTION_OPTIONAL_FIELDS,
-  buildTrackerRunOwnerUserId,
   buildTrackerRunPermissionUserIds,
   createOrUpdateCloudDocumentWithFallback,
   collectTrackerRunScalarFields,
@@ -36,14 +34,11 @@ import {
   normalizeTrackerRunTextValue,
   normalizeTrackerRunType,
   parseTrackerLifetimeCloudWrite,
-  parseDiscordToAppwriteMapFromEnv,
   pickTrackerRunField,
   compareTrackerVerificationSnapshots,
   createTrackerVerificationSnapshot,
   isTrackerAppwriteUserId,
   isTrackerCloudAddressableUserId,
-  isTrackerDiscordSnowflake,
-  resolveCanonicalAppwriteUserId,
   sanitizeTrackerRunCloudPayload,
   sanitizeTrackerLeaderboardDocumentId,
   stripUndefinedFields,
@@ -54,6 +49,7 @@ import {
   trackerLifetimeCloudDocumentSchema,
   trackerRunCloudDocumentSchema,
   upsertTrackerLeaderboardBestEntry,
+  reconcileTrackerRunIds,
 } from '@tmrxjd/platform/tools';
 import { getAppConfig } from '../../config';
 import { logger } from '../../core/logger';
@@ -92,11 +88,13 @@ import {
   releaseQueuedItemsForImmediateRetry,
   removeLocalRun,
   removeQueueItem,
+  bulkUpsertLocalRuns,
   upsertLocalRun,
   updateLocalLifetime,
   updateLocalSettings,
 } from './local-run-store';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
+import { resolveAppwriteIdForDiscordUser } from '../../services/discord-identity-resolver';
 import { runDirectVisionOcr } from './vision-ocr-client';
 
 type RunRecord = Record<string, unknown>;
@@ -159,80 +157,49 @@ type CloudLeaderboardEntry = {
 };
 
 const MAX_QUEUE_RETRY_COUNT = 8;
-const DISCORD_TO_APPWRITE_MAP = parseDiscordToAppwriteMapFromEnv(process.env);
 
 type GetLastRunOptions = {
   cloudSyncMode?: 'full' | 'latest' | 'none';
 };
 
-function decodeBase64UrlSegment(segment: string): string | null {
-  const normalized = segment.trim();
-  if (!normalized) return null;
-
-  const padded = normalized.replace(/-/g, '+').replace(/_/g, '/');
-  const remainder = padded.length % 4;
-  const base64 = remainder === 0 ? padded : `${padded}${'='.repeat(4 - remainder)}`;
-
-  try {
-    return Buffer.from(base64, 'base64').toString('utf8');
-  } catch {
-    return null;
-  }
-}
-
-function resolveDevJwtAppwriteUserId(): string | null {
-  if (getAppConfig().deploymentMode !== 'dev') {
-    return null;
-  }
-
-  const jwt = process.env.APPWRITE_JWT?.trim();
-  if (!jwt) {
-    return null;
-  }
-
-  const payloadSegment = jwt.split('.')[1]?.trim();
-  if (!payloadSegment) {
-    return null;
-  }
-
-  const decoded = decodeBase64UrlSegment(payloadSegment);
-  if (!decoded) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(decoded) as { userId?: unknown };
-    const candidate = typeof parsed.userId === 'string' ? parsed.userId.trim() : '';
-    return isTrackerAppwriteUserId(candidate) ? candidate : null;
-  } catch {
-    return null;
-  }
-}
-
-function getRunCloudIdentity(userId: string): {
+/**
+ * Resolves the cloud identity for a userId (Discord snowflake or Appwrite account ID).
+ *
+ * Queries the Appwrite Users API to find the Appwrite account linked via Discord OAuth,
+ * so runs uploaded from the site (which use the Appwrite account ID as userId) are also
+ * found when the bot queries for a Discord user's runs.
+ *
+ * Results are cached in-memory + SQLite KV (24-hour TTL) by the resolver.
+ */
+async function getRunCloudIdentity(userId: string): Promise<{
   ownerUserId: string;
   lookupUserIds: string[];
   permissionUserIds: string[];
-} {
+}> {
   const normalized = userId.trim();
-  const canonicalCandidate = resolveCanonicalAppwriteUserId(normalized, DISCORD_TO_APPWRITE_MAP);
-  const mappedAppwriteUserId = canonicalCandidate && isTrackerAppwriteUserId(canonicalCandidate)
-    ? canonicalCandidate
-    : resolveDevJwtAppwriteUserId();
-  const ownerUserId = buildTrackerRunOwnerUserId({
-    discordUserId: isTrackerDiscordSnowflake(normalized) ? normalized : null,
-    appwriteUserId: isTrackerAppwriteUserId(normalized) ? normalized : mappedAppwriteUserId,
-  }) ?? normalized;
+  const resolvedAppwriteId = await resolveAppwriteIdForDiscordUser(normalized);
+
+  // Appwrite account ID is the canonical userId for all run documents.
+  // It is provider-agnostic: Discord, Google, or any future OAuth provider all
+  // resolve to the same stable Appwrite account ID via listIdentities.
+  // Fall back to the input value only when resolution is unavailable (e.g. a
+  // test account with no linked OAuth identity).
+  const ownerUserId =
+    resolvedAppwriteId
+    ?? (isTrackerAppwriteUserId(normalized) ? normalized : null)
+    ?? normalized;
 
   return {
     ownerUserId,
     lookupUserIds: buildTrackerRunLookupUserIds({
       ownerUserId,
-      appwriteUserId: mappedAppwriteUserId,
-      extraUserIds: [normalized],
+      appwriteUserId: resolvedAppwriteId,
+      // Include the raw input (Discord snowflake) so legacy runs stored under
+      // the Discord snowflake are still found during the migration window.
+      extraUserIds: [normalized, resolvedAppwriteId],
     }),
     permissionUserIds: buildTrackerRunPermissionUserIds({
-      appwriteUserId: mappedAppwriteUserId,
+      appwriteUserId: resolvedAppwriteId,
     }),
   };
 }
@@ -468,7 +435,7 @@ function normalizeShareSettingsDefaults<T extends TrackerSettings & { cloudSyncE
 async function listRunDocumentsForHydration(userId: string): Promise<RunRecord[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
-  const { lookupUserIds } = getRunCloudIdentity(userId);
+  const { lookupUserIds } = await getRunCloudIdentity(userId);
 
   // Run base docs and extended docs in parallel — they query different collections
   const [baseDocuments, extendedDocuments] = await Promise.all([
@@ -539,7 +506,7 @@ function mergeRunDocumentsWithExtended(baseDocuments: RunRecord[], extendedDocum
 async function listExtendedRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId } = appwriteIds();
-  const { lookupUserIds } = getRunCloudIdentity(userId);
+  const { lookupUserIds } = await getRunCloudIdentity(userId);
 
   try {
     // Fetch all lookupUser extended docs in parallel instead of sequentially
@@ -643,28 +610,14 @@ async function hydrateRunDocumentsIntoLocalStore(userId: string, options?: Migra
     hydrateTrackerCloudRun(entry, userId, pickString(entry.username) ?? 'unknown') as TrackerRun
   );
 
-  const existingRuns = await getLocalRuns(userId);
-  const knownKeys = new Set(existingRuns.map(run => buildTrackerRunIdentityKey(run as RunRecord)));
-  let processed = 0;
-  let added = 0;
-  let updated = 0;
+  const bulkRuns = hydratedRuns.map((run) => ({
+    username: pickString((run as RunRecord).username) ?? 'unknown',
+    runData: run as RunRecord,
+  }));
+  const { added, updated } = await bulkUpsertLocalRuns(userId, bulkRuns);
 
-  for (const run of hydratedRuns) {
-    const runRecord = run as RunRecord;
-    const username = pickString(runRecord.username) ?? 'unknown';
-    const saved = await upsertLocalRun(userId, username, runRecord);
-    const key = buildTrackerRunIdentityKey(saved as RunRecord);
-    if (knownKeys.has(key)) {
-      updated += 1;
-    } else {
-      knownKeys.add(key);
-      added += 1;
-    }
-
-    processed += 1;
-    if (options?.onProgress) {
-      await options.onProgress({ processed, total, percent: migrationPercent(processed, total) });
-    }
+  if (options?.onProgress) {
+    await options.onProgress({ processed: total, total, percent: 100 });
   }
 
   logger.info('Hydrated run documents into local store', {
@@ -692,10 +645,10 @@ export async function ensureRunDocumentsHydratedForUser(userId: string, options?
       if (!marker) {
         await setRunHydrationMarker(normalizedUserId, localRunsBefore.length);
       }
-      // Always do a lightweight recent-25 sync so new cloud runs appear even
+      // Always do a lightweight recent-run sync so new cloud runs appear even
       // when the user already has local data (e.g. dev bot after prod-bot uploads).
       if (canUseCloudForUserId(normalizedUserId, 'recent sync warmup')) {
-        await hydrateRecentRunsFromCloud(normalizedUserId, 25);
+        await hydrateRecentRunsFromCloud(normalizedUserId, 50);
       }
       return;
     }
@@ -717,7 +670,7 @@ export async function ensureRunDocumentsHydratedForUser(userId: string, options?
 async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
-  const { lookupUserIds } = getRunCloudIdentity(userId);
+  const { lookupUserIds } = await getRunCloudIdentity(userId);
 
   // Run base docs and extended docs in parallel — they query different collections
   const [baseDocuments, extendedDocuments] = await Promise.all([
@@ -766,7 +719,7 @@ async function writeRunDocument(params: {
 }): Promise<{ runId: string; screenshotUrl: string | null }> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
-  const { ownerUserId, permissionUserIds } = getRunCloudIdentity(params.userId);
+  const { ownerUserId, permissionUserIds } = await getRunCloudIdentity(params.userId);
 
   const resolvedRunId = pickString(params.run.runId)
     ?? pickString(params.run.id)
@@ -1577,22 +1530,31 @@ async function hydrateLatestRunFromCloud(userId: string): Promise<boolean> {
 async function cloudGetRecentRuns(userId: string, limit: number): Promise<TrackerRun[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
-  const { lookupUserIds } = getRunCloudIdentity(userId);
+  const { lookupUserIds } = await getRunCloudIdentity(userId);
   const seen = new Set<string>();
   const baseDocs: RunRecord[] = [];
 
-  for (const candidateId of lookupUserIds) {
-    if (baseDocs.length >= limit) break;
-    const remaining = limit - baseDocs.length;
-    const page = await databases.listDocuments(runsDatabaseId, runsCollectionId, [
+  // Fetch by both $createdAt (new documents) and $updatedAt (re-uploaded/modified documents)
+  // in parallel so the recent list includes any run whose document was updated, not just newly created ones.
+  const fetchRecentPage = (candidateId: string, field: '$createdAt' | '$updatedAt') =>
+    databases.listDocuments(runsDatabaseId, runsCollectionId, [
       Query.equal('userId', candidateId),
-      Query.orderDesc('$createdAt'),
-      Query.limit(remaining),
-    ]);
-    for (const rawDoc of (Array.isArray(page.documents) ? page.documents : [])) {
+      Query.orderDesc(field),
+      Query.limit(limit),
+    ]).then(page => (Array.isArray(page.documents) ? (page.documents as RunRecord[]) : [])).catch(() => [] as RunRecord[]);
+
+  const recentDocArrays = await Promise.all(
+    lookupUserIds.flatMap(candidateId => [
+      fetchRecentPage(candidateId, '$createdAt'),
+      fetchRecentPage(candidateId, '$updatedAt'),
+    ]),
+  );
+
+  for (const docs of recentDocArrays) {
+    for (const rawDoc of docs) {
       const doc = rawDoc as RunRecord;
       const docId = String(doc.$id ?? '');
-      if (!docId || seen.has(docId)) continue;
+      if (!docId || seen.has(docId) || baseDocs.length >= limit) continue;
       seen.add(docId);
       baseDocs.push(doc);
     }
@@ -1649,6 +1611,320 @@ async function hydrateRecentRunsFromCloud(userId: string, limit = 25): Promise<b
   } catch (error) {
     logger.warn('recent runs cloud hydration skipped due to error', error);
     return false;
+  }
+}
+
+/**
+ * Fetches only runs whose Appwrite $createdAt is strictly after `sinceIso`.
+ * All base queries run in parallel (one per lookupUserId).
+ * Returns [] immediately if nothing is found — no extended-data calls needed.
+ */
+async function cloudGetRunsSince(userId: string, sinceIso: string, limit: number): Promise<TrackerRun[]> {
+  const { databases } = createAppwriteClient();
+  const { runsDatabaseId, runsCollectionId } = appwriteIds();
+  const { lookupUserIds } = await getRunCloudIdentity(userId);
+
+  // Query both $createdAt (new documents) and $updatedAt (re-uploaded/modified documents)
+  // in parallel so a run whose Appwrite document was updated rather than re-created is not missed.
+  const fetchPage = (candidateId: string, field: '$createdAt' | '$updatedAt') =>
+    databases
+      .listDocuments(runsDatabaseId, runsCollectionId, [
+        Query.equal('userId', candidateId),
+        Query.greaterThan(field, sinceIso),
+        Query.orderDesc(field),
+        Query.limit(limit),
+      ])
+      .then(page => {
+        const docs = Array.isArray(page.documents) ? (page.documents as RunRecord[]) : [];
+        logger.info('[delta-sync] page result', { candidateId, field, sinceIso, count: docs.length });
+        return docs;
+      })
+      .catch((err) => { logger.warn('[delta-sync] page query failed', { candidateId, field, err }); return [] as RunRecord[]; });
+
+  const baseDocArrays = await Promise.all(
+    lookupUserIds.flatMap(candidateId => [
+      fetchPage(candidateId, '$createdAt'),
+      fetchPage(candidateId, '$updatedAt'),
+    ]),
+  );
+
+  const seen = new Set<string>();
+  const baseDocs: RunRecord[] = [];
+  for (const docs of baseDocArrays) {
+    for (const doc of docs) {
+      const docId = String(doc.$id ?? '');
+      if (docId && !seen.has(docId) && baseDocs.length < limit) {
+        seen.add(docId);
+        baseDocs.push(doc);
+      }
+    }
+  }
+
+  if (!baseDocs.length) return [];
+
+  const extendedByDocId = new Map<string, RunRecord>();
+  try {
+    await Promise.all(
+      lookupUserIds.flatMap(candidateId => [
+        databases.listDocuments(runsDatabaseId, RUNS_EXTENDED_COLLECTION_ID, [
+          Query.equal('userId', candidateId),
+          Query.greaterThan('$createdAt', sinceIso),
+          Query.orderDesc('$createdAt'),
+          Query.limit(limit),
+        ]).then(extPage => {
+          for (const rawExtDoc of Array.isArray(extPage.documents) ? extPage.documents : []) {
+            const extDoc = rawExtDoc as RunRecord;
+            const extDocId = String(extDoc.$id ?? '');
+            if (extDocId && !extendedByDocId.has(extDocId)) extendedByDocId.set(extDocId, extDoc);
+          }
+        }).catch(() => {}),
+        databases.listDocuments(runsDatabaseId, RUNS_EXTENDED_COLLECTION_ID, [
+          Query.equal('userId', candidateId),
+          Query.greaterThan('$updatedAt', sinceIso),
+          Query.orderDesc('$updatedAt'),
+          Query.limit(limit),
+        ]).then(extPage => {
+          for (const rawExtDoc of Array.isArray(extPage.documents) ? extPage.documents : []) {
+            const extDoc = rawExtDoc as RunRecord;
+            const extDocId = String(extDoc.$id ?? '');
+            if (extDocId && !extendedByDocId.has(extDocId)) extendedByDocId.set(extDocId, extDoc);
+          }
+        }).catch(() => {}),
+      ]),
+    );
+  } catch (error) {
+    if (!shouldIgnoreExtendedRunCollectionError(error)) {
+      logger.warn('delta extended run fetch failed, continuing without extended data', error);
+    }
+  }
+
+  return baseDocs.map(doc => {
+    const docId = String(doc.$id ?? '');
+    const extended = extendedByDocId.get(docId);
+    const mergedDoc = extended ? { ...doc, ...pickExtendedRunDocumentFields(extended) } : doc;
+    const username = pickString(mergedDoc.username) ?? 'unknown';
+    return hydrateTrackerCloudRun(mergedDoc, userId, username) as TrackerRun;
+  });
+}
+
+/** KV key prefix for the per-user timestamp of the last Appwrite delta check. */
+const LAST_DELTA_CHECK_KV_PREFIX = 'tracker:last-cloud-delta-check:';
+
+/**
+ * Full bidirectional sync — identical flow used by both the bot and the site.
+ *
+ * 1. Read all local runs (SQLite).
+ * 2. Read all Appwrite run IDs via reconcileTrackerRunIds (paginated, ID-only).
+ * 3. Upload every local-only run to Appwrite (queue-pending runs are skipped).
+ * 4. Re-read full cloud run list (authoritative state after upload).
+ * 5. Import every cloud-only run into local store.
+ * 6. Verify: finalCloudCount === finalLocalCount (synced = true means counts match).
+ *
+ * synced=false only when Appwrite is unreachable or individual uploads failed.
+ * If cloudSyncEnabled=false the function returns immediately with synced=true.
+ */
+async function reconcileLocalWithCloud(
+  userId: string,
+): Promise<{ uploaded: number; deleted: number; imported: number; finalCloudCount: number; finalLocalCount: number; synced: boolean }> {
+  const { databases } = createAppwriteClient();
+  const { runsDatabaseId, runsCollectionId } = appwriteIds();
+  const { ownerUserId, lookupUserIds } = await getRunCloudIdentity(userId);
+
+  // ── Step 1: Read local runs ──────────────────────────────────────────────
+  const localRuns = (await getLocalRuns(userId)) as RunRecord[];
+  const queueItems = await getQueueItems(userId);
+  const pendingUploadIds = new Set<string>(
+    queueItems
+      .filter(item => item.op === 'upsert' && typeof item.runId === 'string' && item.runId)
+      .map(item => item.runId as string),
+  );
+
+  // Only runs with a runId participate in cloud sync; unregistered runs have no $id yet.
+  const localIds = new Set<string>(
+    localRuns.map(r => String(r.runId ?? '').trim()).filter(Boolean),
+  );
+
+  // ── Step 2: Read all Appwrite IDs (fast, ID-only fetch) ──────────────────
+  const { localOnlyIds, allCloudIds, cloudOnlyIds } = await reconcileTrackerRunIds({
+    databases,
+    databaseId: runsDatabaseId,
+    collectionId: runsCollectionId,
+    userIds: lookupUserIds,
+    pageSize: RUN_DOCUMENTS_PAGE_SIZE,
+    localIds,
+    pendingUploadIds,
+    buildQueries: (uid, cursorAfter, pageSize) => [
+      Query.equal('userId', uid),
+      Query.select(['$id']),
+      Query.limit(pageSize),
+      ...(cursorAfter ? [Query.cursorAfter(cursorAfter)] : []),
+    ],
+  });
+
+  // ── Step 3: Remove local runs whose cloud copy was deleted ─────────────
+  // A run with a runId that no longer exists in Appwrite was deleted from the site.
+  // Propagate that deletion to local SQLite. Runs in pendingUploadIds are already
+  // excluded by reconcileTrackerRunIds so queued-but-not-yet-uploaded runs are safe.
+  let deleted = 0;
+  if (localOnlyIds.length > 0) {
+    logger.info('[reconcile] removing local runs deleted from cloud', { userId, count: localOnlyIds.length });
+    for (const runId of localOnlyIds) {
+      try {
+        await removeLocalRun(userId, runId);
+        localIds.delete(runId); // keep localIds accurate for step 6 count
+        deleted += 1;
+      } catch (deleteErr) {
+        logger.warn('[reconcile] local delete failed for cloud-deleted run', { userId, runId, deleteErr });
+      }
+    }
+    if (deleted > 0) {
+      logger.info('[reconcile] removed local runs deleted from cloud', { userId, deleted });
+    }
+  }
+
+  // ── Step 3b: Upload unregistered runs (no runId — stranded after queue failure) ──
+  // These runs exist locally but were never successfully synced to Appwrite.
+  // After a successful upload, persist the new cloud $id back to local SQLite so
+  // they are treated as registered on every subsequent call (no double-upload).
+  const unregisteredRuns = localRuns.filter(r => !String((r as Record<string, unknown>).runId ?? '').trim());
+  let uploadedUnregistered = 0;
+  if (unregisteredRuns.length > 0) {
+    logger.info('[reconcile] uploading unregistered (no runId) runs to Appwrite', { userId, count: unregisteredRuns.length });
+    for (const run of unregisteredRuns) {
+      const username = pickString((run as Record<string, unknown>).username) ?? 'unknown';
+      try {
+        const { runId: newRunId } = await writeRunDocument({ userId, username, run: run as RunRecord, existingDoc: null });
+        // Write the assigned cloud ID back to the local record so it's registered from now on.
+        await upsertLocalRun(userId, username, { ...(run as Record<string, unknown>), runId: newRunId });
+        // Track the new ID so step 5's allCloudOnlyIds diff doesn't re-import it as "cloud-only".
+        localIds.add(newRunId);
+        uploadedUnregistered += 1;
+      } catch (uploadErr) {
+        logger.warn('[reconcile] upload failed for unregistered run', { userId, uploadErr });
+      }
+    }
+    if (uploadedUnregistered > 0) {
+      logger.info('[reconcile] uploaded unregistered runs', { userId, uploadedUnregistered });
+    }
+  }
+
+  // ── Step 5: Import cloud-only runs into local store ──────────────────────
+  // cloudOnlyIds from Step 2 already excludes pendingDeleteIds and localIds at scan time.
+  // Re-filter against current localIds to exclude IDs added by Step 3b uploads.
+  const allCloudOnlyIds = cloudOnlyIds.filter(id => !localIds.has(id));
+  let imported = 0;
+
+  if (allCloudOnlyIds.length > 0) {
+    logger.info('[reconcile] importing cloud-only runs to local', { userId, count: allCloudOnlyIds.length });
+    const IMPORT_BATCH = 100;
+    const importedDocs: RunRecord[] = [];
+    for (let i = 0; i < allCloudOnlyIds.length; i += IMPORT_BATCH) {
+      const batchIds = allCloudOnlyIds.slice(i, i + IMPORT_BATCH);
+      try {
+        const batchResult = await databases.listDocuments(runsDatabaseId, runsCollectionId, [
+          Query.equal('$id', batchIds),
+          Query.limit(IMPORT_BATCH),
+        ]);
+        const docs = Array.isArray(batchResult.documents) ? batchResult.documents : [];
+        for (const raw of docs) {
+          const parsed = trackerRunCloudDocumentSchema.safeParse(raw);
+          if (parsed.success) importedDocs.push(parsed.data as RunRecord);
+        }
+      } catch (batchErr) {
+        logger.warn('[reconcile] import batch fetch failed', { userId, batchStart: i, batchErr });
+      }
+    }
+    if (importedDocs.length > 0) {
+      // Use the username from the first available local run; falls back to 'unknown'.
+      const username = pickString((localRuns as Array<Record<string, unknown>>)[0]?.username) ?? 'unknown';
+      const hydratedImports = importedDocs.map(doc => {
+        const entry = hydrateTrackerRunEntryFromDocument(doc, { fallbackId: ID.unique() }) as RunRecord;
+        return hydrateTrackerCloudRun(entry, ownerUserId, username) as RunRecord;
+      });
+      const bulkRuns = hydratedImports.map(run => ({
+        username,
+        runData: run,
+      }));
+      const { added, updated } = await bulkUpsertLocalRuns(userId, bulkRuns);
+      imported = added + updated;
+      logger.info('[reconcile] imported cloud-only runs', { userId, imported });
+    }
+  }
+
+  // ── Step 6: Verify counts ────────────────────────────────────────────────
+  // allCloudIds is from Step 2. Step 3b uploaded unregistered runs since then,
+  // so the actual cloud count is allCloudIds.size + uploadedUnregistered.
+  // localIds was mutated in steps 3 and 3b:
+  //   - cloud-deleted runs removed via localIds.delete()
+  //   - unregistered uploads added via localIds.add()
+  const finalCloudCount = allCloudIds.size + uploadedUnregistered;
+  const finalLocalCount = localIds.size + imported;
+  const synced = finalCloudCount === finalLocalCount;
+  logger.info('[reconcile] sync complete', {
+    userId,
+    deleted,
+    uploaded: uploadedUnregistered,
+    imported,
+    finalCloudCount,
+    finalLocalCount,
+    synced,
+  });
+  return { uploaded: uploadedUnregistered, deleted, imported, finalCloudCount, finalLocalCount, synced };
+}
+
+/**
+ * Queries Appwrite only for runs whose $createdAt is after the last time we checked.
+ * Persists the check timestamp so subsequent calls compare against real clock time,
+ * not local run timestamps (which reflect game dates or bot-scan times, not upload times).
+ * First call per user: falls back to hydrateRecentRunsFromCloud to establish the baseline.
+ * After fetching new runs, calls reconcileLocalWithCloud (6-step sync) to upload any
+ * local-only runs, import any cloud-only runs, and verify the counts match.
+ */
+async function hydrateNewRunsSinceLocal(userId: string, limit = 100): Promise<boolean> {
+  try {
+    const settings = await getLocalSettings(userId);
+    if (!settings.cloudSyncEnabled) {
+      logger.info('[delta-sync] skipped: cloudSyncEnabled=false', { userId });
+      return false;
+    }
+
+    const { lookupUserIds } = await getRunCloudIdentity(userId);
+    const lastCheckMs = await getTrackerKv<number>(`${LAST_DELTA_CHECK_KV_PREFIX}${userId}`).catch(() => null);
+    logger.info('[delta-sync] starting', { userId, lookupUserIds, lastCheckMs, hasKv: !!lastCheckMs });
+
+    if (!lastCheckMs) {
+      logger.info('[delta-sync] no KV baseline — running recent-100 fallback', { userId });
+      const result = await hydrateRecentRunsFromCloud(userId, limit);
+      await setTrackerKv(`${LAST_DELTA_CHECK_KV_PREFIX}${userId}`, Date.now()).catch(() => {});
+      logger.info('[delta-sync] recent-100 fallback result', { userId, found: result });
+      return result;
+    }
+
+    const sinceIso = new Date(lastCheckMs - 2 * 60 * 1000).toISOString();
+    const now = Date.now();
+    logger.info('[delta-sync] querying since', { userId, sinceIso, lastCheckIso: new Date(lastCheckMs).toISOString() });
+
+    const newRuns = await cloudGetRunsSince(userId, sinceIso, limit);
+    logger.info('[delta-sync] cloudGetRunsSince returned', { userId, count: newRuns.length });
+    await setTrackerKv(`${LAST_DELTA_CHECK_KV_PREFIX}${userId}`, now).catch(() => {});
+
+    // Full bidirectional sync: upload local-only, import cloud-only, verify counts.
+    const { uploaded, deleted, imported, synced } = await reconcileLocalWithCloud(userId).catch((err) => {
+      logger.warn('[reconcile] bidirectional reconcile failed in delta-sync', { userId, err });
+      return { uploaded: 0, deleted: 0, imported: 0, finalCloudCount: 0, finalLocalCount: 0, synced: false };
+    });
+    if (!synced) {
+      logger.warn('[reconcile] count mismatch after sync — will retry on next tick', { userId });
+    }
+
+    if (!newRuns.length) return uploaded > 0 || deleted > 0 || imported > 0;
+
+    const mergeResult = await mergeCloudRuns(userId, newRuns);
+    logger.info('[delta-sync] merge result', { userId, added: mergeResult.added, updated: mergeResult.updated });
+    return mergeResult.added > 0 || mergeResult.updated > 0 || uploaded > 0 || deleted > 0 || imported > 0;
+  } catch (error) {
+    logger.warn('delta run hydration failed, falling back to recent fetch', error);
+    return hydrateRecentRunsFromCloud(userId, limit);
   }
 }
 
@@ -2147,15 +2423,16 @@ export async function getLastRun(userId: string, options?: GetLastRunOptions) {
     await syncQueuedRuns(userId);
 
     if (syncMode === 'latest') {
-      // Always check the most recent 25 runs without touching the full-sync cooldown
-      await hydrateRecentRunsFromCloud(userId, 25);
+      // Delta check: only fetch runs newer than the most recent local run.
+      // Returns in ~1 round-trip when nothing is new; falls back to recent-100 if no baseline.
+      await hydrateNewRunsSinceLocal(userId, 100);
     } else {
       const localRunsBefore = await getLocalRuns(userId);
       if (localRunsBefore.length === 0 || shouldHydrateByCooldown(runsHydratedAtByUser, userId, RUNS_HYDRATION_COOLDOWN_MS)) {
         await hydrateLocalRunsFromCloud(userId, 'unknown');
       } else {
-        // Within full-sync cooldown: still check the last 25 for any recent changes
-        await hydrateRecentRunsFromCloud(userId, 25);
+        // Within full-sync cooldown: still check the last 50 for any recent changes
+        await hydrateRecentRunsFromCloud(userId, 50);
       }
 
       const localLifetimeBefore = await getLocalLifetime(userId);

@@ -780,6 +780,26 @@ export async function handleUploadFlow(interaction: MessageComponentInteraction 
   }
 }
 
+/**
+ * From the full local run list, returns the run most recently uploaded to Appwrite
+ * (highest numeric `createdAt` among runs that have a `runId`).
+ * Falls back to null when no cloud-sourced runs exist in the local store.
+ */
+function pickLastAppwriteUploadedRun(allRuns: Record<string, unknown>[]): Record<string, unknown> | null {
+  let best: Record<string, unknown> | null = null;
+  let bestTs = -Infinity;
+  for (const run of allRuns) {
+    const runId = typeof run.runId === 'string' ? run.runId.trim() : '';
+    if (!runId) continue; // local-only runs (not yet uploaded) — skip
+    const ts = typeof run.createdAt === 'number' ? run.createdAt : 0;
+    if (ts > bestTs) {
+      bestTs = ts;
+      best = run;
+    }
+  }
+  return best;
+}
+
 export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mode?: TrackerUiMode) {
   const resolvedMode = mode ?? getTrackerFlowMode(interaction.user.id);
   const uploadUi = getTrackerUiConfig(resolvedMode).uploadFlows;
@@ -830,42 +850,15 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
       deltaResult,
     });
     const rows = createMainMenuButtons(resolvedMode);
-    // Show immediately with a syncing indicator — background hydration will update the embed
-    embed.setFooter({ text: '🔄 Syncing with Appwrite...' });
     if (interaction.replied || interaction.deferred) {
       await interaction.editReply({ content: '', embeds: [embed], components: rows, files: [], attachments: [] }).catch(() => {});
     } else {
       await interaction.reply({ embeds: [embed], components: rows, ephemeral: true }).catch(() => {});
     }
 
+    // Background: hydrate full run history for older runs — does NOT update the displayed menu.
     if (resolvedMode !== 'lifetime') {
-      const menuSessionNonce = `${Date.now()}-${Math.random()}`;
-      mainMenuSessionByUser.set(userId, menuSessionNonce);
       beginBackgroundRunHydration(userId);
-      void (async () => {
-        await awaitBackgroundRunHydration(userId).catch(() => {});
-        // If the user navigated away from the main menu, skip the update entirely.
-        if (mainMenuSessionByUser.get(userId) !== menuSessionNonce) return;
-        // Always update after hydration to clear the syncing footer, using refreshed data if available
-        const refreshed = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
-        const effectiveSummary = refreshed ?? summary;
-        const effectiveAllRuns = (effectiveSummary?.allRuns ?? []) as Record<string, unknown>[];
-        const effectiveRunType = typeof effectiveSummary?.lastRun?.type === 'string' && effectiveSummary.lastRun.type.trim() ? effectiveSummary.lastRun.type : 'Farming';
-        const effectiveDelta = deltaMode !== 'disabled' && effectiveAllRuns.length > 0
-          ? computeTrackerRunDeltaBaseline(effectiveAllRuns, effectiveRunType, deltaMode) ?? undefined
-          : undefined;
-        const refreshedEmbed = createInitialEmbed({
-          mode: resolvedMode,
-          userLabel,
-          userId,
-          lastRun: effectiveSummary?.lastRun ?? null,
-          runCount: effectiveSummary?.allRuns?.length ?? 0,
-          runTypeCounts: effectiveSummary?.runTypeCounts ?? {},
-          deltaResult: effectiveDelta,
-        });
-        const refreshedRows = createMainMenuButtons(resolvedMode);
-        await interaction.editReply({ content: '', embeds: [refreshedEmbed], components: refreshedRows, files: [], attachments: [] }).catch(() => {});
-      })();
     }
   } catch (error) {
     await logError(interaction.client as LogClient, interaction.user, error, 'render_track_menu');

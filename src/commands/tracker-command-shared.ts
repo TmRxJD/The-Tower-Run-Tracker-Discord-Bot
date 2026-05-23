@@ -3,7 +3,7 @@ import { getBotConfig } from '../config/bot-config';
 import type { TrackerBotClient } from '../core/tracker-bot-client';
 import { logger } from '../core/logger';
 import { resolveInteractionDisplayName } from '../features/track/discord-display-name';
-import { ensureRunDocumentsHydratedForUser, getLocalRunSummary } from '../features/track/tracker-api-client';
+import { ensureRunDocumentsHydratedForUser, getLastRun, getLocalRunSummary } from '../features/track/tracker-api-client';
 import { handleTrackWorkflow } from '../features/track/track-workflow';
 
 type TrackerCommandKey = 'track' | 'lifetime';
@@ -18,7 +18,7 @@ function buildCloudImportEmbed(processed: number, total: number, percent: number
     return new EmbedBuilder()
       .setColor(Colors.Blue)
       .setTitle('📥 Cloud Sync')
-      .setDescription("No runs found in your Appwrite account. You're ready to start tracking!");
+      .setDescription("No runs found in the cloud. You're ready to start tracking!");
   }
   if (processed >= total) {
     return new EmbedBuilder()
@@ -27,7 +27,7 @@ function buildCloudImportEmbed(processed: number, total: number, percent: number
       .setDescription(`Imported **${total.toLocaleString()}** run${total === 1 ? '' : 's'}.\nLoading your tracker...`);
   }
   const description = processed === 0
-    ? `Found **${total.toLocaleString()}** run${total === 1 ? '' : 's'} in Appwrite.\nSaving to local storage...`
+    ? `Found **${total.toLocaleString()}** run${total === 1 ? '' : 's'} in the cloud.\nSaving to local storage...`
     : `${buildProgressBar(percent)}\n**${processed.toLocaleString()}** / **${total.toLocaleString()}** runs saved`;
   return new EmbedBuilder()
     .setColor(Colors.Blue)
@@ -127,7 +127,7 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
     if (totalRuns === 0) {
       // First-time user: show a live progress embed while the full cloud import runs.
       await interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle('📥 Cloud Sync').setDescription('Connecting to Appwrite...')],
+        embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle('📥 Cloud Sync').setDescription('Connecting to the cloud...')],
       }).catch(() => {});
 
       let lastProgressUpdate = 0;
@@ -144,9 +144,13 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
         logger.warn('Initial cloud import failed; continuing with local workflow', error);
       });
     } else {
-      // Returning user: background warmup (non-blocking).
-      void ensureRunDocumentsHydratedForUser(interaction.user.id).catch((error) => {
-        logger.warn('Background run hydration warmup failed; continuing with local workflow', error);
+      // Returning user: show a syncing embed and await a guaranteed full cloud sync
+      // before opening the menu so runs uploaded on the site always appear immediately.
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle('🔄 Syncing with Cloud').setDescription('Checking for new runs\u2026')],
+      }).catch(() => {});
+      await getLastRun(interaction.user.id, { cloudSyncMode: 'latest' }).catch((error) => {
+        logger.warn('Pre-menu cloud sync failed; showing local data', error);
       });
     }
   }

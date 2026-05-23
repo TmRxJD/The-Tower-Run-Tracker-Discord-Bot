@@ -338,10 +338,14 @@ export async function updateLocalLifetime(userId: string, entries: Array<Record<
   };
 }
 
-export async function upsertLocalRun(userId: string, username: string, runData: Record<string, unknown>): Promise<LocalRunRecord> {
-  await ensureLoaded();
-  const bucket = getOrCreateUser(userId);
-  const now = Date.now();
+// Internal helper — performs the in-memory upsert without persisting.
+function upsertRunInBucket(
+  bucket: LocalUserBucket,
+  userId: string,
+  username: string,
+  runData: Record<string, unknown>,
+  now: number,
+): { index: number; wasUpdate: boolean } {
   const normalizedRunData = canonicalizeTrackerRunData(runData);
 
   const incoming = {
@@ -363,7 +367,15 @@ export async function upsertLocalRun(userId: string, username: string, runData: 
   }
   if (index < 0) {
     const incomingFp = runFingerprint(incoming);
-    index = bucket.runs.findIndex(r => runFingerprint(r) === incomingFp);
+    index = bucket.runs.findIndex(r => {
+      if (runFingerprint(r) !== incomingFp) return false;
+      // If the incoming run has a cloud runId, only match entries that are not yet
+      // claimed by a different cloud run. This prevents two distinct cloud documents
+      // with identical fingerprint data from both resolving to the same local entry
+      // (which causes an infinite oscillation in the sync-diag repair loop).
+      if (incoming.runId && r.runId && String(r.runId) !== String(incoming.runId)) return false;
+      return true;
+    });
   }
 
   if (index >= 0) {
@@ -379,28 +391,52 @@ export async function upsertLocalRun(userId: string, username: string, runData: 
         updatedAt: incomingTs,
       };
     }
-  } else {
-    bucket.runs.push({ ...incoming, updatedAt: estimateRunTimestamp(incoming) || now });
+    return { index, wasUpdate: true };
+  }
+
+  bucket.runs.push({ ...incoming, updatedAt: estimateRunTimestamp(incoming) || now });
+  return { index: bucket.runs.length - 1, wasUpdate: false };
+}
+
+export async function upsertLocalRun(userId: string, username: string, runData: Record<string, unknown>): Promise<LocalRunRecord> {
+  await ensureLoaded();
+  const bucket = getOrCreateUser(userId);
+  const now = Date.now();
+  const { index } = upsertRunInBucket(bucket, userId, username, runData, now);
+  await persist();
+  return bucket.runs[index];
+}
+
+export async function bulkUpsertLocalRuns(
+  userId: string,
+  runs: Array<{ username: string; runData: Record<string, unknown> }>,
+): Promise<{ added: number; updated: number }> {
+  if (!runs.length) return { added: 0, updated: 0 };
+  await ensureLoaded();
+  const bucket = getOrCreateUser(userId);
+  const now = Date.now();
+  let added = 0;
+  let updated = 0;
+
+  for (const { username, runData } of runs) {
+    const { wasUpdate } = upsertRunInBucket(bucket, userId, username, runData, now);
+    if (wasUpdate) updated += 1;
+    else added += 1;
   }
 
   await persist();
-  const result = bucket.runs[index >= 0 ? index : bucket.runs.length - 1];
-  return result;
+  return { added, updated };
 }
 
 export async function mergeCloudRuns(userId: string, runs: Array<Record<string, unknown>>): Promise<{ added: number; updated: number }> {
-  let added = 0;
-  let updated = 0;
-  for (const run of runs || []) {
-    const before = await getLocalRuns(userId);
-    const username = typeof run.username === 'string' && run.username.trim() ? run.username : 'unknown';
-    const inserted = await upsertLocalRun(userId, username, run);
-    const after = await getLocalRuns(userId);
-    const hadBefore = before.some(r => r.localId === inserted.localId || (r.runId && inserted.runId && r.runId === inserted.runId));
-    if (hadBefore) updated += 1;
-    else if (after.length > before.length) added += 1;
-  }
-  return { added, updated };
+  if (!runs?.length) return { added: 0, updated: 0 };
+  return bulkUpsertLocalRuns(
+    userId,
+    runs.map(run => ({
+      username: typeof run.username === 'string' && run.username.trim() ? run.username : 'unknown',
+      runData: run,
+    })),
+  );
 }
 
 export async function queueCloudUpsert(input: {
