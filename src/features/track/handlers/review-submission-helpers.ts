@@ -1,4 +1,4 @@
-import { canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
+import { buildTrackerResolvedRunReference, canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
 import type { PendingRecordLike } from '../shared/track-review-records';
 
 export type SubmissionSyncResult = {
@@ -16,16 +16,31 @@ export type LocalRunSummary = {
   runTypeCounts: Record<string, number>;
 };
 
+export type SubmissionDispatchPlan = {
+  operation: 'edit' | 'log';
+  runData: Record<string, unknown>;
+};
+
+export type SubmissionPresentationState = {
+  runTypeCounts: Record<string, number>;
+  screenshotUrl: string | null;
+  resolvedRunId: string | null;
+  resolvedLocalId: string | null;
+  coverageSource: Record<string, unknown>;
+  shareableRun: Record<string, unknown>;
+};
+
 function flattenRunDataValues(source: Record<string, unknown> | null | undefined): Record<string, unknown> {
   if (!source || typeof source !== 'object') return {};
 
-  const values = source.values && typeof source.values === 'object' && !Array.isArray(source.values)
+  const nestedValues = source.values && typeof source.values === 'object' && !Array.isArray(source.values)
     ? source.values as Record<string, unknown>
     : null;
 
-  const { values: _ignoredValues, ...rest } = source;
+  const rest = { ...source };
+  delete rest.values;
   return {
-    ...(values ?? {}),
+    ...(nestedValues ?? {}),
     ...rest,
   };
 }
@@ -54,16 +69,24 @@ export function buildCanonicalRunData(pending: PendingRecordLike, submitRunData:
   return canonicalizeSubmissionRunData(pending.canonicalRunData ?? {}, submitRunData);
 }
 
-function readTrimmedString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
 export function resolveDuplicateRunInfo(pending: PendingRecordLike, submitRunData: Record<string, unknown>) {
-  const duplicateRunId = readTrimmedString(submitRunData.runId) ?? readTrimmedString(pending.runData?.runId);
-  const duplicateLocalId = readTrimmedString(submitRunData.localId) ?? readTrimmedString(pending.runData?.localId);
-  const shouldUpdateExistingRun = Boolean(duplicateRunId || duplicateLocalId || pending.isDuplicate || pending.runData?.runId || pending.runData?.localId);
+  const duplicateReference = buildTrackerResolvedRunReference({
+    localId: submitRunData.localId,
+    fallbackLocalId: pending.runData?.localId,
+    runId: submitRunData.runId,
+    fallbackRunId: pending.runData?.runId,
+  });
+  const shouldUpdateExistingRun = Boolean(
+    duplicateReference.runId
+    || duplicateReference.localId
+    || pending.isDuplicate,
+  );
 
-  return { duplicateRunId, duplicateLocalId, shouldUpdateExistingRun };
+  return {
+    duplicateRunId: duplicateReference.runId,
+    duplicateLocalId: duplicateReference.localId,
+    shouldUpdateExistingRun,
+  };
 }
 
 export function buildRunTypeCounts(params: {
@@ -97,16 +120,54 @@ export function resolveSubmissionIds(params: {
   duplicateLocalId: string | null;
   submitRunData: Record<string, unknown>;
 }) {
-  const resolvedRunId = readTrimmedString(params.syncResult?.runId)
-    ?? params.duplicateRunId
-    ?? readTrimmedString(params.submitRunData.runId)
-    ?? null;
-  const resolvedLocalId = readTrimmedString(params.syncResult?.localId)
-    ?? params.duplicateLocalId
-    ?? readTrimmedString(params.submitRunData.localId)
-    ?? null;
+  const resolvedReference = buildTrackerResolvedRunReference({
+    localId: params.syncResult?.localId,
+    fallbackLocalId: params.duplicateLocalId ?? params.submitRunData.localId,
+    runId: params.syncResult?.runId,
+    fallbackRunId: params.duplicateRunId ?? params.submitRunData.runId,
+  });
 
-  return { resolvedRunId, resolvedLocalId };
+  return {
+    resolvedRunId: resolvedReference.runId,
+    resolvedLocalId: resolvedReference.localId,
+  };
+}
+
+export function buildSubmissionDispatchPlan(params: {
+  submitRunData: Record<string, unknown>;
+  duplicateRunId: string | null;
+  duplicateLocalId: string | null;
+  shouldUpdateExistingRun: boolean;
+}): SubmissionDispatchPlan {
+  if (!params.shouldUpdateExistingRun) {
+    return {
+      operation: 'log',
+      runData: params.submitRunData,
+    };
+  }
+
+  const duplicateReference = buildTrackerResolvedRunReference({
+    runId: params.duplicateRunId,
+    localId: params.duplicateLocalId,
+    runData: params.submitRunData,
+  });
+
+  if (duplicateReference.runId) {
+    return {
+      operation: 'edit',
+      runData: {
+        ...params.submitRunData,
+        runId: duplicateReference.runId,
+      },
+    };
+  }
+
+  return {
+    operation: 'log',
+    runData: duplicateReference.localId
+      ? { ...params.submitRunData, localId: duplicateReference.localId }
+      : params.submitRunData,
+  };
 }
 
 export function buildCoverageSource(canonicalRunData: Record<string, unknown>, resolvedRunId: string | null, resolvedLocalId: string | null) {
@@ -126,5 +187,42 @@ export function buildShareableRunPayload(coverageSource: Record<string, unknown>
   return {
     ...coverageSource,
     screenshotUrl: screenshotUrl ?? undefined,
+  };
+}
+
+export function buildSubmissionPresentationState(params: {
+  localSummaryBefore: LocalRunSummary;
+  localSummaryAfter: LocalRunSummary;
+  canonicalRunData: Record<string, unknown>;
+  submitRunData: Record<string, unknown>;
+  shouldUpdateExistingRun: boolean;
+  syncResult: SubmissionSyncResult | null;
+  duplicateRunId: string | null;
+  duplicateLocalId: string | null;
+}): SubmissionPresentationState {
+  const runTypeCounts = buildRunTypeCounts({
+    localSummaryBefore: params.localSummaryBefore,
+    localSummaryAfter: params.localSummaryAfter,
+    canonicalRunData: params.canonicalRunData,
+    submitRunData: params.submitRunData,
+    shouldUpdateExistingRun: params.shouldUpdateExistingRun,
+  });
+  const screenshotUrl = resolveScreenshotUrl(params.submitRunData);
+  const { resolvedRunId, resolvedLocalId } = resolveSubmissionIds({
+    syncResult: params.syncResult,
+    duplicateRunId: params.duplicateRunId,
+    duplicateLocalId: params.duplicateLocalId,
+    submitRunData: params.submitRunData,
+  });
+  const coverageSource = buildCoverageSource(params.canonicalRunData, resolvedRunId, resolvedLocalId);
+  const shareableRun = buildShareableRunPayload(coverageSource, screenshotUrl);
+
+  return {
+    runTypeCounts,
+    screenshotUrl,
+    resolvedRunId,
+    resolvedLocalId,
+    coverageSource,
+    shareableRun,
   };
 }

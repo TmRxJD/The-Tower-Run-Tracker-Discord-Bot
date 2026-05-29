@@ -1,5 +1,6 @@
 import { isUnauthorizedAppwriteError } from '@tmrxjd/platform/node';
-import { Databases, Query } from 'node-appwrite';
+import type { Databases} from 'node-appwrite';
+import { Query } from 'node-appwrite';
 import { getAppConfig } from '../config';
 import { logger } from '../core/logger';
 
@@ -8,6 +9,8 @@ interface AccessCheck {
   collectionId: string;
   label: string;
 }
+
+const RUNS_EXTENDED_COLLECTION_ID = 'runs_extended_data';
 
 let hasRun = false;
 
@@ -28,6 +31,11 @@ function getChecks(): AccessCheck[] {
       databaseId: cfg.appwrite.runsDatabaseId,
       collectionId: cfg.appwrite.runsCollectionId,
       label: 'runs',
+    },
+    {
+      databaseId: cfg.appwrite.runsDatabaseId,
+      collectionId: RUNS_EXTENDED_COLLECTION_ID,
+      label: 'runs_extended_data',
     },
     {
       databaseId: cfg.appwrite.settingsDatabaseId,

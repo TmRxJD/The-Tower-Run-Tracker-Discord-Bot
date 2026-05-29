@@ -1,4 +1,5 @@
-import { Client, ClientOptions } from 'discord.js';
+import type { ClientOptions } from 'discord.js';
+import { Client } from 'discord.js';
 import type { AppConfig } from '../config';
 import { CommandRegistry } from './command-registry';
 import { ComponentRegistry } from './component-registry';

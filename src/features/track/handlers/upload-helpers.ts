@@ -4,6 +4,8 @@ import {
   TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS,
   TRACK_RUN_INLINE_BATTLE_REPORT_LABELS,
   TRACK_RUN_INLINE_BATTLE_REPORT_SECTION_LABELS,
+  buildTrackerResolvedRunReference,
+  trackerRunsShareDuplicateIdentity,
 } from '@tmrxjd/platform/tools';
 
 const INLINE_BATTLE_REPORT_LABELS = TRACK_RUN_INLINE_BATTLE_REPORT_LABELS;
@@ -403,29 +405,37 @@ export function findPotentialDuplicateRun(extractedData: RunLike | null | undefi
     };
   }
 
-  const currentTier = extractedData.tier;
-  const currentWave = extractedData.wave;
-  const currentDuration = formatDuration(String(extractedData.duration || extractedData.roundDuration || ''));
-  const currentCoins = extractedData.totalCoins || extractedData.coins || 0;
+  const candidateIdentity = {
+    tier: String(extractedData.tier ?? ''),
+    wave: String(extractedData.wave ?? ''),
+    duration: String(extractedData.duration ?? extractedData.roundDuration ?? ''),
+    roundDuration: String(extractedData.roundDuration ?? extractedData.duration ?? ''),
+    coins: String(extractedData.totalCoins ?? extractedData.coins ?? ''),
+    totalCoins: String(extractedData.totalCoins ?? extractedData.coins ?? ''),
+  };
 
   for (const existingRun of existingRuns) {
-    const existingRunId = String(existingRun.runId || existingRun.id || '');
-    const existingLocalId = String(existingRun.localId || '');
-    const existingTier = existingRun.tier;
-    const existingWave = existingRun.wave;
-    const existingDuration = formatDuration(String(existingRun.duration || existingRun.roundDuration || ''));
-    const existingCoins = existingRun.totalCoins || existingRun.coins || 0;
+    const existingReference = buildTrackerResolvedRunReference({
+      runId: existingRun.runId,
+      fallbackRunId: existingRun.id,
+      localId: existingRun.localId,
+    });
+    const existingRunId = existingReference.runId;
+    const existingLocalId = existingReference.localId;
+    const existingIdentity = {
+      tier: String(existingRun.tier ?? ''),
+      wave: String(existingRun.wave ?? ''),
+      duration: String(existingRun.duration ?? existingRun.roundDuration ?? ''),
+      roundDuration: String(existingRun.roundDuration ?? existingRun.duration ?? ''),
+      coins: String(existingRun.totalCoins ?? existingRun.coins ?? ''),
+      totalCoins: String(existingRun.totalCoins ?? existingRun.coins ?? ''),
+    };
 
-    const tierMatch = currentTier == existingTier;
-    const waveMatch = currentWave == existingWave;
-    const durationMatch = currentDuration === existingDuration;
-    const coinMatch = currentCoins == existingCoins;
-
-    if ((existingRunId || existingLocalId) && tierMatch && waveMatch && durationMatch && coinMatch) {
+    if ((existingRunId || existingLocalId) && trackerRunsShareDuplicateIdentity(existingIdentity, candidateIdentity)) {
       return {
         isDuplicate: true,
-        duplicateRunId: existingRunId || null,
-        duplicateLocalId: existingLocalId || null,
+        duplicateRunId: existingRunId,
+        duplicateLocalId: existingLocalId,
       };
     }
   }
@@ -591,10 +601,6 @@ function getTierAndWave(lines: string[]) {
   }
 
   return { tier, wave, tierRaw };
-}
-
-function normalizeDecimalSeparator(value: string) {
-  return value.replace(/,/g, '.');
 }
 
 function fixOCRMisreads(text: string): string | number {

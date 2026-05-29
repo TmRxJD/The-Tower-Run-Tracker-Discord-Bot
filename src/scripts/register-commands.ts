@@ -101,11 +101,11 @@ async function resolveTargetGuildIds(loginToken: string, explicitGuildId?: strin
     }
     return guildIds;
   } finally {
-    client.destroy();
+    await client.destroy();
   }
 }
 
-registerCommands().catch(error => {
+void registerCommands().catch(error => {
   if (error instanceof ZodError) {
     logger.error('Failed to register commands: invalid environment configuration', error.issues.map(issue => ({
       path: issue.path.join('.'),

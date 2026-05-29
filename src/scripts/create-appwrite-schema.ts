@@ -38,20 +38,6 @@ async function ensureStringAttribute(databases: Databases, databaseId: string, c
   }
 }
 
-async function ensureIntegerAttribute(databases: Databases, databaseId: string, collectionId: string, key: string, required = false, defaultValue?: number, array = false) {
-  try {
-    // Signature: (databaseId, collectionId, key, required, min?, max?, default?, array?)
-    await databases.createIntegerAttribute(databaseId, collectionId, key, required, undefined, undefined, defaultValue, array);
-    logger.info(`Created integer attribute ${collectionId}.${key}`);
-  } catch (err) {
-    if (isConflict(err)) {
-      logger.debug(`Attribute ${collectionId}.${key} already exists`);
-      return;
-    }
-    throw err;
-  }
-}
-
 async function ensureDatetimeAttribute(databases: Databases, databaseId: string, collectionId: string, key: string, required = false, defaultValue?: string, array = false) {
   try {
     // Signature: (databaseId, collectionId, key, required, default?, array?)

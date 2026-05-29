@@ -27,7 +27,7 @@ describe('tracker submission embeds', () => {
 
     expect(embed.data.title).toBeTruthy()
     expect(embed.data.description).toContain('4')
-    expect(embed.data.fields?.some(field => field.name.includes('Tier'))).toBe(true)
+    expect(embed.data.description).toContain('🔢 Tier: **12+**')
     expect(embed.data.fields?.some(field => field.name.includes('notes') || field.name.includes('Notes'))).toBe(true)
     expect(embed.data.fields?.some(field => String(field.value).includes('Coverage'))).toBe(false)
   })
@@ -52,7 +52,7 @@ describe('tracker submission embeds', () => {
       screenshotUrl: null,
     })
 
-    expect(embed.data.fields?.some(field => String(field.value).includes('Orbs:'))).toBe(false)
+    expect(embed.data.fields?.some(field => String(field.value).includes('Orbs:')) ?? false).toBe(false)
   })
 
   it('shows coverage for canonical orb-hit and summoned-enemy fields', () => {

@@ -1,12 +1,13 @@
+import type {
+  MessageComponentInteraction,
+  ModalSubmitInteraction} from 'discord.js';
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   Colors,
   EmbedBuilder,
-  MessageComponentInteraction,
   ModalBuilder,
-  ModalSubmitInteraction,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,

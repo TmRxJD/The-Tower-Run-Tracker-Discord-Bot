@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { forceSyncQueuedRuns } from './tracker-api-client';
-import { getQueueItems, markQueueItemFailed, queueCloudUpsert, removeQueueItem } from './local-run-store';
+import { getQueueItems, markQueueItemFailed, queueCloudDelete, queueCloudUpsert, removeQueueItem } from './local-run-store';
 
 const TEST_USER_ID = 'tracker_sync_cleanup_user';
 
@@ -54,6 +54,41 @@ describe('tracker-api-client queue sync', () => {
 
     const afterSync = await getQueueItems(TEST_USER_ID);
     expect(afterSync).toHaveLength(0);
+    expect(await fileExists(screenshotPath)).toBe(false);
+  });
+
+  it('drops queued upserts shadowed by a queued delete before replaying', async () => {
+    const screenshotPath = join(tmpdir(), `trackerbot-shadowed-upsert-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+    await fs.writeFile(screenshotPath, Buffer.from([1, 2, 3, 4]));
+
+    await queueCloudUpsert({
+      userId: TEST_USER_ID,
+      username: 'tester',
+      runData: { localId: 'local-shadowed-id', runId: 'shadowed-run-id' },
+      localId: 'local-shadowed-id',
+      screenshot: {
+        filename: 'shadowed.png',
+        contentType: 'image/png',
+        tempPath: screenshotPath,
+      },
+    });
+
+    await queueCloudDelete({
+      userId: TEST_USER_ID,
+      username: 'tester',
+      runId: 'shadowed-run-id',
+    });
+
+    const deleteItem = (await getQueueItems(TEST_USER_ID)).find(item => item.op === 'delete');
+    expect(deleteItem).toBeTruthy();
+
+    for (let index = 0; index < 8; index += 1) {
+      await markQueueItemFailed(deleteItem!.id, 'forced delete exhaustion');
+    }
+
+    await forceSyncQueuedRuns(TEST_USER_ID);
+
+    expect(await getQueueItems(TEST_USER_ID)).toHaveLength(0);
     expect(await fileExists(screenshotPath)).toBe(false);
   });
 });

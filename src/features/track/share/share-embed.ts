@@ -151,7 +151,6 @@ export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options
   const config = getTrackUiConfig().share;
   const includeNotes = options?.includeNotes !== false;
   const includeCoverage = options?.includeCoverage !== false;
-  const includeScreenshot = options?.includeScreenshot !== false;
   const enabledCoverageMetrics: Set<string> | undefined = (() => {
     const keys: Record<string, string> = {
       goldenTower: 'includeCoverageGoldenTower',

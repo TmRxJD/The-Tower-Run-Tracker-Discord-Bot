@@ -56,7 +56,6 @@ export function createDataReviewEmbed(
   data: Record<string, unknown>,
   typeLabel = 'Extracted',
   isDuplicate = false,
-  decimalPreference = 'Period (.)',
   screenshotUrl?: string | null,
   mode: TrackerUiMode = 'track',
 ) {
@@ -95,7 +94,7 @@ export function createDataReviewEmbed(
     embed.addFields({ name: displayName(key), value: clamp(str), inline });
   };
   const processed = new Set<string>();
-  const skipKeys = new Set<string>(review.skipFieldKeys as string[]);
+  const skipFieldKeys = review.skipFieldKeys as string[];
   const standardOrder = review.standardFieldOrder as string[];
   const numericFieldKeys = new Set<string>(review.numericFieldKeys as string[]);
   const derivedDurationRaw = String(viewData.roundDuration ?? viewData.duration ?? '');
@@ -116,6 +115,10 @@ export function createDataReviewEmbed(
   embed.setDescription(reviewDescriptionLines.join('\n'));
 
   for (const key of standardOrder) {
+    if (skipFieldKeys.includes(key)) {
+      processed.add(key);
+      continue;
+    }
     if (key === 'dateTime') {
       addField(key, `${dateVal} ${timeVal}`.trim());
       processed.add(key);

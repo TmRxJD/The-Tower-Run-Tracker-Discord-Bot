@@ -11,14 +11,16 @@ const deleteDocumentMock = vi.fn();
 const listDocumentsMock = vi.fn();
 const createFileMock = vi.fn();
 const deleteFileMock = vi.fn();
-const getFileViewMock = vi.fn();
 
 vi.mock('../../config', () => ({
   getAppConfig: () => ({
     deploymentMode: 'dev',
     appwrite: {
+      endpoint: 'https://appwrite.example/v1',
+      projectId: 'project-1',
       runsDatabaseId: 'runs-db',
       runsCollectionId: 'runs',
+      runsBucketId: 'runs',
       settingsDatabaseId: 'settings-db',
       settingsCollectionId: 'settings',
       lifetimeDatabaseId: 'lifetime-db',
@@ -41,7 +43,6 @@ vi.mock('../../persistence/appwrite-client', () => ({
     storage: {
       createFile: createFileMock,
       deleteFile: deleteFileMock,
-      getFileView: getFileViewMock,
     },
   }),
 }));
@@ -117,7 +118,6 @@ beforeEach(async () => {
   listDocumentsMock.mockReset();
   createFileMock.mockReset();
   deleteFileMock.mockReset();
-  getFileViewMock.mockReset();
   delete process.env.APPWRITE_JWT;
 
   listDocumentsMock.mockResolvedValue({ documents: [], total: 0 });
@@ -263,20 +263,88 @@ describe('tracker-api-client settings sync', () => {
     expect(result.cloudUnavailable).toBe(false);
     expect(await getQueueItems(userId)).toHaveLength(0);
     expect(createDocumentMock).toHaveBeenCalledTimes(3);
-    expect(createDocumentMock.mock.calls[0]?.[0]).toBe('runs-db');
-    expect(createDocumentMock.mock.calls[0]?.[1]).toBe('runs');
-    expect(createDocumentMock.mock.calls[1]?.[0]).toBe('runs-db');
-    expect(createDocumentMock.mock.calls[1]?.[1]).toBe('runs');
-    expect(createDocumentMock.mock.calls[1]?.[2]).toBe(createDocumentMock.mock.calls[0]?.[2]);
-    expect(createDocumentMock.mock.calls[2]?.[0]).toBe('runs-db');
-    expect(createDocumentMock.mock.calls[2]?.[1]).toBe('runs_extended_data');
-    expect(createDocumentMock.mock.calls[2]?.[2]).toBe(createDocumentMock.mock.calls[0]?.[2]);
-    expect(createDocumentMock.mock.calls[2]?.[3]).toEqual(expect.objectContaining({
-      runId: createDocumentMock.mock.calls[0]?.[2],
+    const mainRunCalls = createDocumentMock.mock.calls.filter(call => call[1] === 'runs');
+    const extendedRunCalls = createDocumentMock.mock.calls.filter(call => call[1] === 'runs_extended_data');
+    expect(mainRunCalls).toHaveLength(2);
+    expect(extendedRunCalls).toHaveLength(1);
+    expect(mainRunCalls[1]?.[2]).toBe(mainRunCalls[0]?.[2]);
+    expect(extendedRunCalls[0]?.[2]).toBe(mainRunCalls[0]?.[2]);
+    expect(extendedRunCalls[0]?.[3]).toEqual(expect.objectContaining({
+      runId: mainRunCalls[0]?.[2],
       userId,
       spotlightDamage: '1.25Q',
       schemaVersion: 1,
     }));
+  });
+
+  it('writes the base run document before screenshot upload finishes', async () => {
+    const userId = `tracker.sync.screenshot-nonblocking-${Date.now()}`;
+    await updateLocalSettings(userId, {
+      cloudSyncEnabled: true,
+      updatedAt: 1_000,
+    });
+
+    let resolveUpload: ((value: { $id: string }) => void) | null = null;
+    createFileMock.mockImplementation(() => new Promise(resolve => {
+      resolveUpload = resolve as (value: { $id: string }) => void;
+    }));
+    createDocumentMock.mockResolvedValue({ $id: 'cloud-run-screen-1' });
+
+    const runPromise = logRun({
+      userId,
+      username: 'tester',
+      runData: {
+        localId: 'queued-run-screen-1',
+        type: 'Farming',
+        tier: '10',
+        wave: '1234',
+      },
+      screenshot: {
+        data: Buffer.from('image-bytes'),
+        filename: 'run.png',
+        contentType: 'image/png',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(createDocumentMock.mock.calls.some(call => call[1] === 'runs')).toBe(true);
+    });
+
+    resolveUpload?.({ $id: 'file-1' });
+
+    const result = await runPromise;
+    expect(result.queuedForCloud).toBe(false);
+    expect(result.cloudUnavailable).toBe(false);
+    expect(result.screenshotUrl).toBe('https://appwrite.example/v1/storage/buckets/runs/files/file-1/view?project=project-1');
+  });
+
+  it('builds an Appwrite screenshot view URL from the uploaded file id', async () => {
+    const userId = `tracker.sync.screenshot-view-url-${Date.now()}`;
+    await updateLocalSettings(userId, {
+      cloudSyncEnabled: true,
+      updatedAt: 1_000,
+    });
+
+    createFileMock.mockResolvedValue({ $id: 'file-async-1' });
+    createDocumentMock.mockResolvedValue({ $id: 'cloud-run-screen-async-1' });
+
+    const result = await logRun({
+      userId,
+      username: 'tester',
+      runData: {
+        localId: 'queued-run-screen-async-1',
+        type: 'Farming',
+        tier: '10',
+        wave: '1235',
+      },
+      screenshot: {
+        data: Buffer.from('image-bytes'),
+        filename: 'run.png',
+        contentType: 'image/png',
+      },
+    });
+
+    expect(result.screenshotUrl).toBe('https://appwrite.example/v1/storage/buckets/runs/files/file-async-1/view?project=project-1');
   });
 
   it('uses the dev Appwrite JWT user id for permissions when the upload user id is discord-only', async () => {
@@ -308,17 +376,18 @@ describe('tracker-api-client settings sync', () => {
     });
 
     expect(result.queuedForCloud).toBe(false);
-    expect(createDocumentMock.mock.calls[0]?.[4]).toEqual([
+    const mainRunCall = createDocumentMock.mock.calls.find(call => call[1] === 'runs');
+    const extendedRunCall = createDocumentMock.mock.calls.find(call => call[1] === 'runs_extended_data');
+    expect(mainRunCall?.[4]).toEqual([
       'read("user:681ab667ce6096096b3b")',
       'update("user:681ab667ce6096096b3b")',
       'delete("user:681ab667ce6096096b3b")',
     ]);
-    expect(createDocumentMock.mock.calls[1]?.[1]).toBe('runs_extended_data');
-    expect(createDocumentMock.mock.calls[1]?.[3]).toEqual(expect.objectContaining({
-      userId,
+    expect(extendedRunCall?.[3]).toEqual(expect.objectContaining({
+      userId: '681ab667ce6096096b3b',
       coinsPerKill: '68.96B',
     }));
-    expect(createDocumentMock.mock.calls[1]?.[4]).toEqual([
+    expect(extendedRunCall?.[4]).toEqual([
       'read("user:681ab667ce6096096b3b")',
       'update("user:681ab667ce6096096b3b")',
       'delete("user:681ab667ce6096096b3b")',

@@ -1,11 +1,12 @@
-import { Interaction, MessageFlagsBitField } from 'discord.js';
+import type { Interaction} from 'discord.js';
+import { MessageFlagsBitField } from 'discord.js';
 import { logger } from './logger';
-import { TrackerBotClient } from './tracker-bot-client';
+import type { TrackerBotClient } from './tracker-bot-client';
 import { ANALYTICS_EVENT_COMMAND_INVOKED } from '@tmrxjd/platform/tools';
 import { clearMainMenuSession } from '../features/track/handlers/upload-handlers';
 
 export function registerInteractionRouter(client: TrackerBotClient) {
-  client.on('interactionCreate', async (interaction: Interaction) => {
+  const handleInteraction = async (interaction: Interaction) => {
     try {
       if (interaction.isChatInputCommand()) {
         const command = client.commands.get(interaction.commandName);
@@ -58,5 +59,9 @@ export function registerInteractionRouter(client: TrackerBotClient) {
         }
       }
     }
+  };
+
+  client.on('interactionCreate', interaction => {
+    void handleInteraction(interaction);
   });
 }

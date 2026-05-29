@@ -23,4 +23,13 @@ describe('review-lifetime-submission', () => {
     expect(artifacts.files).toEqual([{ attachment: 'https://example.test/image.png', name: 'screenshot.png' }]);
     expect(artifacts.embed).toBeTruthy();
   });
+
+  it('normalizes the lifetime entry id before submission', () => {
+    const payload = buildLifetimeEntryPayload({
+      runData: { runId: ' r1 ' },
+      screenshot: null,
+    } as never);
+
+    expect(payload.entryId).toBe('r1');
+  });
 });

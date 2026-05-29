@@ -1,5 +1,5 @@
-import { Attachment, ChatInputCommandInteraction, EmbedBuilder, MessageFlagsBitField } from 'discord.js';
-import { logger } from '../../core/logger';
+import type { Attachment, ChatInputCommandInteraction, EmbedBuilder} from 'discord.js';
+import { MessageFlagsBitField } from 'discord.js';
 import { getBotConfig } from '../../config/bot-config';
 import { getUserSettings } from './tracker-api-client';
 import { asTrackReplyInteraction } from './handlers/review-interaction-helpers';

@@ -1,3 +1,6 @@
+import type {
+  MessageComponentInteraction,
+  ModalSubmitInteraction} from 'discord.js';
 import {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -5,8 +8,6 @@ import {
   ButtonStyle,
   Colors,
   EmbedBuilder,
-  MessageComponentInteraction,
-  ModalSubmitInteraction,
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { randomUUID } from 'node:crypto';
@@ -24,7 +25,7 @@ import { getTrackerFlowMode } from '../flow-mode-store';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
-import { computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { buildTrackerDocumentEntryReference, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { trimDisplayTimeSeconds } from './upload-helpers';
@@ -76,6 +77,18 @@ type ShareSessionState = {
   runTypeCounts: Record<string, number>;
   createdAt: number;
 };
+
+export function resolveViewRunDeletionReference(run: RunListItem & { $id?: unknown; id?: unknown }): {
+  entryId: string | null;
+  runId: string | null;
+  localId: string | null;
+} {
+  return buildTrackerDocumentEntryReference({
+    documentId: run.$id,
+    runId: run.runId,
+    localId: run.localId,
+  });
+}
 
 function buildShareActionButtons(token: string, selectedCount: number): ActionRowBuilder<ButtonBuilder> {
   const disableSingleRunActions = selectedCount > 1;
@@ -450,7 +463,6 @@ async function renderViewRunsPanel(
 
   const count = Math.max(1, state.count || 10);
   const pageSize = state.orientation === 'portrait' ? 1 : count;
-  const maxOffset = Math.max(0, filtered.length - count);
   const effectiveMaxOffset = Math.max(0, filtered.length - pageSize);
   const offset = Math.min(Math.max(0, state.offset || 0), effectiveMaxOffset);
   if (offset !== state.offset) {
@@ -889,15 +901,16 @@ export async function handleTrackMenuShareRunsDelete(interaction: TrackMenuInter
 
     const deletionResults = await Promise.allSettled(selectedRuns.map(async (item) => {
       const run = item.run;
+      const runReference = resolveViewRunDeletionReference(run);
       if (session.mode === 'lifetime') {
-        const entryId = String(run.$id ?? run.id ?? run.runId ?? run.localId ?? '').trim();
+        const entryId = runReference.entryId;
         if (!entryId) return false;
         await removeLifetimeEntry({ userId: session.userId, username: interaction.user.username, entryId });
         return true;
       }
 
-      const runId = String(run.runId ?? '').trim() || null;
-      const localId = String(run.localId ?? '').trim() || null;
+      const runId = runReference.entryId ?? runReference.runId;
+      const { localId } = runReference;
       if (!runId && !localId) return false;
       await removeLastRun({ userId: session.userId, runId, localId });
       return true;

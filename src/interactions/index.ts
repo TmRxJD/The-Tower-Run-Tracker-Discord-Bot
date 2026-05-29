@@ -1,4 +1,4 @@
-import { TrackerBotClient } from '../core/tracker-bot-client';
+import type { TrackerBotClient } from '../core/tracker-bot-client';
 import {
   handleCancel,
   handleDataSubmission,

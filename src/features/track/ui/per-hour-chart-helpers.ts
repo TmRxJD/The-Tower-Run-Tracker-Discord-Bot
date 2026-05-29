@@ -61,33 +61,10 @@ function avgOf(values: number[]): number | null {
 }
 
 /**
- * Linear-interpolate null slots between known data points.
- * Leading and trailing nulls are left as-is (no extrapolation).
- */
-function interpolateNulls(values: (number | null)[]): (number | null)[] {
-  const result = [...values];
-  let left = -1;
-  for (let i = 0; i < result.length; i++) {
-    if (result[i] !== null) {
-      if (left >= 0 && i - left > 1) {
-        const leftVal = result[left] as number;
-        const rightVal = result[i] as number;
-        const steps = i - left;
-        for (let j = left + 1; j < i; j++) {
-          result[j] = leftVal + (rightVal - leftVal) * ((j - left) / steps);
-        }
-      }
-      left = i;
-    }
-  }
-  return result;
-}
-
-/**
  * Build a per-hour 7-day trend chart attachment for a given run type.
  * Groups runs by calendar day over the last 7 days and plots daily averages,
  * showing trend/momentum rather than raw historical run counts.
- * Returns null if there is insufficient data (fewer than 2 days with data).
+ * Returns null if there is insufficient data (fewer than 2 distinct days with data).
  */
 export async function buildPerHourChartAttachment(
   allRuns: Record<string, unknown>[],
@@ -123,7 +100,7 @@ export async function buildPerHourChartAttachment(
   }
 
   const daysWithData = dayKeys.filter(k => byDay.has(k));
-  if (daysWithData.length < 1) return null;
+  if (daysWithData.length < 2) return null;
 
   // Only chart days that have actual run data — no empty slots
   const activeKeys = daysWithData;

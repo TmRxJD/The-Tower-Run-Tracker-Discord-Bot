@@ -1,4 +1,4 @@
-import { MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
+import type { MessageComponentInteraction} from 'discord.js';
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { editRun, getLastRun, getLocalRunSummary, getUserSettings, logRun } from '../tracker-api-client';
 import { createSuccessButtons, createLoadingEmbed } from '../ui/tracker-ui';
@@ -8,12 +8,12 @@ import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { handleError } from './error-handlers';
 import { buildSubmitPayload, resolveRawParseSourceData, sendRawParseMessage } from './review-data-helpers';
 import { asTrackReplyInteraction, ensureType, isTrackReviewFlowEnabled, resolveOwnedPendingInteraction, type ReviewInteraction, updateReviewMessage } from './review-interaction-helpers';
-import { applySubmittedReviewEditValues, buildCurrentReviewReplyPayload, buildReviewEditFieldModal, buildReviewNoteModal, buildTypeSelectionReviewReplyPayload, getSelectedReviewFields, getSelectedReviewValue, renderDataReviewOrSubmit, renderUpdatedReviewAfterNote, resolveUpdatedPendingOrReplyExpired, resolveUpdatedPendingOrUpdateReviewMessage } from './review-edit-modal-helpers';
+import { applySubmittedReviewEditValues, buildReviewEditFieldModal, buildTypeSelectionReviewReplyPayload, getSelectedReviewFields, getSelectedReviewValue, renderDataReviewOrSubmit, resolveUpdatedPendingOrReplyExpired, resolveUpdatedPendingOrUpdateReviewMessage } from './review-edit-modal-helpers';
 import { openNoteModal } from './note-panel-handlers';
 import { submitLifetimePendingRun } from './review-lifetime-submission';
-import { buildCanonicalRunData, buildCoverageSource, buildRunTypeCounts, buildShareableRunPayload, buildSubmitRunData, resolveDuplicateRunInfo, resolveScreenshotUrl, resolveSubmissionIds, type LocalRunSummary, type SubmissionSyncResult } from './review-submission-helpers';
+import { buildCanonicalRunData, buildSubmissionDispatchPlan, buildSubmissionPresentationState, buildSubmitRunData, resolveDuplicateRunInfo, type LocalRunSummary, type SubmissionSyncResult } from './review-submission-helpers';
 import { updatePendingRun, deletePendingRun } from '../pending-run-store';
-import { TRACKER_IDS, parsePrefixedTrackerToken, parseTrackerToken, withToken, withTokenAndField } from '../track-custom-ids';
+import { TRACKER_IDS, parsePrefixedTrackerToken, parseTrackerToken, withTokenAndField } from '../track-custom-ids';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
@@ -191,35 +191,29 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
     let syncResult: SubmissionSyncResult | null = null;
 
     const { duplicateRunId, duplicateLocalId, shouldUpdateExistingRun } = resolveDuplicateRunInfo(pending, submitRunData);
+    const dispatchPlan = buildSubmissionDispatchPlan({
+      submitRunData,
+      duplicateRunId,
+      duplicateLocalId,
+      shouldUpdateExistingRun,
+    });
     const localSummaryBefore = await getLocalRunSummary(userId).catch(() => ({ totalRuns: 0, runTypeCounts: {} as Record<string, number> })) as LocalRunSummary;
 
-    if (shouldUpdateExistingRun) {
-      if (duplicateRunId) {
-        syncResult = await editRun({
-          userId,
-          username,
-          runData: { ...submitRunData, runId: duplicateRunId },
-          canonicalRunData,
-          settings: undefined,
-          skipLeaderboardRefresh: true,
-          deferCloudSync: true,
-        });
-      } else {
-        syncResult = await logRun({
-          userId,
-          username,
-          runData: duplicateLocalId ? { ...submitRunData, localId: duplicateLocalId } : submitRunData,
-          canonicalRunData,
-          deferredScreenshotSource,
-          skipLeaderboardRefresh: true,
-          deferCloudSync: true,
-        });
-      }
+    if (dispatchPlan.operation === 'edit') {
+      syncResult = await editRun({
+        userId,
+        username,
+        runData: dispatchPlan.runData,
+        canonicalRunData,
+        settings: undefined,
+        skipLeaderboardRefresh: true,
+        deferCloudSync: true,
+      });
     } else {
       syncResult = await logRun({
         userId,
         username,
-        runData: submitRunData,
+        runData: dispatchPlan.runData,
         canonicalRunData,
         deferredScreenshotSource,
         skipLeaderboardRefresh: true,
@@ -228,24 +222,26 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
     }
 
     const localSummaryAfter = await getLocalRunSummary(userId).catch(() => ({ totalRuns: 0, runTypeCounts: {} as Record<string, number> })) as LocalRunSummary;
-    const runTypeCounts = buildRunTypeCounts({
+    const presentationState = buildSubmissionPresentationState({
       localSummaryBefore,
       localSummaryAfter,
       canonicalRunData,
       submitRunData,
       shouldUpdateExistingRun,
-    });
-
-    const hasScreenshot = Boolean(pending.screenshot?.url);
-    const screenshotUrl = resolveScreenshotUrl(submitRunData);
-    const { resolvedRunId, resolvedLocalId } = resolveSubmissionIds({
       syncResult,
       duplicateRunId,
       duplicateLocalId,
-      submitRunData,
     });
+
+    const {
+      runTypeCounts,
+      screenshotUrl,
+      resolvedRunId,
+      coverageSource,
+      shareableRun,
+    } = presentationState;
+    const hasScreenshot = Boolean(pending.screenshot?.url);
     const settings = await getUserSettings(userId).catch(() => null);
-    const coverageSource = buildCoverageSource(canonicalRunData, resolvedRunId, resolvedLocalId);
 
     const allRunsSummary = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
     const sharedSettings = await getEffectiveUserSharedSettings(userId).catch(() => ({ runDeltaMode: 'disabled' as const }));
@@ -257,7 +253,6 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
       : undefined;
 
     const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts, hasScreenshot, screenshotUrl, deltaResult });
-    const shareableRun = buildShareableRunPayload(coverageSource, screenshotUrl);
 
     setShareableRun(userId, {
       run: shareableRun,

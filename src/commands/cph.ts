@@ -7,7 +7,6 @@ type ResourceKind = 'coins' | 'cells' | 'dice';
 
 const botConfig = getBotConfig();
 const CPH = botConfig.commands.cph;
-const COMMON = botConfig.common.responses;
 
 const RESOURCE_META: Record<ResourceKind, { label: string; emoji: string }> = {
   coins: { label: 'Coins', emoji: '🪙' },

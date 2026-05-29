@@ -1,10 +1,11 @@
 import * as Discord from 'discord.js';
+import type {
+  MessageComponentInteraction,
+  ModalSubmitInteraction,
+  StringSelectMenuBuilder} from 'discord.js';
 import {
   ActionRowBuilder,
-  MessageComponentInteraction,
   ModalBuilder,
-  ModalSubmitInteraction,
-  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';

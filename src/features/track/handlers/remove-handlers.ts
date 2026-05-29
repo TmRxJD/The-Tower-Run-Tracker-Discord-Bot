@@ -1,6 +1,8 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, EmbedBuilder, MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
+import type { MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, EmbedBuilder } from 'discord.js';
 import { getLastRun, getLocalLifetimeData, removeLastRun, removeLifetimeEntry } from '../tracker-api-client';
 import { packTrackerRemoveToken, parsePrefixedTrackerToken, parseTrackerRemoveToken, TRACKER_IDS, withToken } from '../track-custom-ids';
+import { buildTrackerDocumentEntryReference } from '@tmrxjd/platform/tools';
 import { logError } from './error-handlers';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
@@ -8,6 +10,28 @@ import { resolveInteractionDisplayName } from '../discord-display-name';
 import { createInitialEmbed, createMainMenuButtons } from '../ui/tracker-ui';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
+
+export function resolveRemoveLastRunReference(run: {
+  $id?: unknown;
+  id?: unknown;
+  runId?: unknown;
+  localId?: unknown;
+}): {
+  cloudRunId: string | null;
+  localId: string | null;
+} {
+  const runReference = buildTrackerDocumentEntryReference({
+    documentId: run.$id,
+    fallbackDocumentId: run.runId ? undefined : run.id,
+    runId: run.runId,
+    localId: run.localId,
+  });
+
+  return {
+    cloudRunId: runReference.runId ?? (runReference.entryId && runReference.entryId !== runReference.localId ? runReference.entryId : null),
+    localId: runReference.localId,
+  };
+}
 
 async function renderMainMenuFromLatest(interaction: TrackMenuInteraction, mode: 'track' | 'lifetime') {
   if (mode === 'lifetime') {
@@ -50,7 +74,10 @@ export async function handleTrackMenuRemoveLastPrompt(interaction: TrackMenuInte
       const entries = await getLocalLifetimeData(interaction.user.id);
       const sorted = [...entries].sort((a, b) => new Date(String(b.date ?? '')).getTime() - new Date(String(a.date ?? '')).getTime());
       const latest = sorted[0];
-      const latestId = latest ? (typeof latest.$id === 'string' ? latest.$id : (typeof latest.id === 'string' ? latest.id : null)) : null;
+      const latestId = latest ? buildTrackerDocumentEntryReference({
+        documentId: latest.$id,
+        fallbackDocumentId: latest.id,
+      }).entryId : null;
       if (!latest || !latestId) {
         await interaction.editReply({ content: removeUi.noneFound, embeds: [], components: [] }).catch(() => {});
         return;
@@ -70,10 +97,16 @@ export async function handleTrackMenuRemoveLastPrompt(interaction: TrackMenuInte
       return;
     }
 
-    const summary = await getLastRun(interaction.user.id);
+    const summary = await getLastRun(interaction.user.id, { cloudSyncMode: 'none' });
     const lastRun = summary?.lastRun as Record<string, unknown> | undefined;
-    const runId = typeof lastRun?.runId === 'string' && lastRun.runId.trim() ? lastRun.runId.trim() : null;
-    const localId = typeof lastRun?.localId === 'string' && lastRun.localId.trim() ? lastRun.localId.trim() : null;
+    const runReference = resolveRemoveLastRunReference({
+      $id: lastRun?.$id,
+      id: lastRun?.id,
+      runId: lastRun?.runId,
+      localId: lastRun?.localId,
+    });
+    const runId = runReference.cloudRunId;
+    const localId = runReference.localId;
     if (!lastRun || (!runId && !localId)) {
       await interaction.editReply({ content: removeUi.noneFound, embeds: [], components: [] }).catch(() => {});
       return;

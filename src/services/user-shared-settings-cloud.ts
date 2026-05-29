@@ -1,6 +1,7 @@
 import {
   normalizeSharedUserToolSettings,
   parseIsoTimestampToMillis,
+  type RunDeltaMode,
   type SharedUserToolSettings,
 } from '@tmrxjd/platform/tools';
 import {
@@ -63,7 +64,7 @@ function normalizeSharedSettingsDoc(doc: Record<string, unknown>): SharedUserToo
     languagePreference: parsed.languagePreference ?? undefined,
     dateFormatPreference: parsed.dateFormatPreference ?? undefined,
     decimalSeparatorPreference: parsed.decimalSeparatorPreference ?? undefined,
-    runDeltaMode: (parsed.runDeltaMode ?? undefined) as import('@tmrxjd/platform/tools').RunDeltaMode | undefined,
+    runDeltaMode: (parsed.runDeltaMode ?? undefined) as RunDeltaMode | undefined,
   });
 }
 

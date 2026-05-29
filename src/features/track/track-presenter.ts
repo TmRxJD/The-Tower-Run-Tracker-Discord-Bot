@@ -1,7 +1,6 @@
 import { Colors, EmbedBuilder } from 'discord.js';
 import type { BotConfig } from '../../config/bot-config';
 import { formatNumberForDisplay, formatRateWithNotation, parseDurationToHours, parseNumberInput, standardizeNotation } from '../../utils/tracker-math';
-import { trimDisplayTimeSeconds } from './handlers/upload-helpers';
 import type { RunSummaryView } from './types';
 
 function safeNumber(value?: string) {

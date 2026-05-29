@@ -1,30 +1,22 @@
 import * as Discord from 'discord.js';
-import { canonicalizeRunDataForOutput, canonicalizeTrackerRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeTrackerRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import {
-  extractTrackerImageText,
-  preprocessTrackerImageForOcr,
 } from '@tmrxjd/platform/node';
-import {
-  ActionRowBuilder,
-  Attachment,
-  ButtonBuilder,
-  ButtonStyle,
-  Colors,
-  ComponentType,
-  EmbedBuilder,
-  ModalBuilder,
+import type {
   MessageComponentInteraction,
   ModalSubmitInteraction,
-  TextInputBuilder,
-  TextInputStyle,
   StringSelectMenuBuilder,
+} from 'discord.js';
+import {
+  ActionRowBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } from 'discord.js';
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { handleError, logError } from './error-handlers';
 import { logger } from '../../../core/logger';
 import {
-  formatOCRExtraction,
-  getDecimalForLanguage,
   extractDateTimeFromImage,
   applyTierMetadata,
   parseTierString,
@@ -43,18 +35,13 @@ import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import type { TrackerUiMode } from '../../../config/tracker-ui-config';
 import {
   createLoadingEmbed,
-  createUploadEmbed,
-  createCancelButton,
-  createErrorEmbed,
-  createErrorRecoveryButtons,
   createInitialEmbed,
   createMainMenuButtons,
 } from '../ui/tracker-ui';
-import { createPendingRun, getPendingRun, updatePendingRun } from '../pending-run-store';
+import { createPendingRun } from '../pending-run-store';
 import { renderDataReview, renderEditFieldPicker } from './data-review-handlers';
-import { buildRunSummaryEmbed } from '../track-presenter';
-import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
-import { TRACKER_IDS, withToken } from '../track-custom-ids';
+import { standardizeNotation } from '../../../utils/tracker-math';
+import { TRACKER_IDS } from '../track-custom-ids';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { createManualHandlers } from './manual-handlers';
 import { getTrackerFlowMode, getTrackerInitialRunType } from '../flow-mode-store';
@@ -79,6 +66,50 @@ type RunDataLike = LooseRecord & {
     time?: unknown;
   };
 };
+
+export function applyDetectedDuplicateReference(
+  runData: RunDataLike,
+  duplicateCheck: { duplicateRunId?: unknown; duplicateLocalId?: unknown },
+): RunDataLike {
+  const resolvedReference = buildTrackerResolvedRunReference({
+    localId: runData.localId,
+    fallbackLocalId: duplicateCheck.duplicateLocalId,
+    runId: runData.runId,
+    fallbackRunId: duplicateCheck.duplicateRunId,
+  });
+
+  return {
+    ...runData,
+    ...(resolvedReference.runId ? { runId: resolvedReference.runId } : {}),
+    ...(resolvedReference.localId ? { localId: resolvedReference.localId } : {}),
+  };
+}
+
+export function buildUploadSummarySignature(input: {
+  lastRun?: Record<string, unknown> | null;
+  allRuns?: unknown[];
+  runTypeCounts?: Record<string, number>;
+} | null | undefined): string {
+  const lastRun = input?.lastRun ?? null;
+  const lastRunReference = lastRun
+    ? buildTrackerResolvedRunReference({
+        runId: lastRun.runId,
+        fallbackRunId: lastRun.id,
+        localId: lastRun.localId,
+      })
+    : { runId: null, localId: null };
+
+  return JSON.stringify({
+    totalRuns: Array.isArray(input?.allRuns) ? input.allRuns.length : 0,
+    runTypeCounts: input?.runTypeCounts ?? {},
+    lastRunId: lastRunReference.runId,
+    lastRunUpdatedAt: lastRun ? (lastRun.updatedAt ?? lastRun.createdAt ?? null) : null,
+    lastRunDate: lastRun ? (lastRun.date ?? lastRun.runDate ?? null) : null,
+    lastRunTime: lastRun ? (lastRun.time ?? lastRun.runTime ?? null) : null,
+    lastRunTier: lastRun ? (lastRun.tier ?? null) : null,
+    lastRunWave: lastRun ? (lastRun.wave ?? null) : null,
+  });
+}
 
 type AttachmentLike = {
   url: string;
@@ -149,11 +180,6 @@ function toRecord(value: unknown): LooseRecord {
 
 function toRunDataLike(value: unknown): RunDataLike {
   return toRecord(value) as RunDataLike;
-}
-
-function getRunDataFromParsedResponse(parsed: unknown): RunDataLike {
-  const parsedRecord = toRunDataLike(parsed);
-  return toRunDataLike(parsedRecord.runData ?? parsedRecord);
 }
 
 function findByCustomIdDeep(node: unknown, id: string, seen = new Set<unknown>()): ModalLookup | null {
@@ -280,7 +306,7 @@ function applyAutoTournament(processedData: RunDataLike, rawTierCandidates: unkn
 
 async function createPendingRunWithMetadata(params: { userId: string; username: string; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null; defaultRunType?: string | null }) {
   const { userId, username, runData, screenshot, canonicalRunData } = params;
-  const hydratedRunData = { ...runData };
+  let hydratedRunData = { ...runData };
   const rawParseFields = hydratedRunData.rawParseFields && typeof hydratedRunData.rawParseFields === 'object' && !Array.isArray(hydratedRunData.rawParseFields)
     ? { ...(hydratedRunData.rawParseFields as Record<string, unknown>) }
     : null;
@@ -298,8 +324,7 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
       const duplicateCheck = findPotentialDuplicateRun(hydratedRunData, localRuns);
       if (duplicateCheck.isDuplicate) {
         isDuplicate = true;
-        if (duplicateCheck.duplicateRunId && !hydratedRunData.runId) hydratedRunData.runId = duplicateCheck.duplicateRunId;
-        if (duplicateCheck.duplicateLocalId && !hydratedRunData.localId) hydratedRunData.localId = duplicateCheck.duplicateLocalId;
+        hydratedRunData = applyDetectedDuplicateReference(hydratedRunData, duplicateCheck);
       }
     }
   } catch {
@@ -444,7 +469,7 @@ async function verifyScreenshotMatchesPastedRun(
   });
 }
 
-async function robustProcessImage({ interaction, imageBuffer, filename, contentType, attachmentUrl, user, updateReply, scanLanguage = 'English', notes = '' }: {
+async function robustProcessImage({ interaction, imageBuffer, filename, contentType, attachmentUrl, user, updateReply }: {
   interaction: TrackReplyInteractionLike;
   imageBuffer: Buffer;
   filename: string;
@@ -452,12 +477,9 @@ async function robustProcessImage({ interaction, imageBuffer, filename, contentT
   attachmentUrl: string;
   user: TrackReplyInteractionLike['user'];
   updateReply?: (msg: string) => Promise<unknown>;
-  scanLanguage?: string;
-  notes?: string;
 }) {
   let backendError: unknown = null;
   let processedData: RunDataLike | null = null;
-  let extractedData: unknown = null;
   let usedBackend = false;
 
   const isValidData = (data: RunDataLike | null) => {
@@ -601,8 +623,6 @@ export async function handleDirectAttachment(
       attachmentUrl: attachment.url,
       user: interaction.user,
       updateReply: (msg: string) => interaction.editReply({ embeds: [createLoadingEmbed(msg)], components: [] }).catch(() => {}),
-      scanLanguage: 'English',
-      notes: preNote ?? '',
     });
 
     if (!result) {
@@ -785,11 +805,14 @@ export async function handleUploadFlow(interaction: MessageComponentInteraction 
  * (highest numeric `createdAt` among runs that have a `runId`).
  * Falls back to null when no cloud-sourced runs exist in the local store.
  */
-function pickLastAppwriteUploadedRun(allRuns: Record<string, unknown>[]): Record<string, unknown> | null {
+export function pickLastAppwriteUploadedRun(allRuns: Record<string, unknown>[]): Record<string, unknown> | null {
   let best: Record<string, unknown> | null = null;
   let bestTs = -Infinity;
   for (const run of allRuns) {
-    const runId = typeof run.runId === 'string' ? run.runId.trim() : '';
+    const runId = buildTrackerResolvedRunReference({
+      runId: run.runId,
+      fallbackRunId: run.id,
+    }).runId;
     if (!runId) continue; // local-only runs (not yet uploaded) — skip
     const ts = typeof run.createdAt === 'number' ? run.createdAt : 0;
     if (ts > bestTs) {
@@ -818,21 +841,6 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
         })()
       : await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
 
-    const summarySignature = (input: { lastRun?: Record<string, unknown> | null; allRuns?: unknown[]; runTypeCounts?: Record<string, number> } | null | undefined): string => {
-      const lastRun = input?.lastRun ?? null;
-      return JSON.stringify({
-        totalRuns: Array.isArray(input?.allRuns) ? input!.allRuns!.length : 0,
-        runTypeCounts: input?.runTypeCounts ?? {},
-        lastRunId: lastRun ? (lastRun.runId ?? lastRun.id ?? null) : null,
-        lastRunUpdatedAt: lastRun ? (lastRun.updatedAt ?? lastRun.createdAt ?? null) : null,
-        lastRunDate: lastRun ? (lastRun.date ?? lastRun.runDate ?? null) : null,
-        lastRunTime: lastRun ? (lastRun.time ?? lastRun.runTime ?? null) : null,
-        lastRunTier: lastRun ? (lastRun.tier ?? null) : null,
-        lastRunWave: lastRun ? (lastRun.wave ?? null) : null,
-      });
-    };
-
-    const initialSignature = summarySignature(summary);
     const sharedSettings = await getEffectiveUserSharedSettings(userId);
     const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
     const lastRunType = typeof summary?.lastRun?.type === 'string' && summary.lastRun.type.trim() ? summary.lastRun.type : 'Farming';
@@ -933,7 +941,10 @@ export async function handleTrackMenuEditLast(interaction: MessageComponentInter
         return;
       }
 
-      const entryId = typeof latest.$id === 'string' ? latest.$id : (typeof latest.id === 'string' ? latest.id : undefined);
+      const entryId = buildTrackerDocumentEntryReference({
+        documentId: latest.$id,
+        fallbackDocumentId: latest.id,
+      }).entryId ?? undefined;
       const pending = await createPendingRunWithMetadata({
         userId: interaction.user.id,
         username: interaction.user.username,

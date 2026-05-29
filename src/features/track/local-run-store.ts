@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { buildTrackerRunFingerprint, canonicalizeTrackerRunData, computeExponentialBackoffMs } from '@tmrxjd/platform/tools';
+import { promises as fs } from 'node:fs';
+import { applyRetryFailureState, buildTrackerQueuedRunReferenceIdentity, buildTrackerRunFingerprint, canonicalizeTrackerRunData, createRetryScheduleState, enqueueUniqueItemsByKey, parseRetryScheduleState, replaceOrInsertMatchingItem, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
 import { trackerStoredSettingsSchema, type TrackerSettings } from './types';
 import { logger } from '../../core/logger';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
@@ -161,10 +162,12 @@ function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
   const userId = typeof record.userId === 'string' && record.userId.trim().length > 0 ? record.userId : null;
   const username = typeof record.username === 'string' && record.username.trim().length > 0 ? record.username : null;
   const createdAt = Number.isFinite(Number(record.createdAt)) ? Number(record.createdAt) : null;
-  const retryCount = Number.isFinite(Number(record.retryCount)) ? Number(record.retryCount) : null;
-  const nextRetryAt = Number.isFinite(Number(record.nextRetryAt)) ? Number(record.nextRetryAt) : undefined;
+  const retryState = parseRetryScheduleState({
+    attemptCount: record.retryCount,
+    nextRetryAt: record.nextRetryAt,
+  });
 
-  if (!userId || !username || createdAt === null || retryCount === null) {
+  if (!userId || !username || createdAt === null) {
     return null;
   }
 
@@ -183,8 +186,8 @@ function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
       settingsData: settingsData.data,
       settingsUpdatedAt,
       createdAt,
-      retryCount,
-      nextRetryAt,
+      retryCount: retryState.attemptCount,
+      nextRetryAt: retryState.nextRetryAt,
       lastError: typeof record.lastError === 'string' && record.lastError.length > 0 ? record.lastError : undefined,
     };
   }
@@ -213,8 +216,8 @@ function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
         }
       : null,
     createdAt,
-    retryCount,
-    nextRetryAt,
+    retryCount: retryState.attemptCount,
+    nextRetryAt: retryState.nextRetryAt,
     lastError: typeof record.lastError === 'string' && record.lastError.length > 0 ? record.lastError : undefined,
   };
 }
@@ -248,6 +251,23 @@ async function ensureLoaded() {
 async function persist() {
   if (!cache) return;
   await setTrackerKv(STORE_KEY, cache);
+}
+
+function pickQueueScreenshotTempPath(item: CloudQueueItem | null | undefined): string | null {
+  const tempPath = item?.screenshot?.tempPath;
+  return typeof tempPath === 'string' && tempPath.trim().length > 0 ? tempPath : null;
+}
+
+async function cleanupSupersededQueuedScreenshot(item: CloudQueueItem | null | undefined, nextTempPath?: string | null): Promise<void> {
+  const existingTempPath = pickQueueScreenshotTempPath(item);
+  if (!existingTempPath) return;
+  if (nextTempPath && existingTempPath === nextTempPath) return;
+
+  try {
+    await fs.unlink(existingTempPath);
+  } catch {
+    // Ignore missing temp files; queue replacement should not fail on cleanup.
+  }
 }
 
 function getOrCreateUser(userId: string): LocalUserBucket {
@@ -450,35 +470,79 @@ export async function queueCloudUpsert(input: {
   await ensureLoaded();
   const normalizedRunData = canonicalizeTrackerRunData(input.runData ?? {});
   const normalizedCanonicalRunData = input.canonicalRunData ? canonicalizeTrackerRunData(input.canonicalRunData) : undefined;
-  cache!.queue.push({
-    id: randomUUID(),
-    op: 'upsert',
-    userId: input.userId,
-    username: input.username,
+  const targetReference = buildTrackerQueuedRunReferenceIdentity({
     localId: input.localId,
-    runId: typeof normalizedRunData.runId === 'string' ? normalizedRunData.runId : undefined,
     runData: normalizedRunData,
-    canonicalRunData: normalizedCanonicalRunData,
-    screenshot: input.screenshot ?? null,
-    createdAt: Date.now(),
-    retryCount: 0,
-    nextRetryAt: Date.now(),
   });
+  const targetLocalId = targetReference.localId ?? undefined;
+  const targetRunId = targetReference.runId ?? undefined;
+  const nextScreenshotTempPath = typeof input.screenshot?.tempPath === 'string' && input.screenshot.tempPath.trim().length > 0
+    ? input.screenshot.tempPath.trim()
+    : null;
+  if (targetRunId) {
+    cache!.queue = cache!.queue.filter(item => !(item.op === 'delete' && item.userId === input.userId && item.runId === targetRunId));
+  }
+  const retryState = createRetryScheduleState();
+  const nextQueue = replaceOrInsertMatchingItem({
+    existingItems: cache!.queue,
+    matchesExisting: item => {
+      if (item.op !== 'upsert' || item.userId !== input.userId) return false;
+      return trackerRunReferencesSameEntry({
+        left: {
+          localId: targetReference.localId,
+          runId: targetReference.runId,
+        },
+        right: buildTrackerQueuedRunReferenceIdentity(item),
+      });
+    },
+    buildItem: previousItem => ({
+      id: previousItem?.id ?? randomUUID(),
+      op: 'upsert' as const,
+      userId: input.userId,
+      username: input.username,
+      localId: targetLocalId,
+      runId: targetRunId,
+      runData: normalizedRunData,
+      canonicalRunData: normalizedCanonicalRunData,
+      screenshot: input.screenshot ?? null,
+      createdAt: previousItem?.createdAt ?? Date.now(),
+      retryCount: retryState.attemptCount,
+      nextRetryAt: retryState.nextRetryAt,
+      lastError: undefined,
+    }),
+  });
+
+  if (nextQueue.previousItem) {
+    await cleanupSupersededQueuedScreenshot(nextQueue.previousItem, nextScreenshotTempPath);
+  }
+
+  cache!.queue = nextQueue.items;
   await persist();
 }
 
 export async function queueCloudDelete(input: { userId: string; username: string; runId: string }) {
   await ensureLoaded();
-  cache!.queue.push({
-    id: randomUUID(),
-    op: 'delete',
-    userId: input.userId,
-    username: input.username,
-    runId: input.runId,
-    createdAt: Date.now(),
-    retryCount: 0,
-    nextRetryAt: Date.now(),
+  const retryState = createRetryScheduleState();
+  const nextQueue = enqueueUniqueItemsByKey({
+    existingItems: cache!.queue,
+    incomingItems: [{
+      id: randomUUID(),
+      op: 'delete' as const,
+      userId: input.userId,
+      username: input.username,
+      runId: input.runId,
+      createdAt: Date.now(),
+      retryCount: retryState.attemptCount,
+      nextRetryAt: retryState.nextRetryAt,
+    }],
+    getKey: item => item.op === 'delete' ? `delete:${item.userId}:${item.runId ?? ''}` : item.id,
   });
+
+  if (!nextQueue.changed) {
+    return;
+  }
+
+  cache!.queue = nextQueue.items;
   await persist();
 }
 
@@ -488,29 +552,29 @@ export async function queueCloudSettings(input: {
   settingsUpdatedAt: number;
 }) {
   await ensureLoaded();
+  const retryState = createRetryScheduleState();
   const parsedSettings = trackerStoredSettingsSchema.parse({
     ...input.settingsData,
     updatedAt: input.settingsUpdatedAt,
   });
-  const existingIndex = cache!.queue.findIndex(item => item.op === 'settings' && item.userId === input.userId);
-  const nextItem: CloudQueueItem = {
-    id: existingIndex >= 0 ? cache!.queue[existingIndex].id : randomUUID(),
-    op: 'settings',
-    userId: input.userId,
-    username: input.userId,
-    settingsData: parsedSettings,
-    settingsUpdatedAt: input.settingsUpdatedAt,
-    createdAt: existingIndex >= 0 ? cache!.queue[existingIndex].createdAt : Date.now(),
-    retryCount: 0,
-    nextRetryAt: Date.now() - 1,
-    lastError: undefined,
-  };
+  const nextQueue = replaceOrInsertMatchingItem({
+    existingItems: cache!.queue,
+    matchesExisting: item => item.op === 'settings' && item.userId === input.userId,
+    buildItem: previousItem => ({
+      id: previousItem?.id ?? randomUUID(),
+      op: 'settings' as const,
+      userId: input.userId,
+      username: input.userId,
+      settingsData: parsedSettings,
+      settingsUpdatedAt: input.settingsUpdatedAt,
+      createdAt: previousItem?.createdAt ?? Date.now(),
+      retryCount: retryState.attemptCount,
+      nextRetryAt: Date.now() - 1,
+      lastError: undefined,
+    }),
+  });
 
-  if (existingIndex >= 0) {
-    cache!.queue[existingIndex] = nextItem;
-  } else {
-    cache!.queue.push(nextItem);
-  }
+  cache!.queue = nextQueue.items;
 
   await persist();
 }
@@ -531,9 +595,16 @@ export async function markQueueItemFailed(id: string, error: string) {
   await ensureLoaded();
   const idx = cache!.queue.findIndex(item => item.id === id);
   if (idx < 0) return;
-  cache!.queue[idx].retryCount += 1;
-  cache!.queue[idx].nextRetryAt = Date.now() + computeExponentialBackoffMs({ attemptCount: cache!.queue[idx].retryCount });
-  cache!.queue[idx].lastError = error;
+  cache!.queue[idx] = applyRetryFailureState({
+    item: cache!.queue[idx],
+    getAttemptCount: item => item.retryCount,
+    updateItem: (item, retryState) => ({
+      ...item,
+      retryCount: retryState.attemptCount,
+      nextRetryAt: retryState.nextRetryAt,
+      lastError: error,
+    }),
+  });
   await persist();
 }
 
@@ -556,16 +627,28 @@ export async function removeQueueItem(id: string) {
   await persist();
 }
 
-export async function removeLocalRun(userId: string, runIdentifier: string) {
+export async function removeLocalRun(userId: string, input: { runId?: string | null; localId?: string | null } | string) {
   await ensureLoaded();
   const bucket = getOrCreateUser(userId);
-  const target = String(runIdentifier || '').trim();
-  if (!target) return;
+  const targetReference = typeof input === 'string'
+    ? {
+        runId: String(input || '').trim() || undefined,
+        localId: String(input || '').trim() || undefined,
+      }
+    : {
+        runId: typeof input.runId === 'string' && input.runId.trim().length > 0 ? input.runId.trim() : undefined,
+        localId: typeof input.localId === 'string' && input.localId.trim().length > 0 ? input.localId.trim() : undefined,
+      };
+  if (!targetReference.runId && !targetReference.localId) return;
   const before = bucket.runs.length;
   bucket.runs = bucket.runs.filter((run) => {
-    const runId = String(run.runId || '').trim();
-    const localId = String(run.localId || '').trim();
-    return runId !== target && localId !== target;
+    return !trackerRunReferencesSameEntry({
+      left: targetReference,
+      right: {
+        runId: typeof run.runId === 'string' && run.runId.trim().length > 0 ? run.runId.trim() : undefined,
+        localId: typeof run.localId === 'string' && run.localId.trim().length > 0 ? run.localId.trim() : undefined,
+      },
+    });
   });
   if (bucket.runs.length !== before) await persist();
 }

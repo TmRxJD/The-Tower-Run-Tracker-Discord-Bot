@@ -1,5 +1,5 @@
 import { Events } from 'discord.js';
-import { TrackerBotClient } from '../core/tracker-bot-client';
+import type { TrackerBotClient } from '../core/tracker-bot-client';
 import { logger } from '../core/logger';
 
 export function registerEvents(client: TrackerBotClient) {

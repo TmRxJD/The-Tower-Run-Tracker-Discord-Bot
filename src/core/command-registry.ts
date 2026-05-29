@@ -22,7 +22,7 @@ export class CommandRegistry {
     return this.get(name);
   }
 
-  getContextMenu(_name: string) {
+  getContextMenu() {
     return undefined;
   }
 

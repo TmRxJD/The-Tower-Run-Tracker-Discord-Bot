@@ -2,22 +2,23 @@ import { ID, Permission, Query, Role } from 'node-appwrite';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import {
+  buildTrackerRunIdentityContext,
+  buildTrackerQueuedRunReferenceIdentity,
+  buildTrackerResolvedRunReference,
+  collectTrackerStaleCloudBackedLocalRunReferences,
   buildTrackerLeaderboardRankedMetricRows,
   buildTrackerLeaderboardPayload,
   buildTrackerLeaderboardCloudDocument,
   buildTrackerLifetimeCloudWritePayload,
-  buildTrackerRunCloudWritePayload,
   buildTrackerRunMainDocumentPayload,
   TRACKER_RUN_EXTENDED_FIELDS,
-  buildTrackerRunLookupUserIds,
-  TRACKER_RUN_MAIN_COLLECTION_META_FIELDS,
-  TRACKER_RUN_MAIN_COLLECTION_OPTIONAL_FIELDS,
-  buildTrackerRunPermissionUserIds,
   createOrUpdateCloudDocumentWithFallback,
   collectTrackerRunScalarFields,
   createOrUpdateCloudDocument,
-  deleteCloudDocumentIfExists,
+  deleteTrackerRunCloudDocuments,
+  deleteTrackerRunExtendedDocument,
   estimateTrackerRunTimestamp,
+  settleRetryQueueItems,
   extractOcrTextLines,
   extractTrackerLeaderboardCompatibilityCandidates,
   extractTrackerRunCoverageData,
@@ -33,18 +34,20 @@ import {
   normalizeTrackerRunMetricValue,
   normalizeTrackerRunTextValue,
   normalizeTrackerRunType,
-  parseTrackerLifetimeCloudWrite,
-  pickTrackerRunField,
+  parseTrackerRunCollectionTarget,
+  parseTrackerRunDeleteTarget,
+  parseTrackerRunExtendedDocumentRecord,
+  parseTrackerRunExtendedMutationTarget,
   compareTrackerVerificationSnapshots,
   createTrackerVerificationSnapshot,
+  extractTrackerAppwriteUserIdFromJwt,
   isTrackerAppwriteUserId,
   isTrackerCloudAddressableUserId,
-  sanitizeTrackerRunCloudPayload,
   sanitizeTrackerLeaderboardDocumentId,
   stripUndefinedFields,
   syncTrackerRunExtendedDocument,
-  TRACKER_RUN_OPTIONAL_STRING_FIELDS,
   trackerLeaderboardCanonicalMetrics,
+  trackerRunReferencesSameEntry,
   trackerRunsShareDuplicateIdentity,
   trackerLifetimeCloudDocumentSchema,
   trackerRunCloudDocumentSchema,
@@ -73,7 +76,7 @@ import {
   mergeLifetimeEntriesDelta,
   sortLifetimeEntriesByTimestamp,
 } from './shared/tracker-parity-core';
-import { canonicalizeTrackerRunData, serializeTrackerRunForCloudAttributes } from './shared/run-data-normalization';
+import { canonicalizeTrackerRunData } from './shared/run-data-normalization';
 import {
   getLocalLifetime,
   getLocalRuns,
@@ -178,29 +181,25 @@ async function getRunCloudIdentity(userId: string): Promise<{
 }> {
   const normalized = userId.trim();
   const resolvedAppwriteId = await resolveAppwriteIdForDiscordUser(normalized);
+  const jwtAppwriteUserId = extractTrackerAppwriteUserIdFromJwt(process.env.APPWRITE_JWT);
 
   // Appwrite account ID is the canonical userId for all run documents.
   // It is provider-agnostic: Discord, Google, or any future OAuth provider all
   // resolve to the same stable Appwrite account ID via listIdentities.
   // Fall back to the input value only when resolution is unavailable (e.g. a
   // test account with no linked OAuth identity).
-  const ownerUserId =
-    resolvedAppwriteId
-    ?? (isTrackerAppwriteUserId(normalized) ? normalized : null)
-    ?? normalized;
+  const identity = buildTrackerRunIdentityContext({
+    appwriteUserId: resolvedAppwriteId ?? (isTrackerAppwriteUserId(normalized) ? normalized : null),
+    permissionAppwriteUserId: resolvedAppwriteId ?? jwtAppwriteUserId ?? (isTrackerAppwriteUserId(normalized) ? normalized : null),
+    discordUserId: normalized,
+    extraUserIds: [normalized, resolvedAppwriteId],
+  });
+  const ownerUserId = identity.ownerUserId ?? normalized;
 
   return {
     ownerUserId,
-    lookupUserIds: buildTrackerRunLookupUserIds({
-      ownerUserId,
-      appwriteUserId: resolvedAppwriteId,
-      // Include the raw input (Discord snowflake) so legacy runs stored under
-      // the Discord snowflake are still found during the migration window.
-      extraUserIds: [normalized, resolvedAppwriteId],
-    }),
-    permissionUserIds: buildTrackerRunPermissionUserIds({
-      appwriteUserId: resolvedAppwriteId,
-    }),
+    lookupUserIds: identity.lookupUserIds,
+    permissionUserIds: identity.permissionUserIds,
   };
 }
 
@@ -210,7 +209,40 @@ function canUseCloudForUserId(userId: string, operation: string): boolean {
   return false;
 }
 
-export async function shouldShowMigrationNoticeForUser(userId: string): Promise<boolean> {
+async function resolveCloudOperationUserId(userId: string, operation: string): Promise<string | null> {
+  const normalizedUserId = userId.trim();
+  if (!normalizedUserId) {
+    logger.warn(`Skipping cloud ${operation}: missing cloud-addressable user ID`, { userId });
+    return null;
+  }
+
+  if (isTrackerCloudAddressableUserId(normalizedUserId)) {
+    return normalizedUserId;
+  }
+
+  try {
+    const { ownerUserId, lookupUserIds } = await getRunCloudIdentity(normalizedUserId);
+    if (isTrackerCloudAddressableUserId(ownerUserId)) {
+      return ownerUserId;
+    }
+
+    const fallbackUserId = lookupUserIds.find(candidate => isTrackerCloudAddressableUserId(candidate));
+    if (fallbackUserId) {
+      return fallbackUserId;
+    }
+  } catch (error) {
+    logger.warn(`Skipping cloud ${operation}: unable to resolve cloud identity`, {
+      userId: normalizedUserId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+
+  logger.warn(`Skipping cloud ${operation}: missing cloud-addressable user ID`, { userId: normalizedUserId });
+  return null;
+}
+
+export async function shouldShowMigrationNoticeForUser(): Promise<boolean> {
   return false;
 }
 
@@ -322,15 +354,31 @@ export async function runOCR(file: AttachmentPayload) {
 
 function appwriteIds() {
   const cfg = getAppConfig();
+  const runsTarget = parseTrackerRunCollectionTarget({
+    databaseId: cfg.appwrite.runsDatabaseId,
+    collectionId: cfg.appwrite.runsCollectionId,
+  });
+  const settingsTarget = parseTrackerRunCollectionTarget({
+    databaseId: cfg.appwrite.settingsDatabaseId,
+    collectionId: cfg.appwrite.settingsCollectionId,
+  });
+  const lifetimeTarget = parseTrackerRunCollectionTarget({
+    databaseId: cfg.appwrite.lifetimeDatabaseId,
+    collectionId: cfg.appwrite.lifetimeCollectionId,
+  });
+  const leaderboardTarget = parseTrackerRunCollectionTarget({
+    databaseId: cfg.appwrite.leaderboardDatabaseId,
+    collectionId: cfg.appwrite.leaderboardCollectionId,
+  });
   return {
-    runsDatabaseId: cfg.appwrite.runsDatabaseId,
-    runsCollectionId: cfg.appwrite.runsCollectionId,
-    settingsDatabaseId: cfg.appwrite.settingsDatabaseId,
-    settingsCollectionId: cfg.appwrite.settingsCollectionId,
-    lifetimeDatabaseId: cfg.appwrite.lifetimeDatabaseId,
-    lifetimeCollectionId: cfg.appwrite.lifetimeCollectionId,
-    leaderboardDatabaseId: cfg.appwrite.leaderboardDatabaseId,
-    leaderboardCollectionId: cfg.appwrite.leaderboardCollectionId,
+    runsDatabaseId: runsTarget.databaseId,
+    runsCollectionId: runsTarget.collectionId,
+    settingsDatabaseId: settingsTarget.databaseId,
+    settingsCollectionId: settingsTarget.collectionId,
+    lifetimeDatabaseId: lifetimeTarget.databaseId,
+    lifetimeCollectionId: lifetimeTarget.collectionId,
+    leaderboardDatabaseId: leaderboardTarget.databaseId,
+    leaderboardCollectionId: leaderboardTarget.collectionId,
   };
 }
 
@@ -376,6 +424,22 @@ function pickString(value: unknown): string | undefined {
   if (value === null || value === undefined) return undefined;
   const str = String(value).trim();
   return str.length ? str : undefined;
+}
+
+function formatTrackerCloudError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+    };
+  }
+
+  const typed = error as { code?: unknown; type?: unknown; message?: unknown };
+  return {
+    code: typed?.code,
+    type: typed?.type,
+    message: typed?.message,
+  };
 }
 
 function forceWebDefaultTrackerPatch(settings: Record<string, unknown>): Record<string, unknown> {
@@ -471,7 +535,7 @@ function isCollectionNotFoundError(error: unknown): boolean {
 }
 
 function shouldIgnoreExtendedRunCollectionError(error: unknown): boolean {
-  return isCollectionNotFoundError(error) || isUnauthorizedAppwriteError(error);
+  return isCollectionNotFoundError(error);
 }
 
 function pickExtendedRunDocumentFields(raw: Record<string, unknown>): Record<string, unknown> {
@@ -507,21 +571,38 @@ async function listExtendedRunDocumentsForUser(userId: string): Promise<RunRecor
   const { databases } = createAppwriteClient();
   const { runsDatabaseId } = appwriteIds();
   const { lookupUserIds } = await getRunCloudIdentity(userId);
+  const extendedTarget = parseTrackerRunCollectionTarget({
+    databaseId: runsDatabaseId,
+    collectionId: RUNS_EXTENDED_COLLECTION_ID,
+  });
 
   try {
+    logger.debug('Listing tracker extended run documents', {
+      userId,
+      databaseId: extendedTarget.databaseId,
+      collectionId: extendedTarget.collectionId,
+      lookupUserIds,
+    });
     // Fetch all lookupUser extended docs in parallel instead of sequentially
     const perUserResults = await Promise.all(lookupUserIds.map(async (candidateUserId) => {
       const docs: RunRecord[] = [];
+      let droppedInvalidDocuments = 0;
       let cursorAfter: string | null = null;
 
       while (true) {
-        const page: { documents?: unknown[] } = await databases.listDocuments(runsDatabaseId, RUNS_EXTENDED_COLLECTION_ID, [
+        const page: { documents?: unknown[] } = await databases.listDocuments(extendedTarget.databaseId, extendedTarget.collectionId, [
           Query.equal('userId', candidateUserId),
           Query.limit(RUN_DOCUMENTS_PAGE_SIZE),
           ...(cursorAfter ? [Query.cursorAfter(cursorAfter)] : []),
         ]);
 
-        const pageDocuments: RunRecord[] = Array.isArray(page.documents) ? page.documents as RunRecord[] : [];
+        const pageDocuments = (Array.isArray(page.documents) ? page.documents : [])
+          .map(document => parseTrackerRunExtendedDocumentRecord(document))
+          .filter((document): document is RunRecord => {
+            if (document) return true;
+            droppedInvalidDocuments += 1;
+            return false;
+          });
         if (!pageDocuments.length) break;
 
         docs.push(...pageDocuments);
@@ -531,18 +612,43 @@ async function listExtendedRunDocumentsForUser(userId: string): Promise<RunRecor
         if (!lastId || pageDocuments.length < RUN_DOCUMENTS_PAGE_SIZE) break;
         cursorAfter = lastId;
       }
+
+      if (droppedInvalidDocuments > 0) {
+        logger.warn('Dropped malformed tracker extended run documents', {
+          userId,
+          candidateUserId,
+          databaseId: extendedTarget.databaseId,
+          collectionId: extendedTarget.collectionId,
+          droppedInvalidDocuments,
+        });
+      }
       return docs;
     }));
 
-    return perUserResults.flat();
+    const documents = perUserResults.flat();
+    logger.debug('Listed tracker extended run documents', {
+      userId,
+      databaseId: extendedTarget.databaseId,
+      collectionId: extendedTarget.collectionId,
+      documentCount: documents.length,
+    });
+    return documents;
   } catch (error) {
     if (shouldIgnoreExtendedRunCollectionError(error)) {
       logger.warn('Skipping tracker extended run document read', {
         userId,
+        databaseId: extendedTarget.databaseId,
+        collectionId: extendedTarget.collectionId,
         reason: error instanceof Error ? error.message : 'unavailable',
       });
       return [];
     }
+    logger.warn('Tracker extended run document read failed', {
+      userId,
+      databaseId: extendedTarget.databaseId,
+      collectionId: extendedTarget.collectionId,
+      error: formatTrackerCloudError(error),
+    });
     throw error;
   }
 }
@@ -554,6 +660,12 @@ async function syncExtendedRunDocument(params: {
   run: RunRecord;
   permissionUserIds: string[];
 }): Promise<void> {
+  const extendedTarget = parseTrackerRunExtendedMutationTarget({
+    databaseId: params.runsDatabaseId,
+    collectionId: RUNS_EXTENDED_COLLECTION_ID,
+    runId: params.runId,
+    userId: params.userId,
+  });
   const permissions = params.permissionUserIds.length
     ? params.permissionUserIds.flatMap((permissionUserId) => ([
         Permission.read(Role.user(permissionUserId)),
@@ -563,12 +675,18 @@ async function syncExtendedRunDocument(params: {
     : undefined;
 
   try {
+    logger.debug('Syncing tracker extended run document', {
+      runId: extendedTarget.runId,
+      userId: extendedTarget.userId,
+      databaseId: extendedTarget.databaseId,
+      collectionId: extendedTarget.collectionId,
+    });
     await syncTrackerRunExtendedDocument({
       databases: createAppwriteClient().databases,
-      databaseId: params.runsDatabaseId,
-      collectionId: RUNS_EXTENDED_COLLECTION_ID,
-      runId: params.runId,
-      userId: params.userId,
+      databaseId: extendedTarget.databaseId,
+      collectionId: extendedTarget.collectionId,
+      runId: extendedTarget.runId,
+      userId: extendedTarget.userId,
       run: params.run,
       schemaVersion: RUNS_EXTENDED_SCHEMA_VERSION,
       ...(permissions ? { permissions } : {}),
@@ -577,12 +695,50 @@ async function syncExtendedRunDocument(params: {
   } catch (error) {
     if (shouldIgnoreExtendedRunCollectionError(error)) {
       logger.warn('Skipping tracker extended run document sync', {
-        runId: params.runId,
+        runId: extendedTarget.runId,
+        databaseId: extendedTarget.databaseId,
+        collectionId: extendedTarget.collectionId,
         reason: error instanceof Error ? error.message : 'unavailable',
       });
       return;
     }
+    logger.warn('Tracker extended run document sync failed', {
+      runId: extendedTarget.runId,
+      userId: extendedTarget.userId,
+      databaseId: extendedTarget.databaseId,
+      collectionId: extendedTarget.collectionId,
+      error: formatTrackerCloudError(error),
+    });
     throw error;
+  }
+}
+
+async function cleanupExtendedRunDocumentAfterMainWriteFailure(params: {
+  runsDatabaseId: string;
+  runId: string;
+}): Promise<void> {
+  const extendedTarget = parseTrackerRunExtendedMutationTarget({
+    databaseId: params.runsDatabaseId,
+    collectionId: RUNS_EXTENDED_COLLECTION_ID,
+    runId: params.runId,
+    userId: 'tracker-run-main-write-cleanup',
+  });
+
+  try {
+    await deleteTrackerRunExtendedDocument({
+      databases: createAppwriteClient().databases,
+      databaseId: extendedTarget.databaseId,
+      collectionId: extendedTarget.collectionId,
+      runId: extendedTarget.runId,
+      shouldIgnoreCollectionError: shouldIgnoreExtendedRunCollectionError,
+    });
+  } catch (error) {
+    logger.warn('Tracker extended run cleanup after main write failure failed', {
+      runId: extendedTarget.runId,
+      databaseId: extendedTarget.databaseId,
+      collectionId: extendedTarget.collectionId,
+      error: formatTrackerCloudError(error),
+    });
   }
 }
 
@@ -671,13 +827,24 @@ async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
   const { lookupUserIds } = await getRunCloudIdentity(userId);
+  const mainTarget = parseTrackerRunCollectionTarget({
+    databaseId: runsDatabaseId,
+    collectionId: runsCollectionId,
+  });
+
+  logger.debug('Listing tracker run documents', {
+    userId,
+    databaseId: mainTarget.databaseId,
+    collectionId: mainTarget.collectionId,
+    lookupUserIds,
+  });
 
   // Run base docs and extended docs in parallel — they query different collections
   const [baseDocuments, extendedDocuments] = await Promise.all([
     listCloudDocumentsByUserIds({
       databases,
-      databaseId: runsDatabaseId,
-      collectionId: runsCollectionId,
+      databaseId: mainTarget.databaseId,
+      collectionId: mainTarget.collectionId,
       userIds: lookupUserIds,
       schema: trackerRunCloudDocumentSchema,
       pageSize: 100,
@@ -698,7 +865,17 @@ async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
     listExtendedRunDocumentsForUser(userId),
   ]);
 
-  return mergeRunDocumentsWithExtended(baseDocuments, extendedDocuments);
+  const merged = mergeRunDocumentsWithExtended(baseDocuments, extendedDocuments);
+  logger.info('Listed tracker run documents', {
+    userId,
+    databaseId: mainTarget.databaseId,
+    collectionId: mainTarget.collectionId,
+    baseDocumentCount: baseDocuments.length,
+    extendedDocumentCount: extendedDocuments.length,
+    mergedDocumentCount: merged.length,
+  });
+
+  return merged;
 }
 
 async function findExistingRunDocumentForCandidate(userId: string, candidate: RunRecord): Promise<RunRecord | null> {
@@ -720,6 +897,10 @@ async function writeRunDocument(params: {
   const { databases } = createAppwriteClient();
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
   const { ownerUserId, permissionUserIds } = await getRunCloudIdentity(params.userId);
+  const mainTarget = parseTrackerRunCollectionTarget({
+    databaseId: runsDatabaseId,
+    collectionId: runsCollectionId,
+  });
 
   const resolvedRunId = pickString(params.run.runId)
     ?? pickString(params.run.id)
@@ -744,26 +925,72 @@ async function writeRunDocument(params: {
   const writePayload: Record<string, unknown> = { ...payload };
   const strippedUnsupportedFields: string[] = [];
 
-  for (;;) {
-    try {
-      await createOrUpdateCloudDocument({
-        databases,
-        databaseId: runsDatabaseId,
-        collectionId: runsCollectionId,
-        documentId,
-        data: writePayload,
-        ...(permissions.length ? { permissions } : {}),
-      });
-      break;
-    } catch (error) {
-      const unsupportedAttribute = getUnsupportedAttributeFromInvalidStructureError(error);
-      if (!unsupportedAttribute || !(unsupportedAttribute in writePayload)) {
-        throw error;
-      }
+  logger.info('Writing tracker run document', {
+    userId: params.userId,
+    ownerUserId,
+    documentId,
+    databaseId: mainTarget.databaseId,
+    collectionId: mainTarget.collectionId,
+    hasExistingDoc: Boolean(params.existingDoc),
+  });
 
-      delete writePayload[unsupportedAttribute];
-      strippedUnsupportedFields.push(unsupportedAttribute);
+  const mainWritePromise = (async () => {
+    for (;;) {
+      try {
+        await createOrUpdateCloudDocument({
+          databases,
+          databaseId: mainTarget.databaseId,
+          collectionId: mainTarget.collectionId,
+          documentId,
+          data: writePayload,
+          ...(permissions.length ? { permissions } : {}),
+        });
+        return;
+      } catch (error) {
+        const unsupportedAttribute = getUnsupportedAttributeFromInvalidStructureError(error);
+        if (!unsupportedAttribute || !(unsupportedAttribute in writePayload)) {
+          logger.warn('Tracker run document write failed', {
+            userId: params.userId,
+            ownerUserId,
+            documentId,
+            databaseId: mainTarget.databaseId,
+            collectionId: mainTarget.collectionId,
+            error: formatTrackerCloudError(error),
+          });
+          throw error;
+        }
+
+        delete writePayload[unsupportedAttribute];
+        strippedUnsupportedFields.push(unsupportedAttribute);
+      }
     }
+  })();
+
+  const extendedWritePromise = syncExtendedRunDocument({
+    runsDatabaseId,
+    runId: documentId,
+    userId: ownerUserId,
+    run: params.run,
+    permissionUserIds,
+  });
+
+  const [mainWriteResult, extendedWriteResult] = await Promise.allSettled([
+    mainWritePromise,
+    extendedWritePromise,
+  ]);
+
+  if (mainWriteResult.status === 'rejected') {
+    if (extendedWriteResult.status === 'fulfilled') {
+      await cleanupExtendedRunDocumentAfterMainWriteFailure({
+        runsDatabaseId,
+        runId: documentId,
+      });
+    }
+    throw mainWriteResult.reason;
+  }
+
+  if (extendedWriteResult.status === 'rejected') {
+    throw extendedWriteResult.reason;
   }
 
   if (strippedUnsupportedFields.length > 0) {
@@ -774,15 +1001,16 @@ async function writeRunDocument(params: {
     });
   }
 
-  await syncExtendedRunDocument({
-    runsDatabaseId,
-    runId: documentId,
-    userId: ownerUserId,
-    run: params.run,
-    permissionUserIds,
-  });
-
   return { runId: documentId, screenshotUrl: pickString(payload.screenshotUrl) ?? null };
+}
+
+async function uploadScreenshotForRunWrite(userId: string, screenshot: AttachmentPayload | null | undefined): Promise<string | null> {
+  try {
+    return await uploadScreenshotIfPossible(userId, screenshot);
+  } catch (error) {
+    logger.warn('tracker screenshot upload failed; continuing without screenshot URL', error);
+    return null;
+  }
 }
 
 function buildLocalRunUpsertPayload(runData: RunRecord, canonicalRunData?: RunRecord | null): RunRecord {
@@ -865,7 +1093,7 @@ async function uploadScreenshotIfPossible(userId: string, screenshot: Attachment
   if (!screenshot) return null;
 
   const { storage } = createAppwriteClient();
-  const { runsBucketId } = getAppConfig().appwrite;
+  const { endpoint, projectId, runsBucketId } = getAppConfig().appwrite;
   const safeName = screenshot.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
   const uploadName = `${userId}-${Date.now()}-${safeName}`;
   const file = new File([new Uint8Array(screenshot.data)], uploadName, {
@@ -876,8 +1104,8 @@ async function uploadScreenshotIfPossible(userId: string, screenshot: Attachment
   const uploadedId = pickString(uploaded.$id);
   if (!uploadedId) return null;
 
-  const view = storage.getFileView(runsBucketId, uploadedId);
-  return typeof view === 'string' ? view : String(view);
+  const normalizedEndpoint = endpoint.replace(/\/$/, '');
+  return `${normalizedEndpoint}/storage/buckets/${encodeURIComponent(runsBucketId)}/files/${encodeURIComponent(uploadedId)}/view?project=${encodeURIComponent(projectId)}`;
 }
 
 async function storeQueuedScreenshot(userId: string, screenshot: AttachmentPayload | null | undefined) {
@@ -948,7 +1176,7 @@ async function startDeferredRunCloudSync(params: {
   deferredScreenshotSource?: { url: string; filename?: string | null; contentType?: string | null } | null;
 }): Promise<{ queuedForCloud: boolean; cloudUnavailable: boolean }> {
   const targetLocalId = pickString(params.runData.localId);
-  const targetRunId = pickString(params.runData.runId) ?? pickString(params.runData.id);
+  const targetReference = buildTrackerQueuedRunReferenceIdentity({ runData: params.runData });
 
   try {
     const screenshotPayload = params.screenshot ?? await loadDeferredScreenshotPayload(params.deferredScreenshotSource ?? null);
@@ -968,9 +1196,13 @@ async function startDeferredRunCloudSync(params: {
     const remainingQueueItems = await getQueueItems(params.userId);
     const stillQueued = remainingQueueItems.some(item => {
       if (item.op !== 'upsert') return false;
-      if (targetLocalId && item.localId === targetLocalId) return true;
-      if (targetRunId && item.runId === targetRunId) return true;
-      return false;
+      return trackerRunReferencesSameEntry({
+        left: {
+          localId: targetReference.localId,
+          runId: targetReference.runId,
+        },
+        right: buildTrackerQueuedRunReferenceIdentity(item),
+      });
     });
 
     return {
@@ -1420,40 +1652,56 @@ async function cloudLogRun(params: {
     };
   }
 
-  const screenshotUrl = await uploadScreenshotIfPossible(params.userId, params.screenshot);
-  const nextEntry = buildCloudRunEntry({
-    userId: params.userId,
-    username: params.username,
-    runData: normalizedInput,
-    canonicalRunData: params.canonicalRunData,
-    screenshotUrl,
-    existingEntry: existing,
-  });
+  const screenshotUploadPromise = params.screenshot
+    ? uploadScreenshotForRunWrite(params.userId, params.screenshot)
+    : null;
+  const baseWriteChanged = !existing || hasMaterialTrackerRunEntryChange(existing, nextEntryWithoutScreenshot);
 
-  if (existing && !hasMaterialTrackerRunEntryChange(existing, nextEntry)) {
-    return {
-      ok: true,
-      runId: pickString(existing.id) ?? pickString(existing.runId),
-      screenshotUrl: pickString(existing.screenshotUrl) ?? screenshotUrl ?? null,
-    };
+  let saved = baseWriteChanged
+    ? await writeRunDocument({
+        userId: params.userId,
+        username: params.username,
+        run: nextEntryWithoutScreenshot,
+        existingDoc,
+      })
+    : {
+        runId: pickString(existing?.id) ?? pickString(existing?.runId) ?? pickString(existingDoc?.$id) ?? ID.unique(),
+        screenshotUrl: pickString(existing?.screenshotUrl) ?? null,
+      };
+
+  let finalScreenshotUrl = saved.screenshotUrl ?? null;
+
+  if (screenshotUploadPromise) {
+    const uploadedScreenshotUrl = await screenshotUploadPromise;
+    if (uploadedScreenshotUrl) {
+      const screenshotEntry = buildCloudRunEntry({
+        userId: params.userId,
+        username: params.username,
+        runData: normalizedInput,
+        canonicalRunData: params.canonicalRunData,
+        screenshotUrl: uploadedScreenshotUrl,
+        existingEntry: nextEntryWithoutScreenshot,
+      });
+
+      if (hasMaterialTrackerRunEntryChange(nextEntryWithoutScreenshot, screenshotEntry)) {
+        saved = await writeRunDocument({
+          userId: params.userId,
+          username: params.username,
+          run: screenshotEntry,
+          existingDoc: { $id: saved.runId },
+        });
+      }
+
+      finalScreenshotUrl = saved.screenshotUrl ?? uploadedScreenshotUrl;
+      logger.debug(`Uploaded screenshot for run write (${params.userId})`);
+    }
   }
 
-  const saved = await writeRunDocument({
-    userId: params.userId,
-    username: params.username,
-    run: nextEntry,
-    existingDoc,
-  });
-
-  if (screenshotUrl) {
-    logger.debug(`Uploaded screenshot for run write (${params.userId})`);
-  }
-
-  return { ok: true, runId: saved.runId, screenshotUrl: saved.screenshotUrl ?? screenshotUrl ?? null };
+  return { ok: true, runId: saved.runId, screenshotUrl: finalScreenshotUrl };
 }
 
 async function cloudEditRun(params: { userId: string; username: string; runData: RunRecord; settings?: Record<string, unknown> }) {
-  const targetRunId = pickString(params.runData.runId) ?? pickString(params.runData.id) ?? null;
+  const targetRunId = buildTrackerResolvedRunReference({ runData: params.runData }).runId;
   const existingDoc = targetRunId ? ({ $id: targetRunId } as RunRecord) : null;
   const existing = existingDoc
     ? (hydrateTrackerRunEntryFromDocument(existingDoc, { fallbackId: ID.unique() }) as RunRecord)
@@ -1485,38 +1733,6 @@ async function cloudGetRuns(userId: string) {
     const username = pickString(doc.username) ?? 'unknown';
     return hydrateTrackerCloudRun(doc, userId, username) as TrackerRun;
   });
-}
-
-async function cloudGetLatestRun(userId: string): Promise<TrackerRun | null> {
-  const { databases } = createAppwriteClient();
-  const { runsDatabaseId, runsCollectionId } = appwriteIds();
-  const page = await databases.listDocuments(runsDatabaseId, runsCollectionId, [
-    Query.equal('userId', userId),
-    Query.orderDesc('$createdAt'),
-    Query.limit(1),
-  ]);
-
-  const doc = Array.isArray(page.documents) ? page.documents[0] as RunRecord | undefined : undefined;
-  if (!doc) return null;
-
-  const extended = await getDocumentOrNull(databases, runsDatabaseId, RUNS_EXTENDED_COLLECTION_ID, String(doc.$id ?? '')) as RunRecord | null;
-  const mergedDoc = extended ? { ...doc, ...pickExtendedRunDocumentFields(extended) } : doc;
-
-  const username = pickString(mergedDoc.username) ?? 'unknown';
-  return hydrateTrackerCloudRun(mergedDoc, userId, username) as TrackerRun;
-}
-
-async function hydrateLatestRunFromCloud(userId: string): Promise<boolean> {
-  try {
-    const latest = await cloudGetLatestRun(userId);
-    if (!latest) return false;
-    const mergeResult = await mergeCloudRuns(userId, [latest]);
-    runsHydratedAtByUser.set(userId, Date.now());
-    return mergeResult.added > 0 || mergeResult.updated > 0;
-  } catch (error) {
-    logger.warn('latest run cloud hydration skipped due to error', error);
-    return false;
-  }
 }
 
 /**
@@ -2015,25 +2231,35 @@ async function cloudDeleteRun(userId: string, runId: string) {
   if (!targetId) return false;
 
   const { runsDatabaseId, runsCollectionId } = appwriteIds();
-  await deleteCloudDocumentIfExists({
-    databases: createAppwriteClient().databases,
+  const deleteTarget = parseTrackerRunDeleteTarget({
     databaseId: runsDatabaseId,
-    collectionId: runsCollectionId,
-    documentId: targetId,
+    mainCollectionId: runsCollectionId,
+    extendedCollectionId: RUNS_EXTENDED_COLLECTION_ID,
+    runId: targetId,
+  });
+  logger.info('Deleting tracker run document', {
+    userId,
+    runId: deleteTarget.runId,
+    databaseId: deleteTarget.databaseId,
+    mainCollectionId: deleteTarget.mainCollectionId,
+    extendedCollectionId: deleteTarget.extendedCollectionId,
+  });
+  await deleteTrackerRunCloudDocuments({
+    databases: createAppwriteClient().databases,
+    databaseId: deleteTarget.databaseId,
+    mainCollectionId: deleteTarget.mainCollectionId,
+    extendedCollectionId: deleteTarget.extendedCollectionId,
+    runId: deleteTarget.runId,
+    shouldIgnoreExtendedCollectionError: shouldIgnoreExtendedRunCollectionError,
   });
 
-  try {
-    await deleteCloudDocumentIfExists({
-      databases: createAppwriteClient().databases,
-      databaseId: runsDatabaseId,
-      collectionId: RUNS_EXTENDED_COLLECTION_ID,
-      documentId: targetId,
-    });
-  } catch (error) {
-    if (!shouldIgnoreExtendedRunCollectionError(error)) {
-      throw error;
-    }
-  }
+  logger.info('Deleted tracker run document', {
+    userId,
+    runId: deleteTarget.runId,
+    databaseId: deleteTarget.databaseId,
+    mainCollectionId: deleteTarget.mainCollectionId,
+    extendedCollectionId: deleteTarget.extendedCollectionId,
+  });
 
   return true;
 }
@@ -2042,15 +2268,41 @@ async function pruneResolvedUpsertQueueItems(params: { userId: string; runId?: s
   const targetRunId = pickString(params.runId);
   const targetLocalId = pickString(params.localId);
   if (!targetRunId && !targetLocalId) return;
+  const targetReference = buildTrackerQueuedRunReferenceIdentity({
+    localId: targetLocalId,
+    runId: targetRunId,
+  });
 
   const queueItems = await getQueueItems(params.userId);
   for (const item of queueItems) {
     if (item.op !== 'upsert') continue;
-    const itemLocalId = pickString(item.localId) ?? pickString(item.runData?.localId);
-    const itemRunId = pickString(item.runId) ?? pickString(item.runData?.runId);
-    const localIdMatch = Boolean(targetLocalId && itemLocalId && targetLocalId === itemLocalId);
-    const runIdMatch = Boolean(targetRunId && itemRunId && targetRunId === itemRunId);
-    if (!localIdMatch && !runIdMatch) continue;
+    if (!trackerRunReferencesSameEntry({
+      left: targetReference,
+      right: buildTrackerQueuedRunReferenceIdentity(item),
+    })) continue;
+
+    await cleanupQueuedScreenshot(item.screenshot ?? null);
+    await removeQueueItem(item.id);
+  }
+}
+
+async function pruneQueuedUpsertsShadowedByDeletes(userId: string): Promise<void> {
+  const queueItems = await getQueueItems(userId);
+  if (!queueItems.length) return;
+
+  const deletedRunIds = new Set(
+    queueItems
+      .filter(item => item.op === 'delete')
+      .map(item => pickString(item.runId))
+      .filter((value): value is string => Boolean(value)),
+  );
+
+  if (!deletedRunIds.size) return;
+
+  for (const item of queueItems) {
+    if (item.op !== 'upsert') continue;
+    const itemRunId = buildTrackerQueuedRunReferenceIdentity(item).runId;
+    if (!itemRunId || !deletedRunIds.has(itemRunId)) continue;
 
     await cleanupQueuedScreenshot(item.screenshot ?? null);
     await removeQueueItem(item.id);
@@ -2080,8 +2332,9 @@ async function pruneStaleQueuedUpserts(userId: string): Promise<void> {
   for (const item of queueItems) {
     if (item.op !== 'upsert') continue;
 
-    const itemRunId = pickString(item.runId) ?? pickString(item.runData?.runId);
-    const itemLocalId = pickString(item.localId) ?? pickString(item.runData?.localId);
+    const itemReference = buildTrackerQueuedRunReferenceIdentity(item);
+    const itemRunId = itemReference.runId;
+    const itemLocalId = itemReference.localId;
     const resolvedByRunId = Boolean(itemRunId && runIds.has(itemRunId));
     const resolvedByLocalId = Boolean(itemLocalId && localIdsWithRunId.has(itemLocalId));
 
@@ -2092,77 +2345,170 @@ async function pruneStaleQueuedUpserts(userId: string): Promise<void> {
   }
 }
 
+async function hasLocalRunReference(params: { userId: string; runId?: string | null; localId?: string | null }): Promise<boolean> {
+  const targetRunId = pickString(params.runId);
+  const targetLocalId = pickString(params.localId);
+  if (!targetRunId && !targetLocalId) {
+    return false;
+  }
+
+  const localRuns = await getLocalRuns(params.userId);
+  return localRuns.some(run => trackerRunReferencesSameEntry({
+    left: {
+      runId: targetRunId,
+      localId: targetLocalId,
+    },
+    right: {
+      runId: pickString(run.runId),
+      localId: pickString(run.localId),
+    },
+  }));
+}
+
+async function pruneQueuedUpsertsForDeletedRun(params: { userId: string; runId?: string | null; localId?: string | null }) {
+  const targetRunId = pickString(params.runId)
+  const targetLocalId = pickString(params.localId)
+  if (!targetRunId && !targetLocalId) return
+
+  const queueItems = await getQueueItems(params.userId)
+  for (const item of queueItems) {
+    if (item.op !== 'upsert') continue
+    if (!trackerRunReferencesSameEntry({
+      left: {
+        runId: targetRunId,
+        localId: targetLocalId,
+      },
+      right: buildTrackerQueuedRunReferenceIdentity(item),
+    })) {
+      continue
+    }
+
+    await cleanupQueuedScreenshot(item.screenshot ?? null)
+    await removeQueueItem(item.id)
+  }
+}
+
 async function syncQueuedRuns(userId: string) {
-  if (!canUseCloudForUserId(userId, 'queue replay')) return;
   const settings = await getLocalSettings(userId);
   if (!settings.cloudSyncEnabled) return;
 
+  await pruneQueuedUpsertsShadowedByDeletes(userId);
+
   const queue = await getQueueItems(userId);
+  const hasCloudIdentity = await resolveCloudOperationUserId(userId, 'queue replay');
+  const replayQueue = hasCloudIdentity
+    ? queue
+    : queue.filter(item => item.op === 'delete' && Boolean(item.runId));
+  if (!replayQueue.length) return;
+
   let shouldRefreshLeaderboard = false;
   let latestUsername = 'unknown';
-  for (const item of queue) {
-    if ((item.retryCount ?? 0) >= MAX_QUEUE_RETRY_COUNT) {
-      logger.warn('dropping stale queue item after max retries', {
-        userId: item.userId,
-        queueItemId: item.id,
-        op: item.op,
-        retryCount: item.retryCount,
-      });
-      await cleanupQueuedScreenshot(item.screenshot ?? null);
-      await removeQueueItem(item.id);
-      continue;
-    }
+  const settlement = await settleRetryQueueItems({
+    items: replayQueue,
+    getKey: item => item.id,
+    getAttemptCount: item => item.retryCount,
+    getNextRetryAt: item => item.nextRetryAt,
+    maxRetryCount: MAX_QUEUE_RETRY_COUNT,
+    processReadyItems: async readyItems => {
+      const results: Array<{ key: string; status: 'succeeded' | 'failed'; error?: string }> = [];
+      for (const item of readyItems) {
+        try {
+          if (item.op === 'upsert') {
+            const queuedReference = buildTrackerQueuedRunReferenceIdentity(item);
+            const localRunStillExists = await hasLocalRunReference({
+              userId: item.userId,
+              runId: queuedReference.runId,
+              localId: queuedReference.localId,
+            });
 
-    if (Number.isFinite(Number(item.nextRetryAt)) && Number(item.nextRetryAt) > Date.now()) {
-      continue;
-    }
+            if (!localRunStillExists) {
+              await cleanupQueuedScreenshot(item.screenshot ?? null);
+              results.push({ key: item.id, status: 'succeeded' });
+              continue;
+            }
 
-    try {
-      if (item.op === 'upsert') {
-        latestUsername = item.username || latestUsername;
-        const queuedScreenshot = await loadQueuedScreenshot(item.screenshot ?? null);
-        const res = await cloudLogRun({
-          userId: item.userId,
-          username: item.username,
-          runData: item.runData ?? {},
-          canonicalRunData: item.canonicalRunData ?? undefined,
-          screenshot: queuedScreenshot,
-        });
-        const cloudRunId = (res as { runId?: unknown }).runId;
-        const screenshotUrl = pickString((res as { screenshotUrl?: unknown }).screenshotUrl);
-        if (cloudRunId) {
-          const localRunPayload = buildLocalRunUpsertPayload(item.runData || {}, item.canonicalRunData ?? null);
-          await upsertLocalRun(item.userId, item.username, {
-            ...localRunPayload,
-            runId: String(cloudRunId),
-            screenshotUrl: screenshotUrl ?? localRunPayload.screenshotUrl,
-            localId: item.localId,
-            updatedAt: Date.now(),
+            latestUsername = item.username || latestUsername;
+            const queuedScreenshot = await loadQueuedScreenshot(item.screenshot ?? null);
+            const res = await cloudLogRun({
+              userId: item.userId,
+              username: item.username,
+              runData: item.runData ?? {},
+              canonicalRunData: item.canonicalRunData ?? undefined,
+              screenshot: queuedScreenshot,
+            });
+            const cloudRunId = (res as { runId?: unknown }).runId;
+            const screenshotUrl = pickString((res as { screenshotUrl?: unknown }).screenshotUrl);
+            if (cloudRunId) {
+              const localRunStillExistsAfterCloudWrite = await hasLocalRunReference({
+                userId: item.userId,
+                runId: pickString(cloudRunId) ?? queuedReference.runId,
+                localId: item.localId ?? queuedReference.localId,
+              });
+              if (!localRunStillExistsAfterCloudWrite) {
+                await cloudDeleteRun(item.userId, String(cloudRunId));
+                results.push({ key: item.id, status: 'succeeded' });
+                continue;
+              }
+
+              const localRunPayload = buildLocalRunUpsertPayload(item.runData || {}, item.canonicalRunData ?? null);
+              await upsertLocalRun(item.userId, item.username, {
+                ...localRunPayload,
+                runId: String(cloudRunId),
+                screenshotUrl: screenshotUrl ?? localRunPayload.screenshotUrl,
+                localId: item.localId,
+                updatedAt: Date.now(),
+              });
+              shouldRefreshLeaderboard = true;
+            }
+          } else if (item.op === 'settings') {
+            const localSettingsRecord = await getLocalSettingsRecord(item.userId);
+            const queuedUpdatedAt = Number.isFinite(Number(item.settingsUpdatedAt)) ? Number(item.settingsUpdatedAt) : 0;
+            const localUpdatedAt = Number.isFinite(Number(localSettingsRecord.updatedAt)) ? Number(localSettingsRecord.updatedAt) : 0;
+            const useLocalState = localUpdatedAt >= queuedUpdatedAt;
+            const effectiveUpdatedAt = useLocalState ? localUpdatedAt : queuedUpdatedAt;
+            const effectiveSettings = useLocalState
+              ? localSettingsRecord.state
+              : (item.settingsData ?? localSettingsRecord.state);
+            await cloudEditSettings(item.userId, {
+              ...effectiveSettings,
+              updatedAt: effectiveUpdatedAt,
+            });
+          } else if (item.op === 'delete' && item.runId) {
+            await cloudDeleteRun(item.userId, item.runId);
+            shouldRefreshLeaderboard = true;
+          }
+          results.push({ key: item.id, status: 'succeeded' });
+        } catch (error) {
+          results.push({
+            key: item.id,
+            status: 'failed',
+            error: error instanceof Error ? error.message : 'Cloud sync failed',
           });
-          shouldRefreshLeaderboard = true;
         }
-      } else if (item.op === 'settings') {
-        const localSettingsRecord = await getLocalSettingsRecord(item.userId);
-        const queuedUpdatedAt = Number.isFinite(Number(item.settingsUpdatedAt)) ? Number(item.settingsUpdatedAt) : 0;
-        const localUpdatedAt = Number.isFinite(Number(localSettingsRecord.updatedAt)) ? Number(localSettingsRecord.updatedAt) : 0;
-        const useLocalState = localUpdatedAt >= queuedUpdatedAt;
-        const effectiveUpdatedAt = useLocalState ? localUpdatedAt : queuedUpdatedAt;
-        const effectiveSettings = useLocalState
-          ? localSettingsRecord.state
-          : (item.settingsData ?? localSettingsRecord.state);
-        await cloudEditSettings(item.userId, {
-          ...effectiveSettings,
-          updatedAt: effectiveUpdatedAt,
-        });
-      } else if (item.op === 'delete' && item.runId) {
-        await cloudDeleteRun(item.userId, item.runId);
-        shouldRefreshLeaderboard = true;
       }
-      await cleanupQueuedScreenshot(item.screenshot ?? null);
-      await removeQueueItem(item.id);
-    } catch (error) {
-      await markQueueItemFailed(item.id, error instanceof Error ? error.message : 'Cloud sync failed');
-    }
+      return results;
+    },
+    updateFailedItem: item => item,
+  });
+
+  for (const item of settlement.exhaustedItems) {
+    logger.warn('dropping stale queue item after max retries', {
+      userId: item.userId,
+      queueItemId: item.id,
+      op: item.op,
+      retryCount: item.retryCount,
+    });
+    await cleanupQueuedScreenshot(item.screenshot ?? null);
+    await removeQueueItem(item.id);
+  }
+
+  for (const item of settlement.succeededItems) {
+    await cleanupQueuedScreenshot(item.screenshot ?? null);
+    await removeQueueItem(item.id);
+  }
+
+  for (const failure of settlement.failedItems) {
+    await markQueueItemFailed(failure.item.id, failure.error ?? 'Cloud sync failed');
   }
 
   if (shouldRefreshLeaderboard) {
@@ -2180,6 +2526,27 @@ async function hydrateLocalRunsFromCloud(userId: string, username = 'unknown') {
     const cloudRuns = await cloudGetRuns(userId);
     const hydrated = cloudRuns.map(run => hydrateTrackerCloudRun(run, userId, username) as TrackerRun);
     await mergeCloudRuns(userId, hydrated);
+
+    const cloudRunIds = new Set(
+      hydrated
+        .map(run => buildTrackerResolvedRunReference({ runData: run as RunRecord }).runId)
+        .filter((runId): runId is string => typeof runId === 'string' && runId.trim().length > 0),
+    );
+    const queuedRunIds = new Set(
+      (await getQueueItems(userId))
+        .map(item => pickString(item.runId))
+        .filter((runId): runId is string => typeof runId === 'string' && runId.trim().length > 0),
+    );
+    const staleLocalRuns = collectTrackerStaleCloudBackedLocalRunReferences({
+      localEntries: await getLocalRuns(userId),
+      cloudRunIds,
+      queuedRunIds,
+    })
+
+    for (const staleLocalRun of staleLocalRuns) {
+      await removeLocalRun(userId, { runId: staleLocalRun.runId, localId: staleLocalRun.localId })
+    }
+
     runsHydratedAtByUser.set(userId, Date.now());
   } catch (error) {
     logger.warn('cloud run hydration skipped', error);
@@ -2307,6 +2674,10 @@ export async function logRun(params: {
     type: toCloudType(params.runData?.type),
     updatedAt: Date.now(),
   });
+  const localReference = buildTrackerResolvedRunReference({
+    localId: local.localId,
+    runId: local.runId,
+  });
   if (!settings.cloudSyncEnabled) {
     return {
       ok: true,
@@ -2314,8 +2685,8 @@ export async function logRun(params: {
       cloudUnavailable: false,
       localOnly: true,
       localImageCapacityReached,
-      localId: pickString(local.localId),
-      runId: pickString(local.runId),
+      localId: localReference.localId,
+      runId: localReference.runId,
     };
   }
 
@@ -2326,15 +2697,20 @@ export async function logRun(params: {
       cloudUnavailable: false,
       localOnly: true,
       localImageCapacityReached,
-      localId: pickString(local.localId),
-      runId: pickString(local.runId),
+      localId: localReference.localId,
+      runId: localReference.runId,
     };
   }
 
   if (params.deferCloudSync) {
+    const deferredReference = buildTrackerResolvedRunReference({
+      localId: local.localId,
+      runId: local.runId,
+      runData: params.runData,
+    });
     const deferredRunData = canonicalizeTrackerRunData({
       ...params.runData,
-      localId: pickString(local.localId) ?? pickString(params.runData?.localId) ?? undefined,
+      localId: deferredReference.localId ?? undefined,
     });
 
     return {
@@ -2343,8 +2719,8 @@ export async function logRun(params: {
       cloudUnavailable: false,
       localOnly: false,
       localImageCapacityReached,
-      localId: pickString(local.localId),
-      runId: pickString(local.runId),
+      localId: deferredReference.localId,
+      runId: deferredReference.runId,
       cloudSyncDeferred: true,
       backgroundSync: startDeferredRunCloudSync({
         userId: params.userId,
@@ -2373,7 +2749,10 @@ export async function logRun(params: {
     await pruneResolvedUpsertQueueItems({
       userId: params.userId,
       runId: resolvedRunId,
-      localId: pickString(local.localId) ?? pickString(params.runData?.localId),
+      localId: buildTrackerResolvedRunReference({
+        localId: local.localId,
+        runData: params.runData,
+      }).localId,
     });
     if (!params.skipLeaderboardRefresh) {
       void upsertCloudLeaderboardForUser(params.userId, params.username).catch(error => {
@@ -2385,8 +2764,11 @@ export async function logRun(params: {
       queuedForCloud: false,
       cloudUnavailable: false,
       localImageCapacityReached,
-      localId: pickString(local.localId),
-      runId: resolvedRunId ?? pickString(local.runId),
+      ...buildTrackerResolvedRunReference({
+        localId: local.localId,
+        runId: resolvedRunId,
+        fallbackRunId: local.runId,
+      }),
     };
   } catch (error) {
     const queuedScreenshot = await storeQueuedScreenshot(params.userId, params.screenshot ?? null);
@@ -2405,8 +2787,8 @@ export async function logRun(params: {
       cloudUnavailable: true,
       localOnly: false,
       localImageCapacityReached: false,
-      localId: pickString(local.localId),
-      runId: pickString(local.runId),
+      localId: localReference.localId,
+      runId: localReference.runId,
     };
   }
 }
@@ -2583,13 +2965,22 @@ export async function editRun(params: {
 }) {
   const localRunPayload = buildLocalRunUpsertPayload(params.runData, params.canonicalRunData ?? null);
   const local = await upsertLocalRun(params.userId, params.username, { ...localRunPayload, updatedAt: Date.now() });
+  const localReference = buildTrackerResolvedRunReference({
+    localId: local.localId,
+    runId: local.runId,
+  });
   const settings = await getLocalSettings(params.userId);
-  if (!settings.cloudSyncEnabled) return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: pickString(local.localId), runId: pickString(local.runId) };
-  if (!canUseCloudForUserId(params.userId, 'run edit')) return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: pickString(local.localId), runId: pickString(local.runId) };
+  if (!settings.cloudSyncEnabled) return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: localReference.localId, runId: localReference.runId };
+  if (!canUseCloudForUserId(params.userId, 'run edit')) return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: localReference.localId, runId: localReference.runId };
   if (params.deferCloudSync) {
+    const deferredReference = buildTrackerResolvedRunReference({
+      localId: local.localId,
+      runData: params.runData,
+      fallbackRunId: local.runId,
+    });
     const deferredRunData = canonicalizeTrackerRunData({
       ...params.runData,
-      localId: pickString(local.localId) ?? pickString(params.runData.localId) ?? undefined,
+      localId: deferredReference.localId ?? undefined,
     });
 
     return {
@@ -2597,8 +2988,8 @@ export async function editRun(params: {
       queuedForCloud: false,
       cloudUnavailable: false,
       localOnly: false,
-      localId: pickString(local.localId),
-      runId: pickString(params.runData?.runId) ?? pickString(local.runId),
+      localId: deferredReference.localId,
+      runId: deferredReference.runId,
       cloudSyncDeferred: true,
       backgroundSync: startDeferredRunCloudSync({
         userId: params.userId,
@@ -2610,27 +3001,37 @@ export async function editRun(params: {
   }
   try {
     const ok = await cloudEditRun(params);
+    const runReference = buildTrackerResolvedRunReference({ runData: params.runData });
     await pruneResolvedUpsertQueueItems({
       userId: params.userId,
-      runId: pickString(params.runData?.runId) ?? pickString(params.runData?.id),
-      localId: pickString(params.runData?.localId),
+      runId: runReference.runId,
+      localId: runReference.localId,
     });
     if (!params.skipLeaderboardRefresh) {
       void upsertCloudLeaderboardForUser(params.userId, params.username).catch(error => {
         logger.warn('cloud leaderboard update skipped after run edit', error);
       });
     }
-    return { ok, queuedForCloud: false, cloudUnavailable: false, localId: pickString(local.localId), runId: pickString(params.runData?.runId) ?? pickString(local.runId) };
+    return {
+      ok,
+      queuedForCloud: false,
+      cloudUnavailable: false,
+      ...buildTrackerResolvedRunReference({
+        localId: local.localId,
+        runData: params.runData,
+        fallbackRunId: local.runId,
+      }),
+    };
   } catch (error) {
     await queueCloudUpsert({
       userId: params.userId,
       username: params.username,
       runData: { ...params.runData },
       canonicalRunData: params.canonicalRunData ?? undefined,
-      localId: typeof params.runData.localId === 'string' ? params.runData.localId : undefined,
+      localId: buildTrackerResolvedRunReference({ runData: params.runData }).localId ?? undefined,
     });
     logger.warn('cloud edit run unavailable; queued for retry', error);
-    return { ok: true, queuedForCloud: true, cloudUnavailable: true, localOnly: false, localId: pickString(local.localId), runId: pickString(local.runId) };
+    return { ok: true, queuedForCloud: true, cloudUnavailable: true, localOnly: false, localId: localReference.localId, runId: localReference.runId };
   }
 }
 
@@ -2692,21 +3093,27 @@ export async function removeLastRun(params: { userId: string; runId?: string | n
   const localIdentifier = runId ?? localId;
   if (!localIdentifier) return true;
 
-  await removeLocalRun(params.userId, localIdentifier);
+  await awaitBackgroundRunHydration(params.userId);
+  await removeLocalRun(params.userId, { runId, localId });
+  await pruneQueuedUpsertsForDeletedRun(params);
   const settings = await getLocalSettings(params.userId);
   if (!settings.cloudSyncEnabled) return true;
-  if (!runId) return true;
-  if (!canUseCloudForUserId(params.userId, 'run delete')) return true;
+  if (!runId) {
+    await removeLocalRun(params.userId, { runId, localId });
+    return true;
+  }
   try {
     const ok = await cloudDeleteRun(params.userId, runId);
     if (!ok) throw new Error('cloud delete failed');
     await upsertCloudLeaderboardForUser(params.userId, 'unknown').catch(error => {
       logger.warn('cloud leaderboard update skipped after run delete', error);
     });
+    await removeLocalRun(params.userId, { runId, localId });
     return true;
   } catch (error) {
     await queueCloudDelete({ userId: params.userId, username: 'unknown', runId });
     logger.warn('cloud delete unavailable; queued for retry', error);
+    await removeLocalRun(params.userId, { runId, localId });
     return true;
   }
 }

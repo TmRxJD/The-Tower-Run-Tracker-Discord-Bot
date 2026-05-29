@@ -1,4 +1,5 @@
 import { getTrackerKv, setTrackerKv } from '../../../services/idb';
+import { buildTrackerResolvedRunReference } from '@tmrxjd/platform/tools';
 
 type RunRecord = Record<string, unknown>;
 
@@ -18,8 +19,6 @@ function normalizeDuration(value: unknown): string {
 }
 
 function buildFingerprintKey(run: RunRecord): string | null {
-  const runId = String(run.runId ?? run.id ?? '').trim();
-  const localId = String(run.localId ?? '').trim();
   const tier = String(run.tierDisplay ?? run.tier ?? '').trim();
   const wave = String(run.wave ?? '').trim();
   const duration = normalizeDuration(run.duration ?? run.roundDuration ?? '');
@@ -32,10 +31,15 @@ function buildFingerprintKey(run: RunRecord): string | null {
 export function buildAutoLogRunKey(run: RunRecord | null | undefined): string | null {
   if (!run) return null;
 
-  const runId = String(run.runId ?? run.id ?? '').trim();
+  const runReference = buildTrackerResolvedRunReference({
+    runId: run.runId,
+    fallbackRunId: run.id,
+    localId: run.localId,
+  });
+  const runId = runReference.runId;
   if (runId) return `runId:${runId}`;
 
-  const localId = String(run.localId ?? '').trim();
+  const localId = runReference.localId;
   if (localId) return `localId:${localId}`;
 
   return buildFingerprintKey(run);
@@ -45,10 +49,15 @@ export function buildAutoLogRunKeys(run: RunRecord | null | undefined): string[]
   if (!run) return [];
 
   const keys = new Set<string>();
-  const runId = String(run.runId ?? run.id ?? '').trim();
+  const runReference = buildTrackerResolvedRunReference({
+    runId: run.runId,
+    fallbackRunId: run.id,
+    localId: run.localId,
+  });
+  const runId = runReference.runId;
   if (runId) keys.add(`runId:${runId}`);
 
-  const localId = String(run.localId ?? '').trim();
+  const localId = runReference.localId;
   if (localId) keys.add(`localId:${localId}`);
 
   const fingerprintKey = buildFingerprintKey(run);

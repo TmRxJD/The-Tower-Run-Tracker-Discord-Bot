@@ -4,7 +4,7 @@ import { createSuccessButtons } from '../ui/tracker-ui';
 import { buildLifetimeSubmissionResultEmbed } from '../ui/tracker-submission-embeds';
 import type { TrackerBotClient } from '../../../core/tracker-bot-client';
 import type { PendingRecordLike, RunDataRecord } from '../shared/track-review-records';
-import { ANALYTICS_EVENT_LIFETIME_TRACKER_UPLOAD } from '@tmrxjd/platform/tools';
+import { ANALYTICS_EVENT_LIFETIME_TRACKER_UPLOAD, buildTrackerResolvedRunReference } from '@tmrxjd/platform/tools';
 import type { ReviewInteraction } from './review-interaction-helpers';
 
 type LifetimeUiMessages = {
@@ -18,13 +18,14 @@ type LifetimeResult = {
 
 export function buildLifetimeEntryPayload(pending: PendingRecordLike) {
   const screenshotUrl = pending.screenshot?.url ?? null;
+  const entryReference = buildTrackerResolvedRunReference({ runId: pending.runData.runId });
 
   return {
     entryData: {
       ...pending.runData,
       date: pending.runData.date ?? new Date().toISOString().split('T')[0],
     },
-    entryId: typeof pending.runData.runId === 'string' ? pending.runData.runId : undefined,
+    entryId: entryReference.runId ?? undefined,
     screenshotUrl,
   };
 }

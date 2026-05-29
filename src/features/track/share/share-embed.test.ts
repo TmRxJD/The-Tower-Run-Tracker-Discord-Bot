@@ -20,9 +20,9 @@ describe('share embed', () => {
       options: {},
     });
 
-    const fields = embed.data.fields ?? [];
-    const headingIndex = fields.findIndex(field => field.name === '📈 Earnings per Hour');
-    const coinsIndex = fields.findIndex(field => String(field.name).includes('Coins'));
+    const description = embed.data.description ?? '';
+    const headingIndex = description.indexOf('**📊 Per Hour**');
+    const coinsIndex = description.indexOf('🪙 Coins:', headingIndex + 1);
 
     expect(headingIndex).toBeGreaterThanOrEqual(0);
     expect(coinsIndex).toBeGreaterThan(headingIndex);
