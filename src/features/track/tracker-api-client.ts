@@ -2,6 +2,7 @@ import { ID, Permission, Query, Role } from 'node-appwrite';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import {
+  buildTrackerRunDocumentPermissions,
   buildTrackerRunIdentityContext,
   buildTrackerQueuedRunReferenceIdentity,
   buildTrackerResolvedRunReference,
@@ -46,6 +47,7 @@ import {
   sanitizeTrackerLeaderboardDocumentId,
   stripUndefinedFields,
   syncTrackerRunExtendedDocument,
+  trackerRunDocumentNeedsNormalization,
   trackerLeaderboardCanonicalMetrics,
   trackerRunReferencesSameEntry,
   trackerRunsShareDuplicateIdentity,
@@ -388,11 +390,15 @@ const RUNS_EXTENDED_SCHEMA_VERSION = 1;
 const RUNS_HYDRATION_COOLDOWN_MS = 5 * 60 * 1000;
 const LIFETIME_HYDRATION_COOLDOWN_MS = 5 * 60 * 1000;
 const RUN_HYDRATION_MARKER_KEY_PREFIX = 'tracker:run-docs-hydrated:v1:';
+const RUN_DOCUMENT_NORMALIZE_BATCH_SIZE = 10;
+const RUN_DOCUMENT_NORMALIZE_DELAY_MS = 400;
 
 const lazyMigrationCheckedUsers = new Set<string>();
+const normalizedRunDocumentsCheckedUsers = new Set<string>();
 const runsHydratedAtByUser = new Map<string, number>();
 const lifetimeHydratedAtByUser = new Map<string, number>();
 const backgroundRunHydrationByUser = new Map<string, Promise<void>>();
+const backgroundRunNormalizationByUser = new Map<string, Promise<void>>();
 
 const QUEUED_SCREENSHOT_DIR = join(process.cwd(), '.data', 'queued-screenshots');
 const OFFLINE_SCREENSHOT_DIR = join(process.cwd(), '.data', 'offline-screenshots');
@@ -418,6 +424,150 @@ async function setRunHydrationMarker(userId: string, localRunCount: number): Pro
     localRunCount: Math.max(0, Math.floor(localRunCount)),
     source: 'run-docs',
   } satisfies RunHydrationMarker);
+}
+
+function isUnauthorizedRunCloudError(error: unknown): boolean {
+  if (typeof isUnauthorizedAppwriteError === 'function') {
+    return isUnauthorizedAppwriteError(error)
+  }
+
+  const typed = error as { code?: unknown; status?: unknown; type?: unknown }
+  return typed.code === 401
+    || typed.status === 401
+    || typed.type === 'general_unauthorized_scope'
+    || typed.type === 'user_unauthorized'
+}
+
+async function updateRunDocumentWithPermissions(params: {
+  databases: ReturnType<typeof createAppwriteClient>['databases'];
+  databaseId: string;
+  collectionId: string;
+  documentId: string;
+  data: Record<string, unknown>;
+  permissions: string[];
+}): Promise<void> {
+  if (params.permissions.length > 0) {
+    await params.databases.updateDocument(
+      params.databaseId,
+      params.collectionId,
+      params.documentId,
+      params.data,
+      params.permissions,
+    );
+    return;
+  }
+
+  await params.databases.updateDocument(
+    params.databaseId,
+    params.collectionId,
+    params.documentId,
+    params.data,
+  );
+}
+
+async function ensureRunCloudDocumentsNormalizedForUser(userId: string): Promise<void> {
+  const normalizedUserId = userId.trim();
+  if (!normalizedUserId) return;
+  if (normalizedRunDocumentsCheckedUsers.has(normalizedUserId)) return;
+
+  try {
+    const { databases } = createAppwriteClient();
+    const { runsDatabaseId, runsCollectionId } = appwriteIds();
+    const { ownerUserId, lookupUserIds, permissionUserIds } = await getRunCloudIdentity(normalizedUserId);
+    const permissions = buildTrackerRunDocumentPermissions({
+      userIds: permissionUserIds,
+      permissionFactory: Permission,
+      roleFactory: Role,
+    });
+
+    const mainDocuments = await listCloudDocumentsByUserIds({
+      databases,
+      databaseId: runsDatabaseId,
+      collectionId: runsCollectionId,
+      userIds: lookupUserIds,
+      schema: trackerRunCloudDocumentSchema,
+      pageSize: 100,
+      buildQueries: (candidateUserId, cursorAfter, pageSize) => {
+        const queries: string[] = [
+          Query.equal('userId', candidateUserId),
+          Query.limit(pageSize),
+        ];
+        if (cursorAfter) queries.push(Query.cursorAfter(cursorAfter));
+        return queries;
+      },
+      getDocumentId: doc => {
+        const id = doc.$id;
+        return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
+      },
+    }) as RunRecord[];
+
+    const normalizeCollection = async (collectionId: string, documents: RunRecord[]): Promise<void> => {
+      const docsToNormalize = documents.filter(doc => {
+        return trackerRunDocumentNeedsNormalization({
+          document: doc,
+          canonicalUserId: ownerUserId,
+          permissions,
+        });
+      });
+      if (!docsToNormalize.length) {
+        return;
+      }
+
+      logger.info('[runs:normalize] normalizing tracker cloud documents', {
+        userId: normalizedUserId,
+        ownerUserId,
+        databaseId: runsDatabaseId,
+        collectionId,
+        documentCount: docsToNormalize.length,
+      });
+
+      for (let index = 0; index < docsToNormalize.length; index += RUN_DOCUMENT_NORMALIZE_BATCH_SIZE) {
+        const batch = docsToNormalize.slice(index, index + RUN_DOCUMENT_NORMALIZE_BATCH_SIZE);
+        await Promise.all(batch.map(async doc => {
+          const documentId = typeof doc.$id === 'string' ? doc.$id.trim() : '';
+          if (!documentId) return;
+          try {
+            await updateRunDocumentWithPermissions({
+              databases,
+              databaseId: runsDatabaseId,
+              collectionId,
+              documentId,
+              data: { userId: ownerUserId },
+              permissions,
+            });
+          } catch (error) {
+            if (collectionId === RUNS_EXTENDED_COLLECTION_ID && shouldIgnoreExtendedRunCollectionError(error)) {
+              return;
+            }
+            logger.warn('tracker cloud document normalization failed', {
+              userId: normalizedUserId,
+              ownerUserId,
+              databaseId: runsDatabaseId,
+              collectionId,
+              documentId,
+              error: formatTrackerCloudError(error),
+            });
+          }
+        }));
+
+        if (index + RUN_DOCUMENT_NORMALIZE_BATCH_SIZE < docsToNormalize.length) {
+          await new Promise(resolve => setTimeout(resolve, RUN_DOCUMENT_NORMALIZE_DELAY_MS));
+        }
+      }
+    };
+
+    await normalizeCollection(runsCollectionId, mainDocuments);
+    const extendedDocuments = await listExtendedRunDocumentsForUser(normalizedUserId);
+    await normalizeCollection(RUNS_EXTENDED_COLLECTION_ID, extendedDocuments);
+  } catch (error) {
+    if (isUnauthorizedRunCloudError(error)) {
+      logger.warn('Skipping tracker cloud document normalization: Appwrite authorization unavailable');
+    } else {
+      logger.warn('Tracker cloud document normalization skipped due to error', error);
+    }
+  } finally {
+    normalizedRunDocumentsCheckedUsers.add(normalizedUserId);
+  }
 }
 
 function pickString(value: unknown): string | undefined {
@@ -524,6 +674,67 @@ async function listRunDocumentsForHydration(userId: string): Promise<RunRecord[]
   ]);
 
   return mergeRunDocumentsWithExtended(baseDocuments, extendedDocuments);
+}
+
+function buildExtendedDocumentsById(extendedDocuments: RunRecord[]): Map<string, RunRecord> {
+  const extendedById = new Map<string, RunRecord>();
+  for (const doc of extendedDocuments) {
+    const id = typeof doc.$id === 'string' ? doc.$id.trim() : '';
+    if (!id || extendedById.has(id)) continue;
+    extendedById.set(id, doc);
+  }
+  return extendedById;
+}
+
+async function loadExtendedRunDocumentsByIds(runIds: string[]): Promise<RunRecord[]> {
+  const { databases } = createAppwriteClient();
+  const { runsDatabaseId } = appwriteIds();
+  const uniqueIds = Array.from(new Set(runIds.map(id => id.trim()).filter(Boolean)));
+  if (!uniqueIds.length) {
+    return [];
+  }
+
+  const documents = await Promise.all(uniqueIds.map(async runId => {
+    try {
+      const raw = await databases.getDocument(runsDatabaseId, RUNS_EXTENDED_COLLECTION_ID, runId) as unknown;
+      return parseTrackerRunExtendedDocumentRecord(raw) as RunRecord | null;
+    } catch (error) {
+      if (shouldIgnoreExtendedRunCollectionError(error)) {
+        return null;
+      }
+      const typed = error as { code?: number; status?: number; type?: string };
+      if (typed.code === 401 || typed.status === 401 || typed.code === 404 || typed.type === 'document_not_found') {
+        return null;
+      }
+      throw error;
+    }
+  }));
+
+  return documents.filter((document): document is RunRecord => Boolean(document));
+}
+
+async function mergeRunDocumentsWithExtendedFallback(baseDocuments: RunRecord[], extendedDocuments: RunRecord[]): Promise<RunRecord[]> {
+  if (!baseDocuments.length) return [];
+
+  const extendedById = buildExtendedDocumentsById(extendedDocuments);
+  const missingIds = baseDocuments
+    .map(doc => typeof doc.$id === 'string' ? doc.$id.trim() : '')
+    .filter(id => id.length > 0 && !extendedById.has(id));
+
+  if (missingIds.length > 0) {
+    const fallbackExtendedDocuments = await loadExtendedRunDocumentsByIds(missingIds);
+    for (const doc of fallbackExtendedDocuments) {
+      const id = typeof doc.$id === 'string' ? doc.$id.trim() : '';
+      if (!id || extendedById.has(id)) continue;
+      extendedById.set(id, doc);
+    }
+  }
+
+  return baseDocuments.map((doc) => {
+    const id = typeof doc.$id === 'string' ? doc.$id.trim() : '';
+    const extended = id ? extendedById.get(id) : undefined;
+    return extended ? { ...doc, ...pickExtendedRunDocumentFields(extended) } : doc;
+  });
 }
 
 function isCollectionNotFoundError(error: unknown): boolean {
@@ -667,11 +878,11 @@ async function syncExtendedRunDocument(params: {
     userId: params.userId,
   });
   const permissions = params.permissionUserIds.length
-    ? params.permissionUserIds.flatMap((permissionUserId) => ([
-        Permission.read(Role.user(permissionUserId)),
-        Permission.update(Role.user(permissionUserId)),
-        Permission.delete(Role.user(permissionUserId)),
-      ]))
+    ? buildTrackerRunDocumentPermissions({
+        userIds: params.permissionUserIds,
+        permissionFactory: Permission,
+        roleFactory: Role,
+      })
     : undefined;
 
   try {
@@ -792,6 +1003,8 @@ export async function ensureRunDocumentsHydratedForUser(userId: string, options?
   if (lazyMigrationCheckedUsers.has(normalizedUserId)) return;
 
   try {
+    await ensureRunCloudDocumentsNormalizedForUser(normalizedUserId);
+
     const [marker, localRunsBefore] = await Promise.all([
       getRunHydrationMarker(normalizedUserId),
       getLocalRuns(normalizedUserId),
@@ -813,7 +1026,7 @@ export async function ensureRunDocumentsHydratedForUser(userId: string, options?
     const localRunsAfter = await getLocalRuns(normalizedUserId);
     await setRunHydrationMarker(normalizedUserId, localRunsAfter.length);
   } catch (error) {
-    if (isUnauthorizedAppwriteError(error)) {
+    if (isUnauthorizedRunCloudError(error)) {
       logger.warn('Skipping run document hydration: Appwrite authorization unavailable');
     } else {
       logger.warn('Run document hydration skipped due to error', error);
@@ -865,7 +1078,7 @@ async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
     listExtendedRunDocumentsForUser(userId),
   ]);
 
-  const merged = mergeRunDocumentsWithExtended(baseDocuments, extendedDocuments);
+  const merged = await mergeRunDocumentsWithExtendedFallback(baseDocuments, extendedDocuments);
   logger.info('Listed tracker run documents', {
     userId,
     databaseId: mainTarget.databaseId,
@@ -915,11 +1128,11 @@ async function writeRunDocument(params: {
     run: params.run,
     existing: params.existingDoc ?? null,
   });
-  const permissions = permissionUserIds.flatMap(userId => ([
-    Permission.read(Role.user(userId)),
-    Permission.update(Role.user(userId)),
-    Permission.delete(Role.user(userId)),
-  ]));
+  const permissions = buildTrackerRunDocumentPermissions({
+    userIds: permissionUserIds,
+    permissionFactory: Permission,
+    roleFactory: Role,
+  });
 
   const documentId = pickString(params.existingDoc?.$id) ?? pickString(params.existingDoc?.id) ?? resolvedRunId;
   const writePayload: Record<string, unknown> = { ...payload };
@@ -1802,12 +2015,12 @@ async function cloudGetRecentRuns(userId: string, limit: number): Promise<Tracke
     }
   }
 
-  return baseDocs.map(doc => {
+  const mergedDocs = await mergeRunDocumentsWithExtendedFallback(baseDocs, Array.from(extendedByDocId.values()));
+
+  return mergedDocs.map(doc => {
     const docId = String(doc.$id ?? '');
-    const extended = extendedByDocId.get(docId);
-    const mergedDoc = extended ? { ...doc, ...pickExtendedRunDocumentFields(extended) } : doc;
-    const username = pickString(mergedDoc.username) ?? 'unknown';
-    return hydrateTrackerCloudRun(mergedDoc, userId, username) as TrackerRun;
+    const username = pickString(doc.username) ?? 'unknown';
+    return hydrateTrackerCloudRun(doc, userId, username) as TrackerRun;
   });
 }
 
@@ -1914,12 +2127,11 @@ async function cloudGetRunsSince(userId: string, sinceIso: string, limit: number
     }
   }
 
-  return baseDocs.map(doc => {
-    const docId = String(doc.$id ?? '');
-    const extended = extendedByDocId.get(docId);
-    const mergedDoc = extended ? { ...doc, ...pickExtendedRunDocumentFields(extended) } : doc;
-    const username = pickString(mergedDoc.username) ?? 'unknown';
-    return hydrateTrackerCloudRun(mergedDoc, userId, username) as TrackerRun;
+  const mergedDocs = await mergeRunDocumentsWithExtendedFallback(baseDocs, Array.from(extendedByDocId.values()));
+
+  return mergedDocs.map(doc => {
+    const username = pickString(doc.username) ?? 'unknown';
+    return hydrateTrackerCloudRun(doc, userId, username) as TrackerRun;
   });
 }
 
@@ -3079,6 +3291,22 @@ export function beginBackgroundRunHydration(userId: string): void {
     });
 
   backgroundRunHydrationByUser.set(userId, task);
+}
+
+export function beginBackgroundRunNormalization(userId: string): void {
+  if (!canUseCloudForUserId(userId, 'background run normalization')) return;
+  const existing = backgroundRunNormalizationByUser.get(userId);
+  if (existing) return;
+
+  const task = ensureRunCloudDocumentsNormalizedForUser(userId)
+    .catch((error) => {
+      logger.warn('background run normalization skipped', error);
+    })
+    .finally(() => {
+      backgroundRunNormalizationByUser.delete(userId);
+    });
+
+  backgroundRunNormalizationByUser.set(userId, task);
 }
 
 export async function awaitBackgroundRunHydration(userId: string): Promise<void> {

@@ -14,6 +14,7 @@ const deleteFileMock = vi.fn();
 const getFileViewMock = vi.fn();
 const deleteTrackerRunCloudDocumentsMock = vi.fn();
 const isTrackerCloudAddressableUserIdMock = vi.fn(() => false);
+const resolveAppwriteIdForDiscordUserMock = vi.fn(async () => null);
 
 vi.mock('../../config', () => ({
   getAppConfig: () => ({
@@ -58,7 +59,7 @@ vi.mock('../../core/logger', () => ({
 }));
 
 vi.mock('../../services/discord-identity-resolver', () => ({
-  resolveAppwriteIdForDiscordUser: vi.fn(async () => null),
+  resolveAppwriteIdForDiscordUser: (...args: unknown[]) => resolveAppwriteIdForDiscordUserMock(...args),
 }));
 
 vi.mock('@tmrxjd/platform/node', () => ({
@@ -116,6 +117,8 @@ beforeEach(async () => {
   getFileViewMock.mockReset();
   deleteTrackerRunCloudDocumentsMock.mockReset();
   isTrackerCloudAddressableUserIdMock.mockReset();
+  resolveAppwriteIdForDiscordUserMock.mockReset();
+  resolveAppwriteIdForDiscordUserMock.mockResolvedValue(null);
   isTrackerCloudAddressableUserIdMock.mockReturnValue(false);
   listDocumentsMock.mockResolvedValue({ documents: [], total: 0 });
 
@@ -365,5 +368,61 @@ describe('tracker-api-client delete sync', () => {
 
     expect(summary?.allRuns ?? []).toHaveLength(0);
     expect(localOnlySummary?.allRuns ?? []).toHaveLength(0);
+  });
+
+  it('falls back to direct extended document reads so legacy split docs still hydrate immediately', async () => {
+    const userId = 'discord-extended-fallback';
+    isTrackerCloudAddressableUserIdMock.mockReturnValue(true);
+
+    listDocumentsMock.mockImplementation(async (_databaseId: string, collectionId: string, queries?: unknown[]) => {
+      const queryText = Array.isArray(queries) ? queries.map(value => String(value)).join(' ') : '';
+      if (collectionId === 'runs') {
+        return {
+          documents: [{
+            $id: 'run-1',
+            userId,
+            username: 'tester',
+            date: '2026-05-29',
+            time: '10:00 PM',
+            runDate: '2026-05-29',
+            runTime: '10:00 PM',
+            duration: '1h',
+            type: 'Farming',
+            tier: '12',
+            wave: '4567',
+            coins: '1B',
+            cells: '1M',
+            rerollShards: '1K',
+            killedBy: 'Boss',
+            public: 'false',
+          }],
+          total: 1,
+        };
+      }
+
+      if (collectionId === 'runs_extended_data') {
+        if (queryText.includes('userId:discord-extended-fallback')) {
+          return { documents: [], total: 0 };
+        }
+      }
+
+      return { documents: [], total: 0 };
+    });
+    getDocumentMock.mockImplementation(async (_databaseId: string, collectionId: string, documentId: string) => {
+      if (collectionId === 'runs_extended_data' && documentId === 'run-1') {
+        return {
+          $id: 'run-1',
+          runId: 'run-1',
+          userId: 'legacy_user_variant',
+          highestCoinsPerMinute: '7.41T',
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLastRun(userId, { cloudSyncMode: 'full' });
+
+    expect(summary?.allRuns?.[0]?.highestCoinsPerMinute).toBe('7.41T');
+    expect(getDocumentMock).toHaveBeenCalledWith('runs-db', 'runs_extended_data', 'run-1');
   });
 });

@@ -3,7 +3,7 @@ import { getBotConfig } from '../config/bot-config';
 import type { TrackerBotClient } from '../core/tracker-bot-client';
 import { logger } from '../core/logger';
 import { resolveInteractionDisplayName } from '../features/track/discord-display-name';
-import { ensureRunDocumentsHydratedForUser, getLastRun, getLocalRunSummary } from '../features/track/tracker-api-client';
+import { beginBackgroundRunNormalization, ensureRunDocumentsHydratedForUser, getLastRun, getLocalRunSummary } from '../features/track/tracker-api-client';
 import { handleTrackWorkflow } from '../features/track/track-workflow';
 
 type TrackerCommandKey = 'track' | 'lifetime';
@@ -146,9 +146,11 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
     } else {
       // Returning user: show a syncing embed and await a guaranteed full cloud sync
       // before opening the menu so runs uploaded on the site always appear immediately.
+      // Split-doc normalization runs separately in the background.
       await interaction.editReply({
         embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle('🔄 Syncing with Cloud').setDescription('Checking for new runs\u2026')],
       }).catch(() => {});
+      beginBackgroundRunNormalization(interaction.user.id);
       await getLastRun(interaction.user.id, { cloudSyncMode: 'latest' }).catch((error) => {
         logger.warn('Pre-menu cloud sync failed; showing local data', error);
       });
