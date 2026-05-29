@@ -310,11 +310,19 @@ describe('tracker-api-client settings sync', () => {
       expect(createDocumentMock.mock.calls.some(call => call[1] === 'runs')).toBe(true);
     });
 
-    resolveUpload?.({ $id: 'file-1' });
+    if (!resolveUpload) {
+      throw new Error('Expected upload resolver to be captured');
+    }
+
+    (resolveUpload as (value: { $id: string }) => void)({ $id: 'file-1' });
 
     const result = await runPromise;
     expect(result.queuedForCloud).toBe(false);
     expect(result.cloudUnavailable).toBe(false);
+    expect('screenshotUrl' in result).toBe(true);
+    if (!('screenshotUrl' in result)) {
+      throw new Error('Expected screenshot URL in logRun result');
+    }
     expect(result.screenshotUrl).toBe('https://appwrite.example/v1/storage/buckets/runs/files/file-1/view?project=project-1');
   });
 
@@ -344,6 +352,10 @@ describe('tracker-api-client settings sync', () => {
       },
     });
 
+    expect('screenshotUrl' in result).toBe(true);
+    if (!('screenshotUrl' in result)) {
+      throw new Error('Expected screenshot URL in logRun result');
+    }
     expect(result.screenshotUrl).toBe('https://appwrite.example/v1/storage/buckets/runs/files/file-async-1/view?project=project-1');
   });
 

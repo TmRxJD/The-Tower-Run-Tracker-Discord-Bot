@@ -15,8 +15,8 @@ importers:
         specifier: ^0.1.97
         version: 0.1.97
       '@tmrxjd/platform':
-        specifier: 0.1.17
-        version: 0.1.17
+        specifier: 0.1.21
+        version: 0.1.21
       dexie:
         specifier: ^4.0.11
         version: 4.3.0
@@ -881,8 +881,14 @@ packages:
   '@techstark/opencv-js@4.9.0-release.3':
     resolution: {integrity: sha512-y+KoLLlkXVUHWozYlN1vmMD9TQMPJObqml5nPA5vPWgHtOgm8q5O74UtzM23eayidvmeFX6tF5e2gDdyxcpy3Q==}
 
-  '@tmrxjd/platform@0.1.17':
-    resolution: {integrity: sha512-CN5yJQoIFwyci8rLSvHhJbt5KZUYfhmizra8WI2XL0DOYkdshsmfn7I6CQSmS3z2h2+Gq2CXxBpVWQHxu/ypTA==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.1.17/d21b3535b6f5ccc47b51fd1f4fe449c286ea1333}
+  '@tmrxjd/platform@0.1.20':
+    resolution: {integrity: sha512-qbjEU4i959nmS2Ulwm339mjz0qJAf7wc91d5ttuC4Ztud0LIk2/D5Wpcgwvgo65wpHRhx8DaTEH4PJaKucC6zw==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.1.20/0abcab1b8efb2b4294aba70f5e527e2b4ff14642}
+
+  '@tmrxjd/platform@0.1.21':
+    resolution: {integrity: sha512-z0UVztOcc7eYmb7Y8PpKah/7RlwJ09YqR9eu5jSTIYks4dB4jkaa5aMCJJzWPN9BeaOeiAjl+auDqvLJMJGR/A==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.1.21/3a3efb773401f2fe1415cdfc864866ebd3bd07a1}
+
+  '@tmrxjd/tracker-languages@0.1.20':
+    resolution: {integrity: sha512-s7Wq3QPcNV2uGu2ueOkX1stMVY2sOwiDhdm0czFhnOa2jjXvirmu+4N/a+LopVbroYa5JThGtXcv1hXTiRHTOQ==, tarball: https://npm.pkg.github.com/download/@tmrxjd/tracker-languages/0.1.20/69ca75d5cc21d7d14a14be7ffa2170e00c6f2fba}
 
   '@tootallnate/once@1.1.2':
     resolution: {integrity: sha512-RbzJvlNzmRq5c3O09UipeuXno4tA1FE6ikOjxZK0tuxVv3412l64l5t1W5pj4+rJq9vpkm/kwiR07aZXnsKPxw==}
@@ -2989,10 +2995,11 @@ snapshots:
 
   '@techstark/opencv-js@4.9.0-release.3': {}
 
-  '@tmrxjd/platform@0.1.17':
+  '@tmrxjd/platform@0.1.20':
     dependencies:
       '@gutenye/ocr-node': 1.4.8
       '@huggingface/transformers': 3.8.1
+      '@tmrxjd/tracker-languages': 0.1.20
       '@vue/compiler-dom': 3.5.32
       '@vue/compiler-sfc': 3.5.32
       hyperformula: 3.2.0
@@ -3001,6 +3008,32 @@ snapshots:
       sharp: 0.34.5
       sqlite3: 5.1.7
       typescript: 5.8.3
+      zod: 4.3.6
+    transitivePeerDependencies:
+      - bluebird
+      - supports-color
+
+  '@tmrxjd/platform@0.1.21':
+    dependencies:
+      '@gutenye/ocr-node': 1.4.8
+      '@huggingface/transformers': 3.8.1
+      '@tmrxjd/tracker-languages': 0.1.20
+      '@vue/compiler-dom': 3.5.32
+      '@vue/compiler-sfc': 3.5.32
+      hyperformula: 3.2.0
+      indexeddb-js: 0.0.14
+      magic-string: 0.30.21
+      sharp: 0.34.5
+      sqlite3: 5.1.7
+      typescript: 5.8.3
+      zod: 4.3.6
+    transitivePeerDependencies:
+      - bluebird
+      - supports-color
+
+  '@tmrxjd/tracker-languages@0.1.20':
+    dependencies:
+      '@tmrxjd/platform': 0.1.20
       zod: 4.3.6
     transitivePeerDependencies:
       - bluebird

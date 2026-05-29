@@ -252,7 +252,11 @@ describe('tracker-api-client delete sync', () => {
       expect(resolveHydration).toBeTypeOf('function');
     });
 
-    resolveHydration?.({
+    if (!resolveHydration) {
+      throw new Error('Expected hydration resolver to be captured');
+    }
+
+    (resolveHydration as (value: { documents: unknown[]; total: number }) => void)({
       documents: [{
         $id: 'cloud-run-race-1',
         userId,

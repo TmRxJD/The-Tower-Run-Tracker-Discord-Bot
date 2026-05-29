@@ -7,7 +7,7 @@ vi.mock('@tmrxjd/platform/tools', async () => {
   const actual = await vi.importActual<typeof PlatformTools>('@tmrxjd/platform/tools');
   return {
     ...actual,
-    renderAnalyticsLineChartPng: (...args: unknown[]) => renderAnalyticsLineChartPngMock(...args),
+    renderAnalyticsLineChartPng: () => renderAnalyticsLineChartPngMock(),
   };
 });
 
