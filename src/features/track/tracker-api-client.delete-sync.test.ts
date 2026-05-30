@@ -14,7 +14,7 @@ const deleteFileMock = vi.fn();
 const getFileViewMock = vi.fn();
 const deleteTrackerRunCloudDocumentsMock = vi.fn();
 const isTrackerCloudAddressableUserIdMock = vi.fn(() => false);
-const resolveAppwriteIdForDiscordUserMock = vi.fn(async () => null);
+const resolveAppwriteIdForDiscordUserMock = vi.fn<(discordId: string) => Promise<string | null>>(async () => null);
 
 vi.mock('../../config', () => ({
   getAppConfig: () => ({
@@ -59,7 +59,7 @@ vi.mock('../../core/logger', () => ({
 }));
 
 vi.mock('../../services/discord-identity-resolver', () => ({
-  resolveAppwriteIdForDiscordUser: (...args: unknown[]) => resolveAppwriteIdForDiscordUserMock(...args),
+  resolveAppwriteIdForDiscordUser: (discordId: string) => resolveAppwriteIdForDiscordUserMock(discordId),
 }));
 
 vi.mock('@tmrxjd/platform/node', () => ({
