@@ -65,6 +65,7 @@
     "discord-api-types": "^0.37.120",
     "discord.js": "^14.25.1",
     "dotenv": "^16.6.1",
+    "rxdb": "17.1.0",
     "indexeddb-js": "^0.0.14",
     "node-appwrite": "17.2.0",
     "sqlite3": "^5.1.7",

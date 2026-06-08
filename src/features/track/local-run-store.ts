@@ -330,6 +330,16 @@ export async function updateLocalSettings(userId: string, patch: Partial<Tracker
 }
 
 export async function getLocalRuns(userId: string): Promise<LocalRunRecord[]> {
+  try {
+    const { loadLocalRunsFromBotRxDB } = await import('../../rxdb/run-rxdb-store.js');
+    const rxRuns = await loadLocalRunsFromBotRxDB(userId);
+    if (rxRuns.length > 0) {
+      return rxRuns;
+    }
+  } catch {
+    // Fall back to legacy KV snapshot when RxDB is unavailable.
+  }
+
   await ensureLoaded();
   const bucket = getOrCreateUser(userId);
   return [...bucket.runs];
