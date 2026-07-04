@@ -344,6 +344,7 @@ export function createMainMenuButtons(mode: TrackerUiMode = 'track') {
     shareLastMenu: TRACKER_IDS.flow.shareLastMenu,
     viewRuns: TRACKER_IDS.flow.viewRuns,
     support: TRACKER_IDS.flow.support,
+    import: TRACKER_IDS.flow.import,
     settings: TRACKER_IDS.settings.menu,
     analysis: TRACKER_IDS.analysis.menu,
     cancel: TRACKER_IDS.flow.cancel,

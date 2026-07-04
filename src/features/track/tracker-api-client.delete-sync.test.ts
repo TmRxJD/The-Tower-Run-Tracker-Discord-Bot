@@ -2,7 +2,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type * as PlatformTools from '@tmrxjd/platform/tools';
 
 const getDocumentMock = vi.fn();
 const updateDocumentMock = vi.fn();
@@ -80,7 +79,7 @@ vi.mock('./vision-ocr-client', () => ({
 }));
 
 vi.mock('@tmrxjd/platform/tools', async () => {
-  const actual = await vi.importActual<typeof PlatformTools>('@tmrxjd/platform/tools');
+  const actual = await vi.importActual<Record<string, unknown>>('@tmrxjd/platform/tools');
   return {
     ...actual,
     isTrackerCloudAddressableUserId: (...args: Parameters<typeof isTrackerCloudAddressableUserIdMock>) => isTrackerCloudAddressableUserIdMock(...args),
@@ -89,8 +88,9 @@ vi.mock('@tmrxjd/platform/tools', async () => {
   };
 });
 
-import { beginBackgroundRunHydration, forceSyncQueuedRuns, getLastRun, removeLastRun } from './tracker-api-client';
+import { forceSyncQueuedRuns, getLastRun, removeLastRun } from './tracker-api-client';
 import { getQueueItems, queueCloudDelete, queueCloudUpsert, removeQueueItem, upsertLocalRun } from './local-run-store';
+import { ingestMergedRunsIntoBotStore } from './run-sync-ingest';
 
 beforeAll(() => {
   const testDataDir = join(tmpdir(), `trackerbot-delete-sync-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -210,8 +210,8 @@ describe('tracker-api-client delete sync', () => {
     ]));
   });
 
-  it('does not let background hydration resurrect a run after delete', async () => {
-    const userId = 'discord-delete-hydration-race';
+  it('does not resurrect a permanently deleted run during background ingest', async () => {
+    const userId = 'discord-delete-ingest-tombstone';
     isTrackerCloudAddressableUserIdMock.mockReturnValue(true);
 
     await upsertLocalRun(userId, 'tester', {
@@ -232,56 +232,28 @@ describe('tracker-api-client delete sync', () => {
       updatedAt: Date.now(),
     });
 
-    let resolveHydration: ((value: { documents: unknown[]; total: number }) => void) | null = null;
-    listDocumentsMock.mockImplementation((_databaseId: string, collectionId: string) => {
-      if (collectionId === 'runs') {
-        return new Promise(resolve => {
-          resolveHydration = resolve as (value: { documents: unknown[]; total: number }) => void;
-        });
-      }
-
-      return Promise.resolve({ documents: [], total: 0 });
-    });
-
-    beginBackgroundRunHydration(userId);
-
-    const removePromise = removeLastRun({
+    await removeLastRun({
       userId,
       runId: 'cloud-run-race-1',
       localId: 'local-run-race-1',
     });
 
-    await vi.waitFor(() => {
-      expect(resolveHydration).toBeTypeOf('function');
-    });
-
-    if (!resolveHydration) {
-      throw new Error('Expected hydration resolver to be captured');
-    }
-
-    (resolveHydration as (value: { documents: unknown[]; total: number }) => void)({
-      documents: [{
-        $id: 'cloud-run-race-1',
-        userId,
-        username: 'tester',
-        date: '2026-05-29',
-        time: '10:00 PM',
-        runDate: '2026-05-29',
-        runTime: '10:00 PM',
-        duration: '1h',
-        type: 'Farming',
-        tier: '12',
-        wave: '4567',
-        coins: '1B',
-        cells: '1M',
-        rerollShards: '1K',
-        killedBy: 'Boss',
-        public: 'false',
-      }],
-      total: 1,
-    });
-
-    await removePromise;
+    await ingestMergedRunsIntoBotStore(userId, [{
+      runId: 'cloud-run-race-1',
+      type: 'Farming',
+      tier: '12',
+      wave: '4567',
+      date: '2026-05-29',
+      time: '10:00 PM',
+      runDate: '2026-05-29',
+      runTime: '10:00 PM',
+      duration: '1h',
+      coins: '1B',
+      cells: '1M',
+      rerollShards: '1K',
+      killedBy: 'Boss',
+      updatedAt: Date.now(),
+    }]);
 
     const summary = await getLastRun(userId, { cloudSyncMode: 'none' });
     expect(summary?.allRuns ?? []).toHaveLength(0);
@@ -339,7 +311,7 @@ describe('tracker-api-client delete sync', () => {
     expect((await getLastRun(userId, { cloudSyncMode: 'none' }))?.allRuns ?? []).toHaveLength(0);
   });
 
-  it('removes stale local cloud-backed runs that are missing from a successful full cloud hydration', async () => {
+  it('preserves local cloud-backed runs when full cloud hydration returns zero documents', async () => {
     const userId = 'discord-stale-local-run-reconcile';
     isTrackerCloudAddressableUserIdMock.mockReturnValue(true);
 
@@ -366,8 +338,8 @@ describe('tracker-api-client delete sync', () => {
     const summary = await getLastRun(userId, { cloudSyncMode: 'full' });
     const localOnlySummary = await getLastRun(userId, { cloudSyncMode: 'none' });
 
-    expect(summary?.allRuns ?? []).toHaveLength(0);
-    expect(localOnlySummary?.allRuns ?? []).toHaveLength(0);
+    expect(summary?.allRuns ?? []).toHaveLength(1);
+    expect(localOnlySummary?.allRuns ?? []).toHaveLength(1);
   });
 
   it('falls back to direct extended document reads so legacy split docs still hydrate immediately', async () => {
@@ -423,6 +395,6 @@ describe('tracker-api-client delete sync', () => {
     const summary = await getLastRun(userId, { cloudSyncMode: 'full' });
 
     expect(summary?.allRuns?.[0]?.highestCoinsPerMinute).toBe('7.41T');
-    expect(getDocumentMock).toHaveBeenCalledWith('runs-db', 'runs_extended_data', 'run-1');
+    expect(getDocumentMock).toHaveBeenCalledWith('run-tracker-data', 'runs_extended_data', 'run-1');
   });
 });

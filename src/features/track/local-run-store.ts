@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { applyRetryFailureState, buildTrackerQueuedRunReferenceIdentity, buildTrackerRunFingerprint, canonicalizeTrackerRunData, createRetryScheduleState, enqueueUniqueItemsByKey, parseRetryScheduleState, replaceOrInsertMatchingItem, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
+import { applyRetryFailureState, buildBattleRunDedupKeysFromStoredRun, buildTrackerQueuedRunReferenceIdentity, buildTrackerRunFingerprint, canonicalizeTrackerRunData, createRetryScheduleState, enqueueUniqueItemsByKey, isPopulatedBattleRunDedupKey, parseRetryScheduleState, replaceOrInsertMatchingItem, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
 import { trackerStoredSettingsSchema, type TrackerSettings } from './types';
 import { logger } from '../../core/logger';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
+import * as rxdbStore from '../../rxdb/run-rxdb-store';
 
 type SyncOp = 'upsert' | 'delete' | 'settings';
 
@@ -304,6 +305,24 @@ export async function hasPersistedLocalSettings(userId: string): Promise<boolean
   return Number.isFinite(Number(cache?.users[userId]?.settings?.updatedAt));
 }
 
+export async function listLocalStoreUserIds(): Promise<string[]> {
+  await ensureLoaded();
+  if (!cache) return [];
+  return Object.keys(cache.users);
+}
+
+const DISCORD_SNOWFLAKE_USER_ID_PATTERN = /^\d{17,20}$/;
+
+export async function listCloudSyncEnabledUserIds(): Promise<string[]> {
+  await ensureLoaded();
+  if (!cache) return [];
+  const userIds = Object.keys(cache.users).filter((userId) => cache!.users[userId]?.settings?.cloudSyncEnabled !== false);
+  if (process.env.DEPLOYMENT_MODE === 'dev') {
+    return userIds.filter((userId) => DISCORD_SNOWFLAKE_USER_ID_PATTERN.test(userId));
+  }
+  return userIds;
+}
+
 export async function getLocalSettingsRecord(userId: string): Promise<{ state: TrackerSettings & { cloudSyncEnabled: boolean }; updatedAt: number | null }> {
   await ensureLoaded();
   const bucket = getOrCreateUser(userId);
@@ -329,20 +348,33 @@ export async function updateLocalSettings(userId: string, patch: Partial<Tracker
   return { ...defaultSettings(), ...bucket.settings, cloudSyncEnabled: bucket.settings.cloudSyncEnabled !== false };
 }
 
+export async function getLegacyKvRuns(userId: string): Promise<LocalRunRecord[]> {
+  await ensureLoaded();
+  const bucket = cache?.users[userId];
+  if (!bucket || !Array.isArray(bucket.runs)) {
+    return [];
+  }
+  return [...bucket.runs];
+}
+
+export async function clearLegacyKvRuns(userId: string): Promise<void> {
+  await ensureLoaded();
+  const bucket = cache?.users[userId];
+  if (!bucket || bucket.runs.length === 0) {
+    return;
+  }
+  bucket.runs = [];
+  await persist();
+}
+
 export async function getLocalRuns(userId: string): Promise<LocalRunRecord[]> {
   try {
-    const { loadLocalRunsFromBotRxDB } = await import('../../rxdb/run-rxdb-store.js');
-    const rxRuns = await loadLocalRunsFromBotRxDB(userId);
-    if (rxRuns.length > 0) {
-      return rxRuns;
-    }
-  } catch {
-    // Fall back to legacy KV snapshot when RxDB is unavailable.
+    const rxdbRuns = await rxdbStore.loadLocalRunsFromBotRxDB(userId);
+    return rxdbRuns;
+  } catch (error) {
+    logger.warn('[local-run-store] RxDB read failed; falling back to legacy KV runs', { userId, error });
   }
-
-  await ensureLoaded();
-  const bucket = getOrCreateUser(userId);
-  return [...bucket.runs];
+  return getLegacyKvRuns(userId);
 }
 
 export async function getLocalLifetime(userId: string): Promise<LocalLifetimeRecord> {
@@ -368,14 +400,14 @@ export async function updateLocalLifetime(userId: string, entries: Array<Record<
   };
 }
 
-// Internal helper — performs the in-memory upsert without persisting.
-function upsertRunInBucket(
-  bucket: LocalUserBucket,
+export function upsertRunInRunList(
+  runs: LocalRunRecord[],
   userId: string,
   username: string,
   runData: Record<string, unknown>,
   now: number,
-): { index: number; wasUpdate: boolean } {
+): { runs: LocalRunRecord[]; record: LocalRunRecord; wasUpdate: boolean } {
+  const nextRuns = [...runs];
   const normalizedRunData = canonicalizeTrackerRunData(runData);
 
   const incoming = {
@@ -388,32 +420,37 @@ function upsertRunInBucket(
   } as LocalRunRecord;
 
   const byRunIdIndex = incoming.runId
-    ? bucket.runs.findIndex(r => r.runId && incoming.runId && String(r.runId) === String(incoming.runId))
+    ? nextRuns.findIndex(r => r.runId && incoming.runId && String(r.runId) === String(incoming.runId))
     : -1;
 
   let index = byRunIdIndex;
   if (index < 0 && incoming.localId) {
-    index = bucket.runs.findIndex(r => r.localId === incoming.localId);
+    index = nextRuns.findIndex(r => r.localId === incoming.localId);
+  }
+  if (index < 0) {
+    const incomingImportKeys = buildBattleRunDedupKeysFromStoredRun(incoming);
+    if (incomingImportKeys.some(isPopulatedBattleRunDedupKey)) {
+      index = nextRuns.findIndex((run) => {
+        const existingImportKeys = buildBattleRunDedupKeysFromStoredRun(run);
+        return incomingImportKeys.some(key => existingImportKeys.includes(key));
+      });
+    }
   }
   if (index < 0) {
     const incomingFp = runFingerprint(incoming);
-    index = bucket.runs.findIndex(r => {
+    index = nextRuns.findIndex(r => {
       if (runFingerprint(r) !== incomingFp) return false;
-      // If the incoming run has a cloud runId, only match entries that are not yet
-      // claimed by a different cloud run. This prevents two distinct cloud documents
-      // with identical fingerprint data from both resolving to the same local entry
-      // (which causes an infinite oscillation in the sync-diag repair loop).
       if (incoming.runId && r.runId && String(r.runId) !== String(incoming.runId)) return false;
       return true;
     });
   }
 
   if (index >= 0) {
-    const existing = bucket.runs[index];
+    const existing = nextRuns[index];
     const existingTs = estimateRunTimestamp(existing);
     const incomingTs = estimateRunTimestamp(incoming) || now;
     if (incomingTs >= existingTs) {
-      bucket.runs[index] = {
+      nextRuns[index] = {
         ...existing,
         ...incoming,
         localId: existing.localId || incoming.localId,
@@ -421,14 +458,56 @@ function upsertRunInBucket(
         updatedAt: incomingTs,
       };
     }
-    return { index, wasUpdate: true };
+    return { runs: nextRuns, record: nextRuns[index], wasUpdate: true };
   }
 
-  bucket.runs.push({ ...incoming, updatedAt: estimateRunTimestamp(incoming) || now });
-  return { index: bucket.runs.length - 1, wasUpdate: false };
+  const record = { ...incoming, updatedAt: estimateRunTimestamp(incoming) || now };
+  nextRuns.push(record);
+  return { runs: nextRuns, record, wasUpdate: false };
+}
+
+function upsertRunInBucket(
+  bucket: LocalUserBucket,
+  userId: string,
+  username: string,
+  runData: Record<string, unknown>,
+  now: number,
+): { index: number; wasUpdate: boolean } {
+  const merged = upsertRunInRunList(bucket.runs, userId, username, runData, now);
+  bucket.runs = merged.runs;
+  const index = bucket.runs.findIndex(run => run.localId === merged.record.localId);
+  return { index: index >= 0 ? index : bucket.runs.length - 1, wasUpdate: merged.wasUpdate };
+}
+
+async function upsertLocalRunViaRxDB(
+  userId: string,
+  username: string,
+  runData: Record<string, unknown>,
+): Promise<LocalRunRecord> {
+  return rxdbStore.upsertLocalRunIntoBotRxDB(userId, username, runData);
+}
+
+export type BulkUpsertLocalRunsResult = {
+  added: number;
+  updated: number;
+  records: LocalRunRecord[];
+  wasUpdates: boolean[];
+};
+
+async function bulkUpsertLocalRunsViaRxDB(
+  userId: string,
+  runs: Array<{ username: string; runData: Record<string, unknown> }>,
+): Promise<BulkUpsertLocalRunsResult> {
+  return rxdbStore.bulkUpsertLocalRunsIntoBotRxDB(userId, runs);
 }
 
 export async function upsertLocalRun(userId: string, username: string, runData: Record<string, unknown>): Promise<LocalRunRecord> {
+  try {
+    return await upsertLocalRunViaRxDB(userId, username, runData);
+  } catch (error) {
+    logger.warn('[local-run-store] RxDB upsert failed; falling back to legacy KV runs', { userId, error });
+  }
+
   await ensureLoaded();
   const bucket = getOrCreateUser(userId);
   const now = Date.now();
@@ -440,22 +519,33 @@ export async function upsertLocalRun(userId: string, username: string, runData: 
 export async function bulkUpsertLocalRuns(
   userId: string,
   runs: Array<{ username: string; runData: Record<string, unknown> }>,
-): Promise<{ added: number; updated: number }> {
-  if (!runs.length) return { added: 0, updated: 0 };
+): Promise<BulkUpsertLocalRunsResult> {
+  if (!runs.length) return { added: 0, updated: 0, records: [], wasUpdates: [] };
+
+  try {
+    return await bulkUpsertLocalRunsViaRxDB(userId, runs);
+  } catch (error) {
+    logger.warn('[local-run-store] RxDB bulk upsert failed; falling back to legacy KV runs', { userId, error });
+  }
+
   await ensureLoaded();
   const bucket = getOrCreateUser(userId);
   const now = Date.now();
   let added = 0;
   let updated = 0;
+  const records: LocalRunRecord[] = [];
+  const wasUpdates: boolean[] = [];
 
   for (const { username, runData } of runs) {
-    const { wasUpdate } = upsertRunInBucket(bucket, userId, username, runData, now);
+    const { index, wasUpdate } = upsertRunInBucket(bucket, userId, username, runData, now);
+    records.push(bucket.runs[index]);
+    wasUpdates.push(wasUpdate);
     if (wasUpdate) updated += 1;
     else added += 1;
   }
 
   await persist();
-  return { added, updated };
+  return { added, updated, records, wasUpdates };
 }
 
 export async function mergeCloudRuns(userId: string, runs: Array<Record<string, unknown>>): Promise<{ added: number; updated: number }> {
@@ -469,15 +559,17 @@ export async function mergeCloudRuns(userId: string, runs: Array<Record<string, 
   );
 }
 
-export async function queueCloudUpsert(input: {
+export type QueueCloudUpsertInput = {
   userId: string;
   username: string;
   runData: Record<string, unknown>;
   canonicalRunData?: Record<string, unknown>;
   screenshot?: { filename: string; contentType?: string | null; tempPath: string } | null;
   localId?: string;
-}) {
-  await ensureLoaded();
+};
+
+async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<void> {
+  if (!cache) throw new Error('Local store not loaded');
   const normalizedRunData = canonicalizeTrackerRunData(input.runData ?? {});
   const normalizedCanonicalRunData = input.canonicalRunData ? canonicalizeTrackerRunData(input.canonicalRunData) : undefined;
   const targetReference = buildTrackerQueuedRunReferenceIdentity({
@@ -490,11 +582,11 @@ export async function queueCloudUpsert(input: {
     ? input.screenshot.tempPath.trim()
     : null;
   if (targetRunId) {
-    cache!.queue = cache!.queue.filter(item => !(item.op === 'delete' && item.userId === input.userId && item.runId === targetRunId));
+    cache.queue = cache.queue.filter(item => !(item.op === 'delete' && item.userId === input.userId && item.runId === targetRunId));
   }
   const retryState = createRetryScheduleState();
   const nextQueue = replaceOrInsertMatchingItem({
-    existingItems: cache!.queue,
+    existingItems: cache.queue,
     matchesExisting: item => {
       if (item.op !== 'upsert' || item.userId !== input.userId) return false;
       return trackerRunReferencesSameEntry({
@@ -526,7 +618,21 @@ export async function queueCloudUpsert(input: {
     await cleanupSupersededQueuedScreenshot(nextQueue.previousItem, nextScreenshotTempPath);
   }
 
-  cache!.queue = nextQueue.items;
+  cache.queue = nextQueue.items;
+}
+
+export async function queueCloudUpsert(input: QueueCloudUpsertInput) {
+  await ensureLoaded();
+  await applyQueueUpsertInMemory(input);
+  await persist();
+}
+
+export async function queueCloudUpsertsBatch(inputs: QueueCloudUpsertInput[]): Promise<void> {
+  if (!inputs.length) return;
+  await ensureLoaded();
+  for (const input of inputs) {
+    await applyQueueUpsertInMemory(input);
+  }
   await persist();
 }
 
@@ -638,8 +744,6 @@ export async function removeQueueItem(id: string) {
 }
 
 export async function removeLocalRun(userId: string, input: { runId?: string | null; localId?: string | null } | string) {
-  await ensureLoaded();
-  const bucket = getOrCreateUser(userId);
   const targetReference = typeof input === 'string'
     ? {
         runId: String(input || '').trim() || undefined,
@@ -650,6 +754,27 @@ export async function removeLocalRun(userId: string, input: { runId?: string | n
         localId: typeof input.localId === 'string' && input.localId.trim().length > 0 ? input.localId.trim() : undefined,
       };
   if (!targetReference.runId && !targetReference.localId) return;
+
+  try {
+    await rxdbStore.removeLocalRunFromBotRxDB(userId, targetReference);
+    await ensureLoaded();
+    const bucket = getOrCreateUser(userId);
+    const before = bucket.runs.length;
+    bucket.runs = bucket.runs.filter((run) => !trackerRunReferencesSameEntry({
+      left: targetReference,
+      right: {
+        runId: typeof run.runId === 'string' && run.runId.trim().length > 0 ? run.runId.trim() : undefined,
+        localId: typeof run.localId === 'string' && run.localId.trim().length > 0 ? run.localId.trim() : undefined,
+      },
+    }));
+    if (bucket.runs.length !== before) await persist();
+    return;
+  } catch (error) {
+    logger.warn('[local-run-store] RxDB remove failed; falling back to legacy KV runs', { userId, error });
+  }
+
+  await ensureLoaded();
+  const bucket = getOrCreateUser(userId);
   const before = bucket.runs.length;
   bucket.runs = bucket.runs.filter((run) => {
     return !trackerRunReferencesSameEntry({

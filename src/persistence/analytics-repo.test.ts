@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AnalyticsRepo } from './analytics-repo';
 
 const mockListDocuments = vi.fn();
 const mockAppendTrackerAnalyticsEvent = vi.fn();
@@ -39,7 +40,6 @@ vi.mock('../core/logger', () => ({
 
 describe('AnalyticsRepo', () => {
   beforeEach(() => {
-    vi.resetModules();
     mockListDocuments.mockReset();
     mockAppendTrackerAnalyticsEvent.mockReset();
   });
@@ -65,7 +65,6 @@ describe('AnalyticsRepo', () => {
       ],
     });
 
-    const { AnalyticsRepo } = await import('./analytics-repo.js');
     const repo = new AnalyticsRepo({
       listDocuments: (...args: unknown[]) => mockListDocuments(...args),
     } as never);

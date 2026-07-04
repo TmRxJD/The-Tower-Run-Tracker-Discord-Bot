@@ -108,7 +108,7 @@
     "availableOptionsHeader": "**Available Options:**",
     "options": [
       { "name": "📤 Upload", "value": "Paste or Scan your Battle Report. You can also attach a screenshot when you paste.", "inline": true },
-      { "name": "📝 Manual Entry", "value": "Manually enter all run details if you prefer not to use paste or OCR.", "inline": true },
+      { "name": "📥 Import Save File", "value": "Import battle reports, lifetime stats, and preview other tracker data from your playerInfo.dat save file.", "inline": true },
       { "name": "📢 Share Last Run", "value": "Share your last logged run with others in the channel.", "inline": true },
       { "name": "✏️ Edit Last", "value": "Edit the most recent run you logged. Lets you quickly fix mistakes or update notes.", "inline": true },
       { "name": "🗑️ Remove Last", "value": "Remove your most recent logged run with confirmation.", "inline": true },
@@ -144,7 +144,7 @@
     "mainRows": [
       [
         { "key": "addRun", "label": "Add Run", "style": "Success", "emoji": "➕" },
-        { "key": "manual", "label": "Manual Entry", "style": "Primary", "emoji": "📝" },
+        { "key": "import", "label": "Import Save File", "style": "Primary", "emoji": "📥" },
         { "key": "shareLastMenu", "label": "Share Last Run", "style": "Success", "emoji": "📢" }
       ],
       [
@@ -158,6 +158,39 @@
         { "key": "settings", "label": "Settings", "style": "Secondary", "emoji": "⚙️" }
       ]
     ]
+  },
+  "import": {
+    "modalTitle": "Import from playerInfo.dat",
+    "fileLabel": "playerInfo.dat save file",
+    "processing": "Parsing save file and scanning tracker data...",
+    "downloading": "Downloading save file...",
+    "importing": "Importing selected tracker data...",
+    "importingTrackerTemplate": "Importing **{label}** ({index}/{total})...",
+    "trackerSelectPlaceholder": "Select trackers to import",
+    "noFile": "No playerInfo.dat file was attached. Please try again.",
+    "noRunsFound": "No importable data was found in that save file.",
+    "noNewRunsTemplate": "Found **{total}** battle reports in the save, but all are already in your tracker ({skipped} duplicates skipped).",
+    "decodeFailed": "Could not read that save file. Make sure you selected a valid playerInfo.dat export.",
+    "downloadFailed": "Could not download the attached save file. Please try again.",
+    "timedOut": "Import timed out. Please try again.",
+    "sessionExpired": "Import session expired. Please start again with /track.",
+    "importFailed": "Import failed. Please try again.",
+    "cancelled": "Import cancelled.",
+    "reviewTitle": "📥 Import Preview",
+    "reviewDescriptionTemplate": "Found data for multiple trackers in your save. Use the dropdown to choose what to import, then review the battle report preview table below.\n\n{trackerSummary}",
+    "successTitle": "✅ Import Complete",
+    "successDescriptionTemplate": "Finished importing selected trackers.\n\n{outcomeSummary}",
+    "shared": "Import summary shared to channel.",
+    "shareFailed": "Unable to share import summary right now.",
+    "shareUnavailable": "Cannot share in this channel.",
+    "buttons": {
+      "accept": "Import Runs",
+      "cancel": "Cancel",
+      "viewWebsite": "View Website",
+      "openFilePicker": "📁 Select File"
+    },
+    "instructionsTitle": "📥 Import from playerInfo.dat",
+    "instructionsDescription": "Select your **playerInfo.dat** save file to import battle reports, lifetime stats, and preview other tracker data found in the save.\n\n**Where to find it:**\n\n📱 **Android (physical device)**\n`Internal Storage/Android/data/com.TechTreeGames.TheTower/files/playerInfo.dat`\n⚠️ Android blocks direct folder access — connect to a PC via USB to browse this path.\n\n🖥️ **Android Emulator** (BlueStacks, LDPlayer, etc.)\n`/sdcard/Android/data/com.TechTreeGames.TheTower/files/playerInfo.dat`\n\n🍎 **macOS**\n`~/Library/Containers/com.TechTreeGames.TheTower/Data/Documents/playerInfo.dat`\n\n🚫 **iPhone/iOS** — save file export is not supported on iOS."
   },
   "submission": {
     "title": "The Tower Run Tracker",

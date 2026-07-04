@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const runDirectVisionOcrMock = vi.fn()
@@ -110,9 +108,10 @@ import { parseLifetimeTrackerOcrText } from '@tmrxjd/platform/tools'
 import { runOCR } from './tracker-api-client'
 
 function loadAttachment(fileName: string): { data: Buffer; filename: string; contentType: string } {
-  const filePath = resolve('c:/Users/jdion/Projects/TrackerWebsite/the-tower-run-tracker/tmp', fileName)
+  // Minimal valid PNG header — OCR paths are mocked; bytes are not decoded in these tests.
+  const pngHeader = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489', 'hex')
   return {
-    data: readFileSync(filePath),
+    data: pngHeader,
     filename: fileName,
     contentType: 'image/png',
   }

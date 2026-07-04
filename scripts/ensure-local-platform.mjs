@@ -6,12 +6,21 @@ import process from 'node:process'
 const action = process.argv[2] ?? 'ensure'
 const repoRoot = resolve(import.meta.dirname, '..')
 const installedPath = resolve(repoRoot, 'node_modules', '@tmrxjd', 'platform')
-const localPlatformPath = resolve(repoRoot, '..', '..', 'TrackerWebsite', 'the-tower-run-tracker', 'packages', 'platform')
+const localMonorepoRoot = resolve(repoRoot, '..', '..', 'TrackerWebsite', 'the-tower-run-tracker')
+const localPlatformPath = resolve(localMonorepoRoot, 'packages', 'platform')
+const localTrackerLanguagesPath = resolve(localMonorepoRoot, 'packages', 'tracker-languages')
+const localPlatformDistToolsIndexJs = resolve(localPlatformPath, 'dist', 'tools', 'index.js')
 const localPlatformDistPath = resolve(localPlatformPath, 'dist', 'tools', 'index.d.ts')
+// Where platform resolves its workspace:* dep on tracker-languages at runtime
+const platformPeerModulesDir = resolve(localPlatformPath, 'node_modules', '@tmrxjd')
+const platformPeerLanguagesPath = resolve(platformPeerModulesDir, 'tracker-languages')
 const modeFilePath = resolve(repoRoot, '.platform-mode')
-const mode = resolveMode()
 const isCi = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
-const shouldUseLocal = mode === 'local' && !isCi && existsSync(localPlatformPath)
+
+function shouldUseLocalPlatform() {
+  const mode = resolveMode()
+  return mode === 'local' && !isCi && existsSync(localPlatformPath)
+}
 
 function resolveDeploymentMode() {
   const deploymentMode = (process.env.DEPLOYMENT_MODE ?? process.env.NODE_ENV ?? '').trim().toLowerCase()
@@ -76,8 +85,40 @@ function isSymlinkToLocalPlatform() {
   }
 }
 
+function isSymlinkToLocalTrackerLanguages() {
+  if (!existsSync(platformPeerLanguagesPath)) return false
+  try {
+    const stat = lstatSync(platformPeerLanguagesPath)
+    if (!stat.isSymbolicLink()) return false
+    return resolve(dirname(platformPeerLanguagesPath), readlinkSync(platformPeerLanguagesPath)) === localTrackerLanguagesPath
+  } catch {
+    return false
+  }
+}
+
+function linkTrackerLanguages() {
+  if (!existsSync(localTrackerLanguagesPath)) {
+    process.stdout.write(`[platform] tracker-languages not found at ${localTrackerLanguagesPath}, skipping peer link\n`)
+    return
+  }
+  if (isSymlinkToLocalTrackerLanguages()) {
+    process.stdout.write('[platform] tracker-languages peer link already active\n')
+    return
+  }
+  rmSync(platformPeerLanguagesPath, { recursive: true, force: true })
+  mkdirSync(platformPeerModulesDir, { recursive: true })
+  symlinkSync(localTrackerLanguagesPath, platformPeerLanguagesPath, process.platform === 'win32' ? 'junction' : 'dir')
+  process.stdout.write(`[platform] linked tracker-languages peer from ${localTrackerLanguagesPath}\n`)
+}
+
+function unlinkTrackerLanguages() {
+  if (!isSymlinkToLocalTrackerLanguages()) return
+  rmSync(platformPeerLanguagesPath, { recursive: true, force: true })
+  process.stdout.write('[platform] removed tracker-languages peer link\n')
+}
+
 function ensureLocalPlatformBuild() {
-  if (existsSync(localPlatformDistPath)) {
+  if (existsSync(localPlatformDistPath) && existsSync(localPlatformDistToolsIndexJs)) {
     return
   }
   process.stdout.write(`[platform] building local package at ${localPlatformPath}\n`)
@@ -89,13 +130,14 @@ function ensureLocalPlatformBuild() {
 }
 
 function linkLocalPlatform() {
-  if (!shouldUseLocal) {
+  if (!shouldUseLocalPlatform()) {
     process.stdout.write('[platform] using published package resolution\n')
     return
   }
 
   if (isSymlinkToLocalPlatform()) {
     process.stdout.write('[platform] local package link already active\n')
+    linkTrackerLanguages()
     return
   }
 
@@ -104,13 +146,16 @@ function linkLocalPlatform() {
   mkdirSync(dirname(installedPath), { recursive: true })
   symlinkSync(localPlatformPath, installedPath, process.platform === 'win32' ? 'junction' : 'dir')
   process.stdout.write(`[platform] linked local package from ${localPlatformPath}\n`)
+  linkTrackerLanguages()
 }
 
 function ensurePublishedPlatform() {
-  if (shouldUseLocal) {
+  if (shouldUseLocalPlatform()) {
     process.stdout.write('[platform] using local package resolution\n')
     return
   }
+
+  unlinkTrackerLanguages()
 
   if (!isSymlinkToLocalPlatform() && existsSync(installedPath)) {
     process.stdout.write('[platform] published package already active\n')
@@ -123,7 +168,7 @@ function ensurePublishedPlatform() {
 }
 
 function ensurePlatformResolution() {
-  if (shouldUseLocal) {
+  if (shouldUseLocalPlatform()) {
     linkLocalPlatform()
     return
   }
@@ -133,11 +178,11 @@ function ensurePlatformResolution() {
 
 function printStatus() {
   if (isSymlinkToLocalPlatform()) {
-    process.stdout.write(`mode=${mode}\nactive=local\npath=${localPlatformPath}\n`)
+    process.stdout.write(`mode=${resolveMode()}\nactive=local\npath=${localPlatformPath}\n`)
     return
   }
 
-  process.stdout.write(`mode=${mode}\nactive=${shouldUseLocal ? 'published-installed-local-available' : 'published'}\npath=${installedPath}\n`)
+  process.stdout.write(`mode=${resolveMode()}\nactive=${shouldUseLocalPlatform() ? 'published-installed-local-available' : 'published'}\npath=${installedPath}\n`)
 }
 
 function useRegistry() {

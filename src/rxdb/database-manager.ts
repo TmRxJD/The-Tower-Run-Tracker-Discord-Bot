@@ -1,38 +1,110 @@
 import type { BotRunTrackerRxDatabase } from './init-database';
-import { initBotRunTrackerRxDatabase } from './init-database';
 
-const databaseByScope = new Map<string, BotRunTrackerRxDatabase>();
-const initPromiseByScope = new Map<string, Promise<BotRunTrackerRxDatabase>>();
+import { initSharedBotRunTrackerRxDatabase } from './init-database';
+
+
+
+let sharedDatabase: BotRunTrackerRxDatabase | null = null;
+
+let initPromise: Promise<BotRunTrackerRxDatabase> | null = null;
+
+
 
 export async function getOrInitBotRunTrackerRxDatabase(scopeId: string): Promise<BotRunTrackerRxDatabase> {
-  const normalizedScope = scopeId.trim();
-  if (!normalizedScope) {
-    throw new Error('Bot run tracker RxDB scope id is required.');
+  void scopeId;
+
+  if (sharedDatabase) {
+
+    return sharedDatabase;
+
   }
 
-  const cached = databaseByScope.get(normalizedScope);
-  if (cached) {
-    return cached;
+
+
+  if (initPromise) {
+
+    return initPromise;
+
   }
 
-  const inFlight = initPromiseByScope.get(normalizedScope);
-  if (inFlight) {
-    return inFlight;
-  }
 
-  const initPromise = initBotRunTrackerRxDatabase(normalizedScope).then((db) => {
-    databaseByScope.set(normalizedScope, db);
-    initPromiseByScope.delete(normalizedScope);
-    return db;
-  }).catch((error) => {
-    initPromiseByScope.delete(normalizedScope);
-    throw error;
-  });
 
-  initPromiseByScope.set(normalizedScope, initPromise);
-  return initPromise;
+  initPromise = initSharedBotRunTrackerRxDatabase()
+
+    .then((db) => {
+
+      sharedDatabase = db;
+
+      return db;
+
+    })
+
+    .catch((error) => {
+
+      initPromise = null;
+
+      throw error;
+
+    });
+
+
+
+  const db = await initPromise;
+
+  initPromise = null;
+
+  return db;
+
 }
 
-export function getActiveBotRunTrackerRxDatabase(scopeId: string): BotRunTrackerRxDatabase | null {
-  return databaseByScope.get(scopeId.trim()) ?? null;
+
+
+export function getActiveBotRunTrackerRxDatabase(scopeId?: string): BotRunTrackerRxDatabase | null {
+  void scopeId;
+
+  return sharedDatabase;
+
 }
+
+
+
+export async function releaseBotRunTrackerRxDatabase(scopeId: string): Promise<void> {
+
+  const { unbindBotRunTrackerRxDBInboundSync } = await import('./reactive-sync.js');
+
+  unbindBotRunTrackerRxDBInboundSync(scopeId);
+
+}
+
+export async function destroySharedBotRunTrackerRxDatabase(): Promise<void> {
+  const { resetSharedBotRunTrackerRxDatabase } = await import('./init-database.js');
+  sharedDatabase = null;
+  initPromise = null;
+  await resetSharedBotRunTrackerRxDatabase();
+}
+
+
+
+export function getRunTrackerDatabaseManagerStats(): {
+
+  openDatabases: number;
+
+  openCollectionsEstimate: number;
+
+  maxOpenDatabases: number;
+
+} {
+
+  return {
+
+    openDatabases: sharedDatabase ? 1 : 0,
+
+    openCollectionsEstimate: sharedDatabase ? 2 : 0,
+
+    maxOpenDatabases: 1,
+
+  };
+
+}
+
+

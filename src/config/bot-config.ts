@@ -63,6 +63,7 @@ export const defaultBotConfig = {
           ] as const,
         },
         screenshot: { name: 'screenshot', description: 'Screenshot of your run' },
+        savefile: { name: 'savefile', description: 'playerInfo.dat save file to import battle reports' },
         settings: { name: 'settings', description: 'Open settings menu' },
       },
       messages: {

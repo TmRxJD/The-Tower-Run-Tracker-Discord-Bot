@@ -3,7 +3,7 @@ import { MessageFlagsBitField } from 'discord.js';
 import { getBotConfig } from '../../config/bot-config';
 import { getUserSettings } from './tracker-api-client';
 import { asTrackReplyInteraction } from './handlers/review-interaction-helpers';
-import { renderTrackMenu, handleDirectTextPaste, handleDirectAttachment } from './handlers';
+import { renderTrackMenu, handleDirectTextPaste, handleDirectAttachment, handleDirectSaveImport } from './handlers';
 import { buildSettingsPayload } from './handlers/settings-handlers';
 import { setTrackerFlowMode, setTrackerInitialRunType } from './flow-mode-store';
 
@@ -14,6 +14,7 @@ interface TrackOptions {
   runType?: string;
   settingsRequested: boolean;
   attachment?: Attachment | null;
+  saveFile?: Attachment | null;
 }
 
 export async function handleTrackWorkflow(interaction: ChatInputCommandInteraction, options: TrackOptions) {
@@ -51,6 +52,22 @@ export async function handleTrackWorkflow(interaction: ChatInputCommandInteracti
       await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
     }
     await handleDirectTextPaste(trackInteraction, options.paste, normalizedAttachment, options.note ?? null, options.runType ?? null, mode);
+    return;
+  }
+
+  const normalizedSaveFile = options.saveFile
+    ? {
+        url: options.saveFile.url,
+        name: options.saveFile.name,
+        contentType: options.saveFile.contentType ?? undefined,
+      }
+    : null;
+
+  if (normalizedSaveFile && mode === 'track') {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
+    }
+    await handleDirectSaveImport(trackInteraction, normalizedSaveFile);
     return;
   }
 

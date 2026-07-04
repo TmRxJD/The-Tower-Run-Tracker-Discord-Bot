@@ -948,32 +948,6 @@ export async function handleTrackMenuStats(interaction: TrackMenuInteraction) {
   }
 }
 
-export async function handleTrackMenuImport(interaction: TrackMenuInteraction) {
-  const ui = getTrackUiConfig();
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.importYes).setLabel(ui.settings.buttons.yes).setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.importNo).setLabel(ui.settings.buttons.no).setStyle(ButtonStyle.Secondary),
-  );
-  await updateInPlace(interaction, { content: ui.settings.importPrompt, components: [row], embeds: [] });
-}
-
-export async function handleTrackMenuImportYes(interaction: TrackMenuInteraction) {
-  if (canUpdate(interaction)) {
-    const ui = getTrackUiConfig();
-    await interaction.update({
-      content: ui.settings.importAccepted,
-      components: [],
-      embeds: [],
-    }).catch(() => {});
-  }
-}
-
-export async function handleTrackMenuImportNo(interaction: TrackMenuInteraction) {
-  if (canUpdate(interaction)) {
-    const ui = getTrackUiConfig();
-    await interaction.update({ content: ui.settings.importCancelled, components: [], embeds: [] }).catch(() => {});
-  }
-}
 
 export async function handleTrackMenuSelectDeltaMode(interaction: TrackMenuInteraction) {
   try {

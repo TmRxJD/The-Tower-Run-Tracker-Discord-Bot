@@ -6,8 +6,7 @@ import { buildTrackerDocumentEntryReference } from '@tmrxjd/platform/tools';
 import { logError } from './error-handlers';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
-import { resolveInteractionDisplayName } from '../discord-display-name';
-import { createInitialEmbed, createMainMenuButtons } from '../ui/tracker-ui';
+import type { TrackReplyInteractionLike } from '../interaction-types';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
 
@@ -34,34 +33,8 @@ export function resolveRemoveLastRunReference(run: {
 }
 
 async function renderMainMenuFromLatest(interaction: TrackMenuInteraction, mode: 'track' | 'lifetime') {
-  if (mode === 'lifetime') {
-    const entries = await getLocalLifetimeData(interaction.user.id).catch(() => []);
-    const sorted = [...entries].sort((a, b) => new Date(String(b.date ?? '')).getTime() - new Date(String(a.date ?? '')).getTime());
-    const latest = sorted[0] ?? null;
-    const embed = createInitialEmbed({
-      mode,
-      userLabel: resolveInteractionDisplayName(interaction),
-      userId: interaction.user.id,
-      lastRun: latest,
-      runCount: sorted.length,
-      runTypeCounts: {},
-    });
-    const rows = createMainMenuButtons(mode);
-    await interaction.editReply({ content: '', embeds: [embed], components: rows, files: [], attachments: [] }).catch(() => {});
-    return;
-  }
-
-  const summary = await getLastRun(interaction.user.id, { cloudSyncMode: 'none' }).catch(() => null);
-  const embed = createInitialEmbed({
-    mode,
-    userLabel: resolveInteractionDisplayName(interaction),
-    userId: interaction.user.id,
-    lastRun: summary?.lastRun ?? null,
-    runCount: summary?.allRuns?.length ?? 0,
-    runTypeCounts: summary?.runTypeCounts ?? {},
-  });
-  const rows = createMainMenuButtons(mode);
-  await interaction.editReply({ content: '', embeds: [embed], components: rows, files: [], attachments: [] }).catch(() => {});
+  const { renderTrackMenu } = await import('./upload-handlers.js');
+  await renderTrackMenu(interaction as unknown as TrackReplyInteractionLike, mode);
 }
 
 export async function handleTrackMenuRemoveLastPrompt(interaction: TrackMenuInteraction) {

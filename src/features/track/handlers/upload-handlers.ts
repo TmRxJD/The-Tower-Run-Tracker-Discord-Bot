@@ -6,6 +6,7 @@ import type {
   MessageComponentInteraction,
   ModalSubmitInteraction,
   StringSelectMenuBuilder,
+  AttachmentBuilder,
 } from 'discord.js';
 import {
   ActionRowBuilder,
@@ -28,7 +29,10 @@ import {
   parseRunDataFromText,
   findPotentialDuplicateRun,
 } from './upload-helpers';
-import { awaitBackgroundRunHydration, beginBackgroundRunHydration, getLastRun, getLocalLifetimeData, runOCR } from '../tracker-api-client';
+import { getMenuRunSummary, getLocalLifetimeData, getLastRun, runOCR, awaitBackgroundRunHydration } from '../tracker-api-client';
+import { peekMenuPrimedSummary } from '../run-menu-cloud-prime';
+import { beginBackgroundAuthoritySync } from '../run-menu-sync';
+import { applyPerHourChartImage, resolveMainMenuPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { getLocalRuns, getLocalSettings } from '../local-run-store';
 import { resolveInteractionDisplayName } from '../discord-display-name';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
@@ -829,44 +833,83 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
   try {
     const userId = interaction.user.id;
     const userLabel = resolveInteractionDisplayName(interaction);
+
     const summary = resolvedMode === 'lifetime'
       ? await (async () => {
           const entries = await getLocalLifetimeData(userId).catch(() => [] as Array<Record<string, unknown>>);
           const sorted = [...entries].sort((a, b) => new Date(String(b.date ?? '')).getTime() - new Date(String(a.date ?? '')).getTime());
           return {
             lastRun: sorted[0] ?? null,
-            allRuns: sorted,
-            runTypeCounts: {},
+            totalRuns: sorted.length,
+            runTypeCounts: {} as Record<string, number>,
+            recentRunsForAnalytics: sorted,
           };
         })()
-      : await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
+      : await getMenuRunSummary(userId).catch((error) => {
+          const primed = peekMenuPrimedSummary(userId);
+          if (primed) {
+            return primed;
+          }
+          logger.warn('renderTrackMenu summary failed with no primed fallback', { userId, error });
+          throw error;
+        });
 
     const sharedSettings = await getEffectiveUserSharedSettings(userId);
     const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
     const lastRunType = typeof summary?.lastRun?.type === 'string' && summary.lastRun.type.trim() ? summary.lastRun.type : 'Farming';
-    const allRunsArr = (summary?.allRuns ?? []) as Record<string, unknown>[];
-    const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 0
-      ? computeTrackerRunDeltaBaseline(allRunsArr, lastRunType, deltaMode) ?? undefined
+    const analyticsRuns = summary.recentRunsForAnalytics ?? [];
+    const deltaResult = deltaMode !== 'disabled' && analyticsRuns.length > 0
+      ? computeTrackerRunDeltaBaseline(analyticsRuns, lastRunType, deltaMode) ?? undefined
       : undefined;
     const embed = createInitialEmbed({
       mode: resolvedMode,
       userLabel,
       userId,
       lastRun: summary?.lastRun ?? null,
-      runCount: summary?.allRuns?.length ?? 0,
+      runCount: summary?.totalRuns ?? 0,
       runTypeCounts: summary?.runTypeCounts ?? {},
       deltaResult,
     });
     const rows = createMainMenuButtons(resolvedMode);
+    let chartFiles: AttachmentBuilder[] = [];
+    if (resolvedMode !== 'lifetime' && summary?.lastRun && analyticsRuns.length > 0) {
+      const chartResult = await resolveMainMenuPerHourChartAttachment(analyticsRuns, lastRunType);
+      if (chartResult.attachment) {
+        chartFiles = [chartResult.attachment];
+        applyPerHourChartImage(embed, chartFiles);
+        logger.warn('renderTrackMenu attached per-hour chart', {
+          userId,
+          runType: chartResult.runType,
+          preferredRunType: lastRunType,
+          runCount: analyticsRuns.length,
+          fileCount: chartFiles.length,
+        });
+      } else {
+        logger.warn('renderTrackMenu skipped per-hour chart (insufficient chartable data)', {
+          userId,
+          runType: lastRunType,
+          runCount: analyticsRuns.length,
+        });
+      }
+    }
+    const menuPayload = {
+      content: '',
+      embeds: [embed],
+      components: rows,
+      files: chartFiles,
+    };
     if (interaction.replied || interaction.deferred) {
-      await interaction.editReply({ content: '', embeds: [embed], components: rows, files: [], attachments: [] }).catch(() => {});
+      await interaction.editReply(menuPayload).catch(error => {
+        logger.warn('renderTrackMenu editReply failed', error);
+      });
     } else {
-      await interaction.reply({ embeds: [embed], components: rows, ephemeral: true }).catch(() => {});
+      await interaction.reply({ ...menuPayload, ephemeral: true }).catch(error => {
+        logger.warn('renderTrackMenu reply failed', error);
+      });
     }
 
-    // Background: hydrate full run history for older runs — does NOT update the displayed menu.
     if (resolvedMode !== 'lifetime') {
-      beginBackgroundRunHydration(userId);
+      beginBackgroundAuthoritySync(userId);
     }
   } catch (error) {
     await logError(interaction.client as LogClient, interaction.user, error, 'render_track_menu');
@@ -957,7 +1000,7 @@ export async function handleTrackMenuEditLast(interaction: MessageComponentInter
       await renderEditFieldPicker(interaction as unknown as TrackReplyInteractionLike, pending.token, pending);
       return;
     }
-    const summary = await getLastRun(interaction.user.id);
+    const summary = await getLastRun(interaction.user.id, { cloudSyncMode: 'none' });
     if (!summary?.lastRun) {
       await interaction.editReply({ content: uploadUi.editLastNone, embeds: [], components: [] }).catch(() => {});
       return;
@@ -1017,9 +1060,6 @@ export {
   handleTrackMenuSetLogChannel,
   handleTrackMenuShareSettings,
   handleTrackMenuStats,
-  handleTrackMenuImport,
-  handleTrackMenuImportYes,
-  handleTrackMenuImportNo,
 } from './settings-handlers';
 
 export async function handleDirectTextPaste(

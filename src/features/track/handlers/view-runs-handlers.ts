@@ -14,48 +14,29 @@ import { randomUUID } from 'node:crypto';
 import { getLastRun, getLocalLifetimeData, getUserSettings, removeLastRun, removeLifetimeEntry } from '../tracker-api-client';
 import { createPendingRun } from '../pending-run-store';
 import { renderEditFieldPicker } from './data-review-handlers';
-import { calculateHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
 import { getViewRunsState, updateViewRunsState } from '../view-runs-store';
 import { parsePrefixedTrackerToken, parseViewRunsOrientationTarget, TRACKER_IDS, withToken, withViewRunsOrientationTarget } from '../track-custom-ids';
 import { logError } from './error-handlers';
-import { generateCoverageDescription } from './upload-helpers';
 import { renderViewRunsTablePng } from '../ui/view-runs-chart';
+import {
+  buildRunIndexMap,
+  buildViewRunsTableImage,
+  normalizeTrackColumnOrder,
+  runIdentityKey,
+  TRACK_COLUMN_OPTIONS,
+  type ViewRunsTableRun,
+} from '../ui/view-runs-table-image';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
+import { resolveShareEmbedChannelPayload } from '../share/share-embed-delivery';
 import { buildTrackerDocumentEntryReference, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 import type { TrackReplyInteractionLike } from '../interaction-types';
-import { trimDisplayTimeSeconds } from './upload-helpers';
 
-type RunListItem = {
-  runId?: string;
-  localId?: string;
-  type?: string;
-  tier?: string | number;
-  tierDisplay?: string | number;
-  wave?: string | number;
-  roundDuration?: string;
-  duration?: string;
-  killedBy?: string;
-  totalCoins?: string | number;
-  coins?: string | number;
-  totalCells?: string | number;
-  cells?: string | number;
-  totalDice?: string | number;
-  rerollShards?: string | number;
-  dice?: string | number;
-  date?: string;
-  time?: string;
-  runDate?: string;
-  runTime?: string;
-  coinsEarned?: string | number;
-  cellsEarned?: string | number;
-  rerollShardsEarned?: string | number;
-  [key: string]: unknown;
-};
+type RunListItem = ViewRunsTableRun;
 
 type ViewFilters = {
   selectedTypes: string[];
@@ -150,28 +131,6 @@ async function updateOrEdit(interaction: TrackMenuInteraction, payload: {
   }
 }
 
-const TRACK_COLUMN_OPTIONS = [
-  'Tier',
-  'Wave',
-  'Duration',
-  'Coins',
-  'Cells',
-  'Dice',
-  'Coins/Hr',
-  'Cells/Hr',
-  'Dice/Hr',
-  'Golden Tower',
-  'Black Hole',
-  'Spotlight',
-  'Death Wave',
-  'Orbs',
-  'Golden Bot',
-  'Amp Bot',
-  'Summoned',
-  'Type',
-  'Date/Time',
-] as const;
-
 function formatMetric(value: unknown): string {
   if (value === null || value === undefined) return '0';
   const raw = String(value).trim();
@@ -181,170 +140,26 @@ function formatMetric(value: unknown): string {
   return formatNumberForDisplay(parsed);
 }
 
-function normalizeCoveragePercentages(run: RunListItem): Record<'Golden Tower' | 'Black Hole' | 'Spotlight' | 'Death Wave' | 'Orbs' | 'Golden Bot' | 'Amp Bot' | 'Summoned', string> {
-  const fallback = {
-    'Golden Tower': 'N/A',
-    'Black Hole': 'N/A',
-    Spotlight: 'N/A',
-    'Death Wave': 'N/A',
-    Orbs: 'N/A',
-    'Golden Bot': 'N/A',
-    'Amp Bot': 'N/A',
-    Summoned: 'N/A',
-  };
-  const coverage = generateCoverageDescription(run);
-  if (!coverage) return fallback;
-
-  const lines = coverage.split('\n').map(line => line.trim()).filter(Boolean);
-  const map = { ...fallback };
-
-  for (const line of lines) {
-    const match = /^(.+?):\s*([^\s]+)$/.exec(line);
-    if (!match) continue;
-    const key = match[1].toLowerCase().trim();
-    const value = match[2];
-    if (key === 'golden tower') map['Golden Tower'] = value;
-    if (key === 'black hole') map['Black Hole'] = value;
-    if (key === 'spotlight') map.Spotlight = value;
-    if (key === 'death wave') map['Death Wave'] = value;
-    if (key === 'orbs') map.Orbs = value;
-    if (key === 'golden bot') map['Golden Bot'] = value;
-    if (key === 'amp bot') map['Amp Bot'] = value;
-    if (key === 'summon' || key === 'summoned') map.Summoned = value;
+function normalizeRunType(run: RunListItem): string {
+  const raw = run.type;
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw.trim();
   }
-
-  return map;
+  return 'Farming';
 }
 
-function clampCellValue(value: unknown): string {
-  const str = String(value ?? 'N/A').trim() || 'N/A';
-  return str.length > 28 ? `${str.slice(0, 25)}...` : str;
-}
-
-function runIdentityKey(run: RunListItem): string {
-  const runId = String(run.runId ?? '').trim();
-  if (runId) return `runId:${runId}`;
-  const localId = String(run.localId ?? '').trim();
-  if (localId) return `localId:${localId}`;
-  const type = String(run.type ?? 'Farming').trim();
-  const tier = String(run.tierDisplay ?? run.tier ?? '').trim();
-  const wave = String(run.wave ?? '').trim();
-  const duration = String(run.roundDuration ?? run.duration ?? '').trim();
-  const date = String(run.runDate ?? run.date ?? '').trim();
-  const time = String(run.runTime ?? run.time ?? '').trim();
-  return `fp:${type}|${tier}|${wave}|${duration}|${date}|${time}`;
-}
-
-function buildRunIndexMap(runs: RunListItem[]): Map<string, number> {
-  const result = new Map<string, number>();
-  const total = runs.length;
-  runs.forEach((run, index) => {
-    const key = runIdentityKey(run);
-    if (!result.has(key)) {
-      result.set(key, Math.max(1, total - index));
-    }
-  });
-  return result;
-}
-
-function normalizeTrackColumnOrder(columns: string[]): (typeof TRACK_COLUMN_OPTIONS[number])[] {
-  const legacyMap: Record<string, typeof TRACK_COLUMN_OPTIONS[number]> = {
-    Summon: 'Summoned',
-    SMN: 'Summoned',
-    SL: 'Spotlight',
-    DW: 'Death Wave',
-    GB: 'Golden Bot',
-  };
-  const mapped = columns.map((column) => legacyMap[column] ?? column);
-  const selected = new Set(mapped.filter((column): column is typeof TRACK_COLUMN_OPTIONS[number] => TRACK_COLUMN_OPTIONS.includes(column as typeof TRACK_COLUMN_OPTIONS[number])));
-  if (!selected.size) {
-    return [...TRACK_COLUMN_OPTIONS];
+function normalizeRunTier(run: RunListItem): string {
+  const raw = run.tier ?? run.tierDisplay;
+  if (typeof raw === 'string' || typeof raw === 'number') {
+    return String(raw).trim();
   }
-  return TRACK_COLUMN_OPTIONS.filter((column) => selected.has(column));
-}
-
-function buildTrackColumnValue(run: RunListItem, column: typeof TRACK_COLUMN_OPTIONS[number]): string {
-  const duration = String(run.roundDuration ?? run.duration ?? 'N/A');
-  const coins = run.totalCoins ?? run.coins;
-  const cells = run.totalCells ?? run.cells;
-  const dice = run.totalDice ?? run.rerollShards ?? run.dice;
-  const coinsHr = calculateHourlyRate(coins, duration) || 'N/A';
-  const cellsHr = calculateHourlyRate(cells, duration) || 'N/A';
-  const diceHr = calculateHourlyRate(dice, duration) || 'N/A';
-  const rawDate = String(run.runDate ?? run.date ?? '').trim();
-  const rawTime = String(run.runTime ?? run.time ?? '').trim();
-  const dateTime = `${(rawDate ? formatDateToISO(rawDate) : '') || 'Unknown'} ${rawTime ? trimDisplayTimeSeconds(formatTimeTo24h(rawTime)) : ''}`.trim();
-  const coverage = normalizeCoveragePercentages(run);
-
-  const valueByColumn: Record<typeof TRACK_COLUMN_OPTIONS[number], string> = {
-    Tier: String(run.tierDisplay ?? run.tier ?? '?'),
-    Wave: String(run.wave ?? '?'),
-    Duration: duration,
-    Coins: formatMetric(coins),
-    Cells: formatMetric(cells),
-    Dice: formatMetric(dice),
-    'Coins/Hr': String(coinsHr),
-    'Cells/Hr': String(cellsHr),
-    'Dice/Hr': String(diceHr),
-    'Date/Time': dateTime,
-    Type: String(run.type ?? 'Farming'),
-    'Golden Tower': coverage['Golden Tower'],
-    'Black Hole': coverage['Black Hole'],
-    Spotlight: coverage.Spotlight,
-    'Death Wave': coverage['Death Wave'],
-    Orbs: coverage.Orbs,
-    'Golden Bot': coverage['Golden Bot'],
-    'Amp Bot': coverage['Amp Bot'],
-    Summoned: coverage.Summoned,
-  };
-
-  return clampCellValue(valueByColumn[column]);
-}
-
-async function buildTrackRunsImage(
-  page: RunListItem[],
-  runIndexMap: Map<string, number>,
-  selectedColumns: readonly (typeof TRACK_COLUMN_OPTIONS[number])[],
-  orientation: 'landscape' | 'portrait',
-): Promise<Buffer> {
-  if (orientation === 'portrait') {
-    const headers = ['Field', 'Value'];
-    const rows: string[][] = [];
-
-    page.forEach((run, index) => {
-      const runNumber = runIndexMap.get(runIdentityKey(run)) ?? 0;
-      rows.push(['Run', `#${runNumber}`]);
-      selectedColumns.forEach((column) => {
-        rows.push([column, buildTrackColumnValue(run, column)]);
-      });
-      if (index < page.length - 1) {
-        rows.push(['', '']);
-      }
-    });
-
-    return renderViewRunsTablePng({
-      title: 'Run History',
-      headers,
-      rows,
-    });
-  }
-
-  const headers = ['#', ...selectedColumns];
-  const rows = page.map((run) => [
-    String(runIndexMap.get(runIdentityKey(run)) ?? 0),
-    ...selectedColumns.map((column) => buildTrackColumnValue(run, column)),
-  ]);
-  return renderViewRunsTablePng({
-    title: 'Run History',
-    headers,
-    rows,
-  });
+  return '';
 }
 
 function buildFilteredRuns(runs: RunListItem[], filters: ViewFilters): RunListItem[] {
   return runs.filter((run) => {
-    const type = run.type || 'Farming';
-    const tier = String(run.tier ?? run.tierDisplay ?? '');
+    const type = normalizeRunType(run);
+    const tier = normalizeRunTier(run);
     const typeMatch = filters.selectedTypes.includes(type);
     const tierMatch = filters.selectedTiers.includes('All') ? true : filters.selectedTiers.includes(tier);
     return typeMatch && tierMatch;
@@ -451,8 +266,8 @@ async function renderViewRunsPanel(
     return;
   }
 
-  const availableTypes = [...new Set(runs.map((r) => (r.type || 'Farming')))].sort();
-  const availableTiers = [...new Set(runs.map((r) => String(r.tier ?? r.tierDisplay ?? '')).filter(Boolean))]
+  const availableTypes = [...new Set(runs.map((r) => normalizeRunType(r)))].sort();
+  const availableTiers = [...new Set(runs.map((r) => normalizeRunTier(r)).filter(Boolean))]
     .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
   const selectedTypes = state.selectedTypes.length ? state.selectedTypes.filter(t => availableTypes.includes(t)) : [...availableTypes];
@@ -474,11 +289,11 @@ async function renderViewRunsPanel(
 
   let image: Buffer | null = null;
   try {
-    image = await buildTrackRunsImage(page, runIndexMap, selectedColumns, state.orientation);
+    image = await buildViewRunsTableImage(page, runIndexMap, selectedColumns, state.orientation);
   } catch (error) {
     await logError(interaction.client, interaction.user, error, 'track_menu_viewruns_image_render').catch(() => {});
     if (state.orientation === 'portrait') {
-      image = await buildTrackRunsImage(page, runIndexMap, selectedColumns, 'landscape').catch(() => null);
+      image = await buildViewRunsTableImage(page, runIndexMap, selectedColumns, 'landscape').catch(() => null);
     }
   }
   const imageName = `runs-history-${state.orientation}.png`;
@@ -673,7 +488,7 @@ export async function handleTrackMenuShareRuns(interaction: TrackMenuInteraction
         return page.map((run, index) => ({ run, runNumber: offset + index + 1 }));
       }
 
-      const availableTypes = [...new Set(runs.map((r) => (r.type || 'Farming')))].sort();
+      const availableTypes = [...new Set(runs.map((r) => normalizeRunType(r)))].sort();
       const selectedTypes = state.selectedTypes.length ? state.selectedTypes.filter(t => availableTypes.includes(t)) : [...availableTypes];
       const selectedTiers = state.selectedTiers.length ? state.selectedTiers : ['All'];
       const filtered = buildFilteredRuns(runs, { selectedTypes, selectedTiers });
@@ -848,7 +663,11 @@ export async function handleTrackMenuShareRunsConfirm(interaction: TrackMenuInte
     const channel = interaction.channel;
     if (channel && 'send' in channel && typeof channel.send === 'function') {
       try {
-        await channel.send({ embeds: [embed] });
+        const payload = await resolveShareEmbedChannelPayload({
+          userId: session.userId,
+          embed,
+        });
+        await channel.send(payload);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'unknown channel error';
         throw new Error(`Share failed: ${message}`);

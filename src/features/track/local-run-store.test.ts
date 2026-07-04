@@ -8,6 +8,7 @@ import {
   queueCloudDelete,
   queueCloudSettings,
   queueCloudUpsert,
+  queueCloudUpsertsBatch,
   releaseQueuedItemsForImmediateRetry,
   removeQueueItem,
 } from './local-run-store';
@@ -188,5 +189,26 @@ describe('local-run-store queue retry behavior', () => {
     expect(queued[0]?.op).toBe('settings');
     expect(queued[0]?.settingsUpdatedAt).toBe(200);
     expect(queued[0]?.settingsData?.defaultTracker).toBe('Bluestacks');
+  });
+
+  it('queues multiple upserts in one persist', async () => {
+    await queueCloudUpsertsBatch([
+      {
+        userId: TEST_USER_ID,
+        username: 'tester',
+        runData: { localId: 'batch-local-1' },
+        localId: 'batch-local-1',
+      },
+      {
+        userId: TEST_USER_ID,
+        username: 'tester',
+        runData: { localId: 'batch-local-2' },
+        localId: 'batch-local-2',
+      },
+    ]);
+
+    const queued = await getQueueItems(TEST_USER_ID);
+    expect(queued).toHaveLength(2);
+    expect(queued.every(item => item.op === 'upsert')).toBe(true);
   });
 });

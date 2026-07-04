@@ -121,6 +121,7 @@ beforeEach(async () => {
   delete process.env.APPWRITE_JWT;
 
   listDocumentsMock.mockResolvedValue({ documents: [], total: 0 });
+  updateDocumentMock.mockRejectedValue({ code: 404, type: 'document_not_found', message: 'not found' });
 
   await clearQueue('tracker.sync.queue-local-newer');
   await clearQueue('tracker.sync.cloud-newer');
@@ -244,7 +245,7 @@ describe('tracker-api-client settings sync', () => {
         type: 'document_invalid_structure',
         message: 'Invalid document structure: Unknown attribute: "verified"',
       })
-      .mockResolvedValueOnce({ $id: 'cloud-run-1' });
+      .mockResolvedValue({ $id: 'cloud-run-1' });
 
     const result = await logRun({
       userId,
@@ -435,7 +436,7 @@ describe('tracker-api-client settings sync', () => {
     expect(backgroundResult).toEqual({ queuedForCloud: false, cloudUnavailable: false });
     expect(await getQueueItems(userId)).toHaveLength(0);
     expect(createDocumentMock).toHaveBeenCalledWith(
-      'runs-db',
+      'run-tracker-data',
       'runs',
       expect.any(String),
       expect.objectContaining({

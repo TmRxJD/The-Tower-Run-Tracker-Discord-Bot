@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getQueueItems } from './local-run-store';
 
 const mockGetTrackerKv = vi.fn();
 const mockSetTrackerKv = vi.fn();
@@ -16,7 +17,6 @@ vi.mock('../../core/logger', () => ({
 
 describe('local-run-store parity hydration', () => {
   beforeEach(() => {
-    vi.resetModules();
     mockGetTrackerKv.mockReset();
     mockSetTrackerKv.mockReset();
   });
@@ -56,8 +56,7 @@ describe('local-run-store parity hydration', () => {
       ],
     });
 
-    const store = await import('./local-run-store.js');
-    const items = await store.getQueueItems('user-1');
+    const items = await getQueueItems('user-1');
 
     expect(items).toHaveLength(1);
     expect(items[0].id).toBe('queue-1');

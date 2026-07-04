@@ -7,6 +7,13 @@ type ViewRunsState = {
   orientation: 'landscape' | 'portrait';
 };
 
+/** Layout prefs honored outside the Runs Viewer. Filters are viewer-only and must not hide import rows. */
+export type ViewRunsPresentationPrefs = {
+  selectedColumns: string[];
+  orientation: 'landscape' | 'portrait';
+  count: number;
+};
+
 const state = new Map<string, ViewRunsState>();
 
 const defaultColumns = [
@@ -43,6 +50,15 @@ export function getViewRunsState(userId: string): ViewRunsState {
     });
   }
   return state.get(userId)!;
+}
+
+export function getViewRunsPresentationPrefs(userId: string): ViewRunsPresentationPrefs {
+  const { selectedColumns, orientation, count } = getViewRunsState(userId);
+  return {
+    selectedColumns: [...selectedColumns],
+    orientation,
+    count,
+  };
 }
 
 export function updateViewRunsState(userId: string, patch: Partial<ViewRunsState>) {

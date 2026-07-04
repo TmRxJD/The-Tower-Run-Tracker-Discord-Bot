@@ -4,6 +4,7 @@ import { getLocalRuns } from '../local-run-store';
 import { logError } from '../handlers/error-handlers';
 import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from './share-embed';
+import { resolveShareEmbedChannelPayload, type ShareEmbedChannelPayload } from './share-embed-delivery';
 import { getAutoLogMessageRef, setAutoLogMessageRef } from './log-channel-state';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import type { TrackerRunDeltaResult } from '@tmrxjd/platform/tools';
@@ -13,7 +14,7 @@ const LOG_CHANNEL_RESTRICTED_GUILD_ID = '850137217828388904';
 type ReviewInteraction = MessageComponentInteraction | ModalSubmitInteraction;
 
 type EditableLogMessage = {
-  edit?: (payload: { embeds: unknown[]; files?: unknown[] }) => Promise<{ id?: unknown }> | unknown;
+  edit?: (payload: ShareEmbedChannelPayload) => Promise<{ id?: unknown }> | unknown;
   delete: () => Promise<unknown>;
 };
 
@@ -81,7 +82,11 @@ export async function autoShareToConfiguredLogChannel(params: {
       .then(async (message) => {
         const editableMessage = message as EditableLogMessage;
         if (typeof editableMessage.edit === 'function') {
-          const edited = await Promise.resolve(editableMessage.edit({ embeds: [embed], files })).catch(() => null);
+          const edited = await Promise.resolve(editableMessage.edit(await resolveShareEmbedChannelPayload({
+            userId: params.userId,
+            embed,
+            files,
+          }))).catch(() => null);
           const messageId = typeof (edited as { id?: unknown } | null)?.id === 'string'
             ? String((edited as { id?: unknown }).id)
             : previousRef.messageId;
@@ -100,7 +105,11 @@ export async function autoShareToConfiguredLogChannel(params: {
     if (updated) return;
   }
 
-  await channel.send({ embeds: [embed], files }).then(async (message) => {
+  await channel.send(await resolveShareEmbedChannelPayload({
+    userId: params.userId,
+    embed,
+    files,
+  })).then(async (message) => {
     const messageId = typeof (message as { id?: unknown }).id === 'string' ? String((message as { id?: unknown }).id) : null;
     if (!messageId) return;
     await setAutoLogMessageRef(params.userId, params.run, {

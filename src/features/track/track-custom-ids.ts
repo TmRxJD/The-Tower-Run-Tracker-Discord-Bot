@@ -58,6 +58,13 @@ export const TRACKER_IDS = {
     support: 'tracker_support',
     removeLast: 'tracker_remove_last',
     cancel: 'tracker_cancel',
+    import: 'tracker_import_runs',
+    importOpen: 'tracker_import_open',
+    importModal: 'tracker_import_modal',
+    importFile: 'tracker_import_file',
+    importAcceptPrefix: 'tracker_import_accept:',
+    importCancelPrefix: 'tracker_import_cancel:',
+    importSelectPrefix: 'tracker_import_select:',
   },
   util: {
     cancelPlain: 'tracker_cancel_plain',
@@ -120,6 +127,10 @@ export const TRACKER_IDS = {
     next: 'tracker_analysis_next',
     select: 'tracker_analysis_select',
     pagePrefix: 'tracker_analysis_page:',
+  },
+  share: {
+    trackRun: 'tracker_share_track_run',
+    viewBuildPrefix: 'tracker_share_view_build:',
   },
 } as const;
 

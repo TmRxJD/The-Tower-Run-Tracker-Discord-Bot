@@ -1,6 +1,11 @@
 import { stitchTrackerRunCollections } from '@tmrxjd/platform/tools';
+
 import { logger } from '../core/logger';
+
+import { BOT_RUN_RXDB_SCOPE_USER_ID_FIELD } from './bot-run-schemas';
+
 import { getActiveBotRunTrackerRxDatabase, getOrInitBotRunTrackerRxDatabase } from './database-manager';
+
 import type { TrackerRunPartDocument } from '@tmrxjd/platform/tools';
 
 export type BotRunInboundChangeHandler = (input: {
@@ -9,6 +14,7 @@ export type BotRunInboundChangeHandler = (input: {
 }) => void;
 
 const inboundHandlers = new Set<BotRunInboundChangeHandler>();
+
 const subscriptionsByUser = new Map<string, { unsubscribe: () => void }>();
 
 function stitchRunDocuments(
@@ -28,14 +34,15 @@ function stitchRunDocuments(
 }
 
 async function notifyInboundRunsChanged(userId: string): Promise<void> {
-  const db = getActiveBotRunTrackerRxDatabase(userId);
+  const db = getActiveBotRunTrackerRxDatabase();
   if (!db) {
     return;
   }
 
+  const selector = { [BOT_RUN_RXDB_SCOPE_USER_ID_FIELD]: userId.trim() };
   const [part1Docs, part2Docs] = await Promise.all([
-    db.run_part_1.find().exec(),
-    db.run_part_2.find().exec(),
+    db.run_part_1.find({ selector }).exec(),
+    db.run_part_2.find({ selector }).exec(),
   ]);
   const runs = stitchRunDocuments(part1Docs, part2Docs);
 
@@ -60,13 +67,44 @@ export async function bindBotRunTrackerRxDBInboundSync(userId: string): Promise<
   subscriptionsByUser.get(normalizedUserId)?.unsubscribe();
 
   const db = await getOrInitBotRunTrackerRxDatabase(normalizedUserId);
-  const subscription = db.run_part_1.find().$.subscribe(() => {
-    void notifyInboundRunsChanged(normalizedUserId).catch((error) => {
-      logger.warn('[rxdb] inbound run notification failed', { userId: normalizedUserId, error });
+  const selector = { [BOT_RUN_RXDB_SCOPE_USER_ID_FIELD]: normalizedUserId };
+  let part1CollectionReady = false;
+  let part2CollectionReady = false;
+  let notifyDebounceToken = 0;
+
+  const scheduleInboundNotify = () => {
+    if (!part1CollectionReady || !part2CollectionReady) {
+      return;
+    }
+
+    const token = ++notifyDebounceToken;
+    queueMicrotask(() => {
+      queueMicrotask(() => {
+        if (token !== notifyDebounceToken) {
+          return;
+        }
+        void notifyInboundRunsChanged(normalizedUserId).catch((error) => {
+          logger.warn('[rxdb] inbound run notification failed', { userId: normalizedUserId, error });
+        });
+      });
     });
+  };
+
+  const part1Subscription = db.run_part_1.find({ selector }).$.subscribe(() => {
+    part1CollectionReady = true;
+    scheduleInboundNotify();
+  });
+  const part2Subscription = db.run_part_2.find({ selector }).$.subscribe(() => {
+    part2CollectionReady = true;
+    scheduleInboundNotify();
   });
 
-  subscriptionsByUser.set(normalizedUserId, subscription);
+  subscriptionsByUser.set(normalizedUserId, {
+    unsubscribe: () => {
+      part1Subscription.unsubscribe();
+      part2Subscription.unsubscribe();
+    },
+  });
 }
 
 export function unbindBotRunTrackerRxDBInboundSync(userId: string): void {

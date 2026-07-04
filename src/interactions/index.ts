@@ -44,8 +44,10 @@ import {
   handleTrackMenuViewRunsTiers,
   handleTrackMenuViewRunsTypes,
   handleTrackMenuImport,
-  handleTrackMenuImportNo,
-  handleTrackMenuImportYes,
+  handleTrackMenuImportOpen,
+  handleTrackMenuImportAccept,
+  handleTrackMenuImportCancel,
+  handleTrackMenuImportSelect,
   handleTrackMenuCancelRemove,
   handleTrackMenuConfirmRemove,
   handleTrackMenuRemoveLastPrompt,
@@ -65,6 +67,8 @@ import {
   handleTrackMenuMainMenu,
   handleTrackMenuSelectDeltaMode,
   handleTrackMenuToggleShareChart,
+  handleShareEmbedTrackRun,
+  handleShareEmbedViewBuild,
 } from '../features/track/handlers';
 import {
   handleTrackMenuAnalysis,
@@ -139,8 +143,11 @@ export function registerComponentHandlers(client: TrackerBotClient) {
     { prefix: TRACKER_IDS.settings.cloudToggle, handler: handleTrackMenuToggleCloud },
     { prefix: TRACKER_IDS.settings.share, handler: handleTrackMenuShareSettings },
     { prefix: TRACKER_IDS.settings.stats, handler: handleTrackMenuStats },
-    { prefix: TRACKER_IDS.settings.importYes, handler: handleTrackMenuImportYes },
-    { prefix: TRACKER_IDS.settings.importNo, handler: handleTrackMenuImportNo },
+    { prefix: TRACKER_IDS.flow.importAcceptPrefix, handler: handleTrackMenuImportAccept },
+    { prefix: TRACKER_IDS.flow.importCancelPrefix, handler: handleTrackMenuImportCancel },
+    { prefix: TRACKER_IDS.flow.importSelectPrefix, handler: handleTrackMenuImportSelect },
+    { prefix: TRACKER_IDS.flow.importOpen, handler: handleTrackMenuImportOpen },
+    { prefix: TRACKER_IDS.flow.import, handler: handleTrackMenuImport },
     { prefix: TRACKER_IDS.settings.import, handler: handleTrackMenuImport },
     { prefix: TRACKER_IDS.flow.cancel, handler: handleTrackMenuCancel },
     { prefix: TRACKER_IDS.settings.deltaMode, handler: handleTrackMenuSelectDeltaMode },
@@ -149,5 +156,7 @@ export function registerComponentHandlers(client: TrackerBotClient) {
     { prefix: TRACKER_IDS.analysis.prev, handler: handleTrackMenuAnalysisPrev },
     { prefix: TRACKER_IDS.analysis.next, handler: handleTrackMenuAnalysisNext },
     { prefix: TRACKER_IDS.analysis.select, handler: handleTrackMenuAnalysisSelect },
+    { prefix: TRACKER_IDS.share.trackRun, handler: handleShareEmbedTrackRun },
+    { prefix: TRACKER_IDS.share.viewBuildPrefix, handler: handleShareEmbedViewBuild },
   ]);
 }

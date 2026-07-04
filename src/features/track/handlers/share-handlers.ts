@@ -1,6 +1,7 @@
 import { logError } from './error-handlers';
 import { getLastRun, getLocalLifetimeData, getUserSettings } from '../tracker-api-client';
 import { buildShareEmbed } from '../share/share-embed';
+import { resolveShareEmbedChannelPayload, type ShareEmbedChannelPayload } from '../share/share-embed-delivery';
 import { buildEmbedUserFromInteraction, resolveInteractionDisplayName } from '../discord-display-name';
 import { getShareableRun, setShareableRun } from '../share/share-state';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
@@ -144,12 +145,16 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         embed.setImage(latest.screenshotUrl);
       }
 
-      const channelForLifetime = interaction.channel as { send?: (payload: { embeds: unknown[] }) => Promise<unknown> } | null;
+      const channelForLifetime = interaction.channel as { send?: (payload: ShareEmbedChannelPayload) => Promise<unknown> } | null;
       if (!channelForLifetime?.send) {
         throw new Error('Unable to send share embed in this channel.');
       }
       try {
-        await channelForLifetime.send({ embeds: [embed] });
+        const payload = await resolveShareEmbedChannelPayload({
+          userId,
+          embed,
+        });
+        await channelForLifetime.send(payload);
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'unknown channel error';
         throw new Error(`Unable to send share embed in this channel: ${reason}`);
@@ -218,7 +223,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         deltaResult,
       });
 
-      const channelWithSend = interaction.channel as { send?: (payload: { embeds: unknown[]; files?: unknown[] }) => Promise<unknown> } | null;
+      const channelWithSend = interaction.channel as { send?: (payload: ShareEmbedChannelPayload) => Promise<unknown> } | null;
       if (embed) {
         if (!channelWithSend?.send) {
           throw new Error('Unable to send share embed in this channel.');
@@ -231,7 +236,12 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
 
         try {
-          await channelWithSend.send({ embeds: [embed], files: chartAttachment ? [chartAttachment] : [] });
+          const payload = await resolveShareEmbedChannelPayload({
+            userId,
+            embed,
+            files: chartAttachment ? [chartAttachment] : [],
+          });
+          await channelWithSend.send(payload);
         } catch (error) {
           const reason = error instanceof Error ? error.message : 'unknown channel error';
           throw new Error(`Unable to send share embed in this channel: ${reason}`);

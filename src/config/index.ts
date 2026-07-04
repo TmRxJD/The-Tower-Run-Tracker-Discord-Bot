@@ -41,6 +41,8 @@ export interface AppConfig {
     analyticsCollectionId: string;
     userSettingsCollectionId: string;
     guildsCollectionId: string;
+    botsTrackerDatabaseId: string;
+    botsTrackerCollectionId: string;
     apiKey?: string;
   };
   trackerApi: {
@@ -72,6 +74,8 @@ const envSchema = z.object({
   APPWRITE_ANALYTICS_COLLECTION_ID: z.string().min(1),
   APPWRITE_USER_SETTINGS_COLLECTION_ID: z.string().min(1),
   APPWRITE_GUILDS_COLLECTION_ID: z.string().min(1).optional(),
+  APPWRITE_BOTS_TRACKER_DATABASE_ID: z.string().min(1).optional(),
+  APPWRITE_BOTS_TRACKER_COLLECTION_ID: z.string().min(1).optional(),
   APPWRITE_API_KEY: z.string().min(1).optional(),
   TRACKERAI_CLOUD_AI_ENDPOINT: z.string().url().optional(),
   TRACKERAI_CLOUD_AI_API_KEY: z.string().min(1).optional(),
@@ -211,6 +215,8 @@ export function loadConfig(): AppConfig {
       analyticsCollectionId: parsed.APPWRITE_ANALYTICS_COLLECTION_ID,
       userSettingsCollectionId: parsed.APPWRITE_USER_SETTINGS_COLLECTION_ID,
       guildsCollectionId: parsed.APPWRITE_GUILDS_COLLECTION_ID ?? 'guilds',
+      botsTrackerDatabaseId: parsed.APPWRITE_BOTS_TRACKER_DATABASE_ID ?? 'cloud-saves',
+      botsTrackerCollectionId: parsed.APPWRITE_BOTS_TRACKER_COLLECTION_ID ?? 'tracker_bots',
       apiKey: parsed.APPWRITE_API_KEY,
     },
     trackerApi: parsed.TRACKER_API_URL && parsed.TRACKER_API_KEY

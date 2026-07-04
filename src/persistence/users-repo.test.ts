@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { UsersRepo } from './users-repo.js';
 
 const mockListFirstDocument = vi.fn();
 const mockGetTrackerUserSettings = vi.fn();
@@ -40,7 +41,6 @@ vi.mock('node-appwrite', () => ({
 
 describe('UsersRepo', () => {
   beforeEach(() => {
-    vi.resetModules();
     mockListFirstDocument.mockReset();
     mockGetTrackerUserSettings.mockReset();
     mockUpsertTrackerUserSettings.mockReset();
@@ -63,7 +63,6 @@ describe('UsersRepo', () => {
       unexpectedField: 'ignored',
     });
 
-    const { UsersRepo } = await import('./users-repo.js');
     const repo = new UsersRepo({
       listDocuments: (...args: unknown[]) => mockListFirstDocument(...args),
       getDocument: vi.fn(),

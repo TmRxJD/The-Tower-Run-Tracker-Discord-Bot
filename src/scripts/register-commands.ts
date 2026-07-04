@@ -1,6 +1,6 @@
 import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
 import { ZodError } from 'zod';
-import { commandModules } from '../commands';
+import { getSlashCommandRegistrationPayload } from '../commands/slash-command-data';
 import { validateBotBootstrapConfig } from '../core/bootstrap-contract';
 import { logger } from '../core/logger';
 import { getAppConfig, loadConfig } from '../config';
@@ -55,7 +55,7 @@ async function registerCommands() {
   const runtime = validateBotBootstrapConfig(appConfig);
 
   const rest = new REST({ version: '10' }).setToken(runtime.loginToken);
-  const body = commandModules.map((command: { data: unknown }) => command.data);
+  const body = getSlashCommandRegistrationPayload();
   const isProd = runtime.deploymentMode === 'prod';
 
   logger.info(`Preparing command registration for ${runtime.deploymentMode} mode`);

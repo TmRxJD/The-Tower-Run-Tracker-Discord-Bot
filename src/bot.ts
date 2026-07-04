@@ -1,3 +1,4 @@
+import './rxdb/ensure-node-storage';
 import { createHash } from 'node:crypto';
 import { GatewayIntentBits, Partials } from 'discord.js';
 import { getAppConfig, loadConfig } from './config';
@@ -11,7 +12,6 @@ import { commandModules } from './commands';
 import { registerComponentHandlers } from './interactions';
 import { createPersistence } from './persistence';
 import { assertTrackerKvPersistentStorage, getTrackerKvStorageStatus } from './services/idb';
-import { ensureTrackerRunNodeRxDBStorage } from '@tmrxjd/platform/node';
 import { registerBotRunInboundChangeHandler } from './rxdb/reactive-sync';
 import { cleanupStalePendingRuns } from './features/track/pending-run-store';
 
@@ -57,9 +57,8 @@ async function bootstrap() {
 
   try {
     await assertTrackerKvPersistentStorage();
-    ensureTrackerRunNodeRxDBStorage({ dbFileName: 'tracker-bot-run-rxdb.sqlite' });
     registerBotRunInboundChangeHandler(({ userId, runs }) => {
-      logger.info('[rxdb] inbound run store updated', { userId, count: runs.length });
+      logger.debug('[rxdb] inbound run store updated', { userId, count: runs.length });
     });
     const kvStatus = await getTrackerKvStorageStatus();
     logger.info('Tracker KV storage initialized', kvStatus);
