@@ -1,6 +1,6 @@
 import type { Attachment, ChatInputCommandInteraction, EmbedBuilder} from 'discord.js';
-import { MessageFlagsBitField } from 'discord.js';
 import { getBotConfig } from '../../config/bot-config';
+import { ensureDeferredEphemeralReply } from './interaction-ack';
 import { getUserSettings } from './tracker-api-client';
 import { asTrackReplyInteraction } from './handlers/review-interaction-helpers';
 import { renderTrackMenu, handleDirectTextPaste, handleDirectAttachment, handleDirectSaveImport } from './handlers';
@@ -48,9 +48,7 @@ export async function handleTrackWorkflow(interaction: ChatInputCommandInteracti
       }
       return;
     }
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
-    }
+    if (!await ensureDeferredEphemeralReply(interaction)) return;
     await handleDirectTextPaste(trackInteraction, options.paste, normalizedAttachment, options.note ?? null, options.runType ?? null, mode);
     return;
   }
@@ -64,25 +62,19 @@ export async function handleTrackWorkflow(interaction: ChatInputCommandInteracti
     : null;
 
   if (normalizedSaveFile && mode === 'track') {
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
-    }
+    if (!await ensureDeferredEphemeralReply(interaction)) return;
     await handleDirectSaveImport(trackInteraction, normalizedSaveFile);
     return;
   }
 
   if (options.attachment) {
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
-    }
+    if (!await ensureDeferredEphemeralReply(interaction)) return;
     await handleDirectAttachment(trackInteraction, normalizedAttachment!, options.note ?? null, options.runType ?? 'Farming', mode);
     return;
   }
 
   if (options.settingsRequested) {
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
-    }
+    if (!await ensureDeferredEphemeralReply(interaction)) return;
     const settings = await getUserSettings(interaction.user.id);
     const payload = settings
       ? await buildSettingsPayload(interaction.user.id, settings)
@@ -96,9 +88,7 @@ export async function handleTrackWorkflow(interaction: ChatInputCommandInteracti
   }
 
   if (!options.attachment) {
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
-    }
+    if (!await ensureDeferredEphemeralReply(interaction)) return;
     await renderTrackMenu(trackInteraction, mode);
     return;
   }

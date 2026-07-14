@@ -6,6 +6,7 @@ import { resolveInteractionDisplayName } from '../features/track/discord-display
 import { resolveBotRunCloudIdentity } from '../features/track/run-cloud-identity';
 import { syncBotsTrackerState } from '../services/bots-tracker-db';
 import { handleTrackWorkflow } from '../features/track/track-workflow';
+import { ensureDeferredEphemeralReply } from '../features/track/interaction-ack';
 
 type TrackerCommandKey = 'track' | 'lifetime';
 
@@ -79,8 +80,9 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
     return;
   }
 
-  if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
+  // Nothing below can reach the user if the interaction was never acknowledged.
+  if (!await ensureDeferredEphemeralReply(interaction)) {
+    return;
   }
 
   const client = interaction.client as TrackerBotClient;
