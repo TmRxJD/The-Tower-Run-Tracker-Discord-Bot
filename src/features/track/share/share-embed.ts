@@ -10,6 +10,8 @@ export type ShareEmbedInput = {
   run: Record<string, unknown>;
   runTypeCounts: Record<string, number>;
   deltaResult?: TrackerRunDeltaResult;
+  /** Collapsed shares only show tier/wave/coins; the rest is revealed by the Expand button. */
+  collapsed?: boolean;
   options?: {
     includeNotes?: boolean;
     includeCoverage?: boolean;
@@ -79,6 +81,7 @@ function buildDescription(
   options: NonNullable<ShareEmbedInput['options']>,
   hourlyRates: { coinsPerHour: string; cellsPerHour: string; dicePerHour: string; moduleShardsPerHour: string; wavesPerHour: string; enemiesPerHour: string },
   deltaResult?: TrackerRunDeltaResult,
+  collapsed = false,
 ): string {
   const tierDisplayRaw = getRunString(run, 'tierDisplay');
   const tierDisplay = tierDisplayRaw && tierDisplayRaw.trim()
@@ -107,14 +110,19 @@ function buildDescription(
   if (options.includeWave !== false) {
     parts.push(`🌊 Wave: **${wave}**${delta('wave')}`);
   }
-  if (options.includeDuration !== false) {
+  if (!collapsed && options.includeDuration !== false) {
     parts.push(`⏱️ Duration: **${formatRunDuration(duration)}**${delta('duration')}`);
   }
-  if (options.includeKilledBy !== false) {
+  if (!collapsed && options.includeKilledBy !== false) {
     parts.push(`💀 Killed By: **${killedBy}**`);
   }
   if (options.includeTotalCoins !== false) {
     parts.push(`🪙 Coins: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCoins)))}**${delta('coins')}`);
+  }
+  if (collapsed) {
+    return parts.length
+      ? parts.join('\n')
+      : 'No primary share elements are enabled. Use Share Settings to enable fields.';
   }
   if (options.includeTotalCells !== false) {
     parts.push(`🔋 Cells: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCells)))}**${delta('cells')}`);
@@ -147,10 +155,10 @@ function buildDescription(
   return parts.join('\n');
 }
 
-export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options }: ShareEmbedInput): EmbedBuilder {
+export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options, collapsed = false }: ShareEmbedInput): EmbedBuilder {
   const config = getTrackUiConfig().share;
-  const includeNotes = options?.includeNotes !== false;
-  const includeCoverage = options?.includeCoverage !== false;
+  const includeNotes = !collapsed && options?.includeNotes !== false;
+  const includeCoverage = !collapsed && options?.includeCoverage !== false;
   const enabledCoverageMetrics: Set<string> | undefined = (() => {
     const keys: Record<string, string> = {
       goldenTower: 'includeCoverageGoldenTower',
@@ -220,7 +228,7 @@ export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options
       includeShardsPerHour,
       includeWavesPerHour,
       includeEnemiesPerHour,
-    }, { coinsPerHour, cellsPerHour, dicePerHour, moduleShardsPerHour, wavesPerHour, enemiesPerHour }, deltaResult))
+    }, { coinsPerHour, cellsPerHour, dicePerHour, moduleShardsPerHour, wavesPerHour, enemiesPerHour }, deltaResult, collapsed))
     .setFooter({ text: config.footer });
 
   const noteText = firstAvailable(run, ['notes', 'note']);

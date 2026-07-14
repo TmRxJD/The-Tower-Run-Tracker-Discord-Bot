@@ -131,6 +131,8 @@ export const TRACKER_IDS = {
   share: {
     trackRun: 'tracker_share_track_run',
     viewBuildPrefix: 'tracker_share_view_build:',
+    expandPrefix: 'tracker_share_expand:',
+    reportPrefix: 'tracker_share_report:',
   },
 } as const;
 

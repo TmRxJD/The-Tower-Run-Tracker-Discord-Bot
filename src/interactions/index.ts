@@ -69,6 +69,8 @@ import {
   handleTrackMenuToggleShareChart,
   handleShareEmbedTrackRun,
   handleShareEmbedViewBuild,
+  handleShareEmbedExpand,
+  handleShareEmbedBattleReport,
 } from '../features/track/handlers';
 import {
   handleTrackMenuAnalysis,
@@ -158,5 +160,7 @@ export function registerComponentHandlers(client: TrackerBotClient) {
     { prefix: TRACKER_IDS.analysis.select, handler: handleTrackMenuAnalysisSelect },
     { prefix: TRACKER_IDS.share.trackRun, handler: handleShareEmbedTrackRun },
     { prefix: TRACKER_IDS.share.viewBuildPrefix, handler: handleShareEmbedViewBuild },
+    { prefix: TRACKER_IDS.share.expandPrefix, handler: handleShareEmbedExpand },
+    { prefix: TRACKER_IDS.share.reportPrefix, handler: handleShareEmbedBattleReport },
   ]);
 }

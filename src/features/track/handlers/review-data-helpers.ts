@@ -303,55 +303,66 @@ function isUpdatedBattleReportShape(data: RunDataRecord, normalizedData: Record<
   ].some(key => readScannedBattleReportValue(data, normalizedData, key).value !== null)
 }
 
-function formatRawParseLine(field: UpdatedRawParseField, rawField: RawParseFieldValue): string | null {
+export type BattleReportStat = {
+  label: string;
+  /** `null` means the stat was scanned but carried no value. */
+  value: string | null;
+};
+
+export type BattleReportSection = {
+  section: string;
+  stats: BattleReportStat[];
+};
+
+function resolveRawParseStat(field: UpdatedRawParseField, rawField: RawParseFieldValue): BattleReportStat | null {
   if (rawField.value === null && !rawField.fromRawParseFields) {
     return null;
   }
 
   if (rawField.fromRawParseFields && rawField.value === '') {
-    return field.label;
+    return { label: field.label, value: null };
   }
 
-  return rawField.value === null ? null : `${field.label}\t${rawField.value}`;
+  return rawField.value === null ? null : { label: field.label, value: rawField.value };
 }
 
-function buildUpdatedRawParseText(data: RunDataRecord, normalizedData: Record<string, unknown>): string {
-  const lines: string[] = [];
+function resolveRawParseLayout(data: RunDataRecord, normalizedData: Record<string, unknown>): UpdatedRawParseSection[] {
+  if (isUpdatedBattleReportShape(data, normalizedData)) {
+    return UPDATED_RAW_PARSE_LAYOUT;
+  }
 
-  for (const section of UPDATED_RAW_PARSE_LAYOUT) {
-    const sectionLines = section.fields
-      .map(field => formatRawParseLine(field, readScannedBattleReportValue(data, normalizedData, field.key)))
-      .filter((line): line is string => Boolean(line));
+  return TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS.map(section => ({
+    section,
+    fields: TRACK_RUN_BATTLE_REPORT_FIELDS
+      .filter(field => field.section === section)
+      .map(field => ({ key: field.key, label: field.label })),
+  }));
+}
 
-    if (sectionLines.length > 0) {
-      lines.push(section.section);
-      lines.push(...sectionLines);
+/** Battle report stats grouped into their in-game sections, in report order. */
+export function buildBattleReportSections(data: RunDataRecord): BattleReportSection[] {
+  const normalizedData = canonicalizeRunDataForOutput(data);
+  const sections: BattleReportSection[] = [];
+
+  for (const section of resolveRawParseLayout(data, normalizedData)) {
+    const stats = section.fields
+      .map(field => resolveRawParseStat(field, readScannedBattleReportValue(data, normalizedData, field.key)))
+      .filter((stat): stat is BattleReportStat => stat !== null);
+
+    if (stats.length > 0) {
+      sections.push({ section: section.section, stats });
     }
   }
 
-  return lines.join('\n');
+  return sections;
 }
 
 export function buildRawParseText(data: RunDataRecord): string {
-  const normalizedData = canonicalizeRunDataForOutput(data);
-  const useUpdatedLayout = isUpdatedBattleReportShape(data, normalizedData);
-
-  if (useUpdatedLayout) {
-    return buildUpdatedRawParseText(data, normalizedData);
-  }
-
   const lines: string[] = [];
 
-  for (const section of TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS) {
-    const sectionLines = TRACK_RUN_BATTLE_REPORT_FIELDS
-      .filter(field => field.section === section)
-      .map(field => formatRawParseLine({ key: field.key, label: field.label }, readScannedBattleReportValue(data, normalizedData, field.key)))
-      .filter((line): line is string => Boolean(line));
-
-    if (sectionLines.length > 0) {
-      lines.push(section);
-      lines.push(...sectionLines);
-    }
+  for (const { section, stats } of buildBattleReportSections(data)) {
+    lines.push(section);
+    lines.push(...stats.map(stat => stat.value === null ? stat.label : `${stat.label}\t${stat.value}`));
   }
 
   return lines.join('\n');

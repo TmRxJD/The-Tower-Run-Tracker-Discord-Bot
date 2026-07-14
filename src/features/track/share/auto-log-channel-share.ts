@@ -4,6 +4,8 @@ import { getLocalRuns } from '../local-run-store';
 import { logError } from '../handlers/error-handlers';
 import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from './share-embed';
+import { resolveShareEmbedOptions } from './share-embed-options';
+import { buildShareRunRef } from './share-run-ref';
 import { resolveShareEmbedChannelPayload, type ShareEmbedChannelPayload } from './share-embed-delivery';
 import { getAutoLogMessageRef, setAutoLogMessageRef } from './log-channel-state';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
@@ -31,41 +33,15 @@ export async function autoShareToConfiguredLogChannel(params: {
   if (!logChannelId) return;
   if (logChannelGuildId === LOG_CHANNEL_RESTRICTED_GUILD_ID) return;
 
-  const includeNotes = settings?.shareNotes !== false;
-  const includeCoverage = settings?.shareCoverage !== false;
-  const includeScreenshot = settings?.shareScreenshot !== false;
-  const includeTier = settings?.shareTier !== false;
-  const includeWave = settings?.shareWave !== false;
-  const includeDuration = settings?.shareDuration !== false;
-  const includeKilledBy = settings?.shareKilledBy !== false;
-  const includeTotalCoins = settings?.shareTotalCoins !== false;
-  const includeTotalCells = settings?.shareTotalCells !== false;
-  const includeTotalDice = settings?.shareTotalDice !== false;
-  const includeCoinsPerHour = settings?.shareCoinsPerHour !== false;
-  const includeCellsPerHour = settings?.shareCellsPerHour !== false;
-  const includeDicePerHour = settings?.shareDicePerHour !== false;
-
+  // Log posts stay expanded; only the battle report is behind a button.
   const embed = buildShareEmbed({
     user: buildEmbedUserFromInteraction(params.interaction),
     run: params.run,
     runTypeCounts: params.runTypeCounts,
     deltaResult: params.deltaResult,
-    options: {
-      includeTier,
-      includeWave,
-      includeDuration,
-      includeKilledBy,
-      includeTotalCoins,
-      includeTotalCells,
-      includeTotalDice,
-      includeCoinsPerHour,
-      includeCellsPerHour,
-      includeDicePerHour,
-      includeNotes,
-      includeCoverage,
-      includeScreenshot,
-    },
+    options: resolveShareEmbedOptions(settings),
   });
+  const shareRunRef = buildShareRunRef(params.userId, params.run);
 
   const allRuns = await getLocalRuns(params.userId).catch(() => [] as Awaited<ReturnType<typeof getLocalRuns>>);
   const runType = typeof params.run.type === 'string' && params.run.type.trim() ? params.run.type : 'Farming';
@@ -86,6 +62,7 @@ export async function autoShareToConfiguredLogChannel(params: {
             userId: params.userId,
             embed,
             files,
+            shareRunRef,
           }))).catch(() => null);
           const messageId = typeof (edited as { id?: unknown } | null)?.id === 'string'
             ? String((edited as { id?: unknown }).id)
@@ -109,6 +86,7 @@ export async function autoShareToConfiguredLogChannel(params: {
     userId: params.userId,
     embed,
     files,
+    shareRunRef,
   })).then(async (message) => {
     const messageId = typeof (message as { id?: unknown }).id === 'string' ? String((message as { id?: unknown }).id) : null;
     if (!messageId) return;

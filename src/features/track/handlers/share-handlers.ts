@@ -9,6 +9,7 @@ import { getTrackerFlowMode } from '../flow-mode-store';
 import { TRACKER_IDS } from '../track-custom-ids';
 import { EmbedBuilder, Colors, type MessageComponentInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
+import { buildShareRunRef } from '../share/share-run-ref';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 import { computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 
@@ -177,9 +178,8 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       }
 
       const sharedSettings = await getEffectiveUserSharedSettings(userId);
-      const shouldAttachChart = settings?.shareChart !== false;
 
-      // Fetch all runs for delta baseline and chart
+      // Fetch all runs for the delta baseline
       const allRunsSummary = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
       const allRuns = (allRunsSummary?.allRuns ?? []) as Record<string, unknown>[];
       const runType = String(run.type ?? 'Farming').trim() || 'Farming';
@@ -221,6 +221,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           includeScreenshot,
         },
         deltaResult,
+        collapsed: true,
       });
 
       const channelWithSend = interaction.channel as { send?: (payload: ShareEmbedChannelPayload) => Promise<unknown> } | null;
@@ -229,17 +230,21 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           throw new Error('Unable to send share embed in this channel.');
         }
 
-        const chartAttachment = shouldAttachChart && allRuns.length >= 2
+        // The full-size chart rides along with the Expand reply; collapsed only previews it
+        // as the thumbnail, so the public post stays compact.
+        const chartAttachment = settings?.shareChart !== false && allRuns.length >= 2
           ? await buildPerHourChartAttachment(allRuns, runType).catch(() => null)
           : null;
 
-        if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
+        if (chartAttachment) embed.setThumbnail('attachment://per-hour-chart.png');
 
         try {
           const payload = await resolveShareEmbedChannelPayload({
             userId,
             embed,
             files: chartAttachment ? [chartAttachment] : [],
+            shareRunRef: buildShareRunRef(userId, run),
+            collapsed: true,
           });
           await channelWithSend.send(payload);
         } catch (error) {
