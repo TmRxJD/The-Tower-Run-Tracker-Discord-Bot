@@ -454,7 +454,12 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
     );
 
   const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+  const compactDefault = settings?.shareCompact === true;
   const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(TRACKER_IDS.settings.shareStyle)
+      .setLabel(`Default Share Style: ${compactDefault ? 'Compact' : 'Expanded'}`)
+      .setStyle(compactDefault ? ButtonStyle.Secondary : ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(TRACKER_IDS.settings.shareBack).setLabel('Back to Settings').setStyle(ButtonStyle.Secondary),
   );
 
@@ -565,8 +570,12 @@ async function buildShareSettingsPayload(interaction: TrackMenuInteraction, sett
     : null;
   if (chartAttachment) preview.setImage('attachment://per-hour-chart.png');
 
+  const styleNote = compactDefault
+    ? '**Default share style: Compact** — shares post as tier/wave/coins with an Expand button. Some servers always post compact regardless of this setting.'
+    : '**Default share style: Expanded** — shares post the full message. Switch to Compact for a shorter post with an Expand button. The preview below always shows the expanded layout.';
+
   return {
-    content: '',
+    content: styleNote,
     components: [selectRow, backRow],
     embeds: [preview],
     files: [
@@ -961,6 +970,25 @@ export async function handleTrackMenuSelectDeltaMode(interaction: TrackMenuInter
     const ui = getTrackUiConfig();
     await logError(interaction.client, interaction.user, error, 'track_menu_select_delta_mode');
     await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuToggleShareStyle(interaction: TrackMenuInteraction) {
+  try {
+    const current = await getUserSettings(interaction.user.id);
+    const nextValue = !(current?.shareCompact === true);
+    // Re-send every existing setting (minus the stale timestamp) so the share-defaults
+    // normalizer in editUserSettings can't reset the user's other share element toggles.
+    const patch: Record<string, unknown> = { ...(current ?? {}), shareCompact: nextValue };
+    delete patch.updatedAt;
+    await editUserSettings(interaction.user.id, patch);
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildShareSettingsPayload(interaction, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_toggle_share_style');
+    await updateInPlace(interaction, { content: ui.settings.shareFailed, components: [], embeds: [] });
   }
 }
 

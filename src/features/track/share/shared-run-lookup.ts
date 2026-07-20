@@ -6,6 +6,7 @@ import { computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { buildShareEmbed } from './share-embed';
 import { resolveShareEmbedOptions } from './share-embed-options';
+import { readShareSnapshot } from './share-snapshot-store';
 
 export type SharedRunContext = {
   run: Record<string, unknown>;
@@ -26,16 +27,28 @@ async function resolveSharerName(client: Client, userId: string, run: Record<str
   const discordUser = await client.users.fetch(userId).catch(() => null);
   return readTrimmedString(discordUser?.globalName)
     || readTrimmedString(discordUser?.username)
-    || readTrimmedString(run.username)
-    || 'Unknown';
+    || readTrimmedString(run.username);
 }
 
-/** Re-reads the sharer's stored run so share buttons keep working across bot restarts. */
+/**
+ * Re-reads the shared run so the buttons keep working indefinitely: the live run store is
+ * preferred (freshest, richest data), with a durable snapshot as the permanent fallback for
+ * when the run was deleted or this process never had it.
+ */
 export async function resolveSharedRunContext(client: Client, userId: string, runRef: string): Promise<SharedRunContext | null> {
-  const run = await findSharedRun(userId, runRef);
+  let run = await findSharedRun(userId, runRef);
+  let snapshotName: string | undefined;
+
+  if (!run) {
+    const snapshot = await readShareSnapshot(`${userId}:${runRef}`);
+    run = snapshot?.run ? { ...snapshot.run } : null;
+    snapshotName = snapshot?.sharerName;
+  }
+
   if (!run) return null;
 
-  return { run, sharerName: await resolveSharerName(client, userId, run) };
+  const sharerName = await resolveSharerName(client, userId, run) || snapshotName || 'Unknown';
+  return { run, sharerName };
 }
 
 /** Rebuilds the full (uncollapsed) share exactly as the sharer's settings render it, chart included. */

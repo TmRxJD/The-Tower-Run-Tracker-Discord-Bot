@@ -102,6 +102,20 @@ function buildDescription(
     return annotation ? ` ${annotation}` : '';
   }
 
+  // Compact share: just tier/wave/coins, no comparison annotations, with coins/hour in ().
+  if (collapsed) {
+    const collapsedParts: string[] = [];
+    if (options.includeTier !== false) collapsedParts.push(`🔢 Tier: **${tierDisplay}**`);
+    if (options.includeWave !== false) collapsedParts.push(`🌊 Wave: **${wave}**`);
+    if (options.includeTotalCoins !== false) {
+      const coinsFormatted = formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCoins)));
+      collapsedParts.push(`🪙 Coins: **${coinsFormatted}** (${hourlyRates.coinsPerHour}/hr)`);
+    }
+    return collapsedParts.length
+      ? collapsedParts.join('\n')
+      : 'No primary share elements are enabled. Use Share Settings to enable fields.';
+  }
+
   const parts: string[] = [];
   if (options.includeTier !== false) {
     const tierLabel = deltaResult?.comparisonLabel ? ` *(${deltaResult.comparisonLabel})*` : '';
@@ -110,19 +124,14 @@ function buildDescription(
   if (options.includeWave !== false) {
     parts.push(`🌊 Wave: **${wave}**${delta('wave')}`);
   }
-  if (!collapsed && options.includeDuration !== false) {
+  if (options.includeDuration !== false) {
     parts.push(`⏱️ Duration: **${formatRunDuration(duration)}**${delta('duration')}`);
   }
-  if (!collapsed && options.includeKilledBy !== false) {
+  if (options.includeKilledBy !== false) {
     parts.push(`💀 Killed By: **${killedBy}**`);
   }
   if (options.includeTotalCoins !== false) {
     parts.push(`🪙 Coins: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCoins)))}**${delta('coins')}`);
-  }
-  if (collapsed) {
-    return parts.length
-      ? parts.join('\n')
-      : 'No primary share elements are enabled. Use Share Settings to enable fields.';
   }
   if (options.includeTotalCells !== false) {
     parts.push(`🔋 Cells: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCells)))}**${delta('cells')}`);

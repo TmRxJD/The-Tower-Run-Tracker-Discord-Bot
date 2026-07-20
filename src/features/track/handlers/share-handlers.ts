@@ -10,6 +10,8 @@ import { TRACKER_IDS } from '../track-custom-ids';
 import { EmbedBuilder, Colors, type MessageComponentInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { buildShareRunRef } from '../share/share-run-ref';
+import { shouldCompactShare } from '../share/share-compaction';
+import { saveShareSnapshot } from '../share/share-snapshot-store';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 import { computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 
@@ -179,6 +181,9 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
 
       const sharedSettings = await getEffectiveUserSharedSettings(userId);
 
+      // Compact only where required (this server) or where the user opted in; otherwise expanded.
+      const compact = shouldCompactShare({ guildId: interaction.guildId, shareCompact: settings?.shareCompact });
+
       // Fetch all runs for the delta baseline
       const allRunsSummary = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
       const allRuns = (allRunsSummary?.allRuns ?? []) as Record<string, unknown>[];
@@ -188,8 +193,9 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode)
         : undefined;
 
+      const embedUser = buildEmbedUserFromInteraction(interaction);
       embed = buildShareEmbed({
-        user: buildEmbedUserFromInteraction(interaction),
+        user: embedUser,
         run,
         runTypeCounts,
         options: {
@@ -221,7 +227,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           includeScreenshot,
         },
         deltaResult,
-        collapsed: true,
+        collapsed: compact,
       });
 
       const channelWithSend = interaction.channel as { send?: (payload: ShareEmbedChannelPayload) => Promise<unknown> } | null;
@@ -230,21 +236,29 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           throw new Error('Unable to send share embed in this channel.');
         }
 
-        // The full-size chart rides along with the Expand reply; collapsed only previews it
-        // as the thumbnail, so the public post stays compact.
         const chartAttachment = settings?.shareChart !== false && allRuns.length >= 2
           ? await buildPerHourChartAttachment(allRuns, runType).catch(() => null)
           : null;
 
-        if (chartAttachment) embed.setThumbnail('attachment://per-hour-chart.png');
+        // Compact shares only preview the chart as a thumbnail (the full-size chart rides along
+        // with the Expand reply); expanded shares show it full-size inline.
+        if (chartAttachment) {
+          if (compact) embed.setThumbnail('attachment://per-hour-chart.png');
+          else embed.setImage('attachment://per-hour-chart.png');
+        }
+
+        const shareRunRef = buildShareRunRef(userId, run);
+        if (shareRunRef) {
+          await saveShareSnapshot({ ref: shareRunRef, userId, run, sharerName: embedUser.displayName }).catch(() => {});
+        }
 
         try {
           const payload = await resolveShareEmbedChannelPayload({
             userId,
             embed,
             files: chartAttachment ? [chartAttachment] : [],
-            shareRunRef: buildShareRunRef(userId, run),
-            collapsed: true,
+            shareRunRef,
+            collapsed: compact,
           });
           await channelWithSend.send(payload);
         } catch (error) {

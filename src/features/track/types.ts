@@ -70,6 +70,8 @@ export interface TrackerSettings {
   replyNotificationsEnabled?: boolean;
   cloudSyncEnabled?: boolean;
   shareChart?: boolean;
+  /** Default share style: true = compact (tier/wave/coins + Expand button), false/undefined = fully expanded. */
+  shareCompact?: boolean;
 }
 
 export const trackerSettingsSchema = z.object({
@@ -116,6 +118,7 @@ export const trackerSettingsSchema = z.object({
   replyNotificationsEnabled: z.boolean().optional(),
   cloudSyncEnabled: z.boolean().optional(),
   shareChart: z.boolean().optional(),
+  shareCompact: z.boolean().optional(),
 });
 
 export const trackerStoredSettingsSchema = trackerSettingsSchema.extend({

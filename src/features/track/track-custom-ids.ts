@@ -116,6 +116,7 @@ export const TRACKER_IDS = {
     share: 'tracker_setting_share',
     deltaMode: 'tracker_setting_delta_mode',
     shareChart: 'tracker_setting_share_chart',
+    shareStyle: 'tracker_setting_share_style',
     stats: 'tracker_stats',
     import: 'tracker_import',
     importYes: 'tracker_import_yes',

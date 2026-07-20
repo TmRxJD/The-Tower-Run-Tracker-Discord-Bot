@@ -89,6 +89,7 @@ const defaultSettings = (): TrackerSettings & { cloudSyncEnabled: boolean } => (
   shareWavesPerHour: true,
   shareEnemiesPerHour: true,
   shareChart: true,
+  shareCompact: false,
   cloudSyncEnabled: true,
 });
 

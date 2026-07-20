@@ -28,7 +28,7 @@ describe('share embed', () => {
     expect(coinsIndex).toBeGreaterThan(headingIndex);
   });
 
-  it('collapses to tier, wave, and coins only', () => {
+  it('collapses to tier, wave, and coins with coins/hour in parentheses and no comparisons', () => {
     const embed = buildShareEmbed({
       user: { username: 'jd', displayName: 'JD' },
       run: {
@@ -45,17 +45,25 @@ describe('share embed', () => {
       },
       runTypeCounts: { Farming: 726 },
       options: {},
+      // A comparison baseline that would annotate the expanded share; it must be dropped here.
+      deltaResult: {
+        mode: 'last',
+        comparisonLabel: 'Last Run',
+        baseline: { wave: 5000, coins: 1_000_000_000_000_000 },
+      } as never,
       collapsed: true,
     });
 
     const description = embed.data.description ?? '';
     expect(description).toContain('🔢 Tier:');
     expect(description).toContain('🌊 Wave:');
-    expect(description).toContain('🪙 Coins:');
+    expect(description).toMatch(/🪙 Coins: \*\*.+\*\* \(.+\/hr\)/);
     expect(description).not.toContain('⏱️ Duration:');
     expect(description).not.toContain('💀 Killed By:');
     expect(description).not.toContain('🔋 Cells:');
     expect(description).not.toContain('**📊 Per Hour**');
+    expect(description).not.toContain('Last Run');
+    expect(description).not.toMatch(/📈|📉/);
     expect(embed.data.fields ?? []).toHaveLength(0);
   });
 });

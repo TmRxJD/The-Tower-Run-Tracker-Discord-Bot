@@ -6,6 +6,7 @@ import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from './share-embed';
 import { resolveShareEmbedOptions } from './share-embed-options';
 import { buildShareRunRef } from './share-run-ref';
+import { saveShareSnapshot } from './share-snapshot-store';
 import { resolveShareEmbedChannelPayload, type ShareEmbedChannelPayload } from './share-embed-delivery';
 import { getAutoLogMessageRef, setAutoLogMessageRef } from './log-channel-state';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
@@ -34,14 +35,18 @@ export async function autoShareToConfiguredLogChannel(params: {
   if (logChannelGuildId === LOG_CHANNEL_RESTRICTED_GUILD_ID) return;
 
   // Log posts stay expanded; only the battle report is behind a button.
+  const embedUser = buildEmbedUserFromInteraction(params.interaction);
   const embed = buildShareEmbed({
-    user: buildEmbedUserFromInteraction(params.interaction),
+    user: embedUser,
     run: params.run,
     runTypeCounts: params.runTypeCounts,
     deltaResult: params.deltaResult,
     options: resolveShareEmbedOptions(settings),
   });
   const shareRunRef = buildShareRunRef(params.userId, params.run);
+  if (shareRunRef) {
+    await saveShareSnapshot({ ref: shareRunRef, userId: params.userId, run: params.run, sharerName: embedUser.displayName }).catch(() => {});
+  }
 
   const allRuns = await getLocalRuns(params.userId).catch(() => [] as Awaited<ReturnType<typeof getLocalRuns>>);
   const runType = typeof params.run.type === 'string' && params.run.type.trim() ? params.run.type : 'Farming';
