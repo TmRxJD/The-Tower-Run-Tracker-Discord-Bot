@@ -975,6 +975,11 @@ export async function handleTrackMenuSelectDeltaMode(interaction: TrackMenuInter
 
 export async function handleTrackMenuToggleShareStyle(interaction: TrackMenuInteraction) {
   try {
+    // Acknowledge before the settings reads/writes, which may block on slow cloud calls past
+    // Discord's 3s window and otherwise kill the interaction token.
+    if (canUpdate(interaction) && !interaction.deferred && !interaction.replied) {
+      await interaction.deferUpdate().catch(() => {});
+    }
     const current = await getUserSettings(interaction.user.id);
     const nextValue = !(current?.shareCompact === true);
     // Re-send every existing setting (minus the stale timestamp) so the share-defaults
