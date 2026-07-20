@@ -29,6 +29,7 @@ import {
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { resolve } from 'node:path';
 import { editUserSettings, forceSyncQueuedRuns, getEffectiveQueueCount, getUserSettings, getUserStats } from '../tracker-api-client';
+import { getLocalSettings, updateLocalSettings } from '../local-run-store';
 import { TRACKER_IDS } from '../track-custom-ids';
 import type { TrackerSettings } from '../types';
 import { logError } from './error-handlers';
@@ -975,19 +976,16 @@ export async function handleTrackMenuSelectDeltaMode(interaction: TrackMenuInter
 
 export async function handleTrackMenuToggleShareStyle(interaction: TrackMenuInteraction) {
   try {
-    // Acknowledge before the settings reads/writes, which may block on slow cloud calls past
-    // Discord's 3s window and otherwise kill the interaction token.
     if (canUpdate(interaction) && !interaction.deferred && !interaction.replied) {
       await interaction.deferUpdate().catch(() => {});
     }
-    const current = await getUserSettings(interaction.user.id);
+    // Compact-vs-expanded is a bot-only display choice. Keep it entirely in the local store so
+    // the toggle never blocks on (or round-trips through) Appwrite. updateLocalSettings does a
+    // plain merge, so passing just this key preserves every other share setting.
+    const current = await getLocalSettings(interaction.user.id);
     const nextValue = !(current?.shareCompact === true);
-    // Re-send every existing setting (minus the stale timestamp) so the share-defaults
-    // normalizer in editUserSettings can't reset the user's other share element toggles.
-    const patch: Record<string, unknown> = { ...(current ?? {}), shareCompact: nextValue };
-    delete patch.updatedAt;
-    await editUserSettings(interaction.user.id, patch);
-    const refreshed = await getUserSettings(interaction.user.id);
+    await updateLocalSettings(interaction.user.id, { shareCompact: nextValue });
+    const refreshed = await getLocalSettings(interaction.user.id);
     const payload = await buildShareSettingsPayload(interaction, refreshed);
     await updateInPlace(interaction, payload);
   } catch (error) {
