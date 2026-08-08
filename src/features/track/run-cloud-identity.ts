@@ -1,5 +1,6 @@
 import {
   buildTrackerRunIdentityContext,
+  extractTrackerAppwriteUserIdFromJwt,
   type TrackerRunIdentityContext,
 } from '@tmrxjd/platform/tools';
 import { resolveAppwriteIdForDiscordUser } from '../../services/discord-identity-resolver';
@@ -26,7 +27,15 @@ export async function resolveBotRunCloudIdentity(discordUserId: string): Promise
   }
 
   const pending = (async () => {
-    const appwriteUserId = await resolveAppwriteIdForDiscordUser(normalized);
+    // The identity link is the primary source. When it yields nothing — a user
+    // whose Discord account is not linked yet, or a dev run against a single
+    // account — fall back to the Appwrite id carried by the session JWT.
+    // Without this the run is written with an empty permission set, leaving it
+    // unreadable by the very user who created it.
+    const linkedAppwriteUserId = await resolveAppwriteIdForDiscordUser(normalized);
+    const appwriteUserId = linkedAppwriteUserId
+      ?? extractTrackerAppwriteUserIdFromJwt(process.env.APPWRITE_JWT);
+
     const identity = buildTrackerRunIdentityContext({
       appwriteUserId,
       permissionAppwriteUserId: appwriteUserId,

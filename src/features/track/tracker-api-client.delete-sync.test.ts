@@ -342,7 +342,20 @@ describe('tracker-api-client delete sync', () => {
     expect(localOnlySummary?.allRuns ?? []).toHaveLength(1);
   });
 
-  it('falls back to direct extended document reads so legacy split docs still hydrate immediately', async () => {
+  /**
+   * Both halves of a run pair share one owner id, so listing the extended
+   * collection by userId finds them — no per-run probe by document id.
+   *
+   * This used to assert a by-id fallback for legacy rows whose halves carried
+   * different owner ids. Those rows have been converged (scripts/align-main-run-
+   * owner.mjs and align-reverse-split-pairs.mjs), and
+   * writeTrackerRunCloudDocumentPair now rejects a pair without a single owner,
+   * so the split state cannot recur. Platform asserts the matching rule in
+   * tracker-run-cloud-pair.test.ts ("does not probe extended documents by id
+   * when the extended list is empty"); keeping the fallback here would put the
+   * bot and the site on contradictory contracts.
+   */
+  it('hydrates the extended half from the userId listing, without probing by document id', async () => {
     const userId = 'discord-extended-fallback';
     isTrackerCloudAddressableUserIdMock.mockReturnValue(true);
 
@@ -373,28 +386,28 @@ describe('tracker-api-client delete sync', () => {
       }
 
       if (collectionId === 'runs_extended_data') {
-        if (queryText.includes('userId:discord-extended-fallback')) {
-          return { documents: [], total: 0 };
-        }
+        // The extended half carries the same owner id as its main run, so the
+        // userId listing returns it for any of the caller's lookup ids.
+        return {
+          documents: [{
+            $id: 'run-1',
+            runId: 'run-1',
+            userId,
+            highestCoinsPerMinute: '7.41T',
+          }],
+          total: 1,
+        };
       }
 
       return { documents: [], total: 0 };
     });
-    getDocumentMock.mockImplementation(async (_databaseId: string, collectionId: string, documentId: string) => {
-      if (collectionId === 'runs_extended_data' && documentId === 'run-1') {
-        return {
-          $id: 'run-1',
-          runId: 'run-1',
-          userId: 'legacy_user_variant',
-          highestCoinsPerMinute: '7.41T',
-        };
-      }
-      return {};
-    });
+    getDocumentMock.mockImplementation(async () => ({}));
 
     const summary = await getLastRun(userId, { cloudSyncMode: 'full' });
 
     expect(summary?.allRuns?.[0]?.highestCoinsPerMinute).toBe('7.41T');
-    expect(getDocumentMock).toHaveBeenCalledWith('run-tracker-data', 'runs_extended_data', 'run-1');
+    // The listing already supplied the pair; probing by id would cost one read
+    // per run that has no extended half.
+    expect(getDocumentMock).not.toHaveBeenCalledWith('run-tracker-data', 'runs_extended_data', 'run-1');
   });
 });
