@@ -1,6 +1,7 @@
 import type { Interaction} from 'discord.js';
 import { MessageFlagsBitField } from 'discord.js';
 import { logger } from './logger';
+import { recordDiagnostic } from './diagnostics';
 import type { TrackerBotClient } from './tracker-bot-client';
 import { ANALYTICS_EVENT_COMMAND_INVOKED } from '@tmrxjd/platform/tools';
 import { clearMainMenuSession } from '../features/track/handlers/upload-handlers';
@@ -44,6 +45,16 @@ export function registerInteractionRouter(client: TrackerBotClient) {
         clearMainMenuSession(interaction.user.id);
         const handled = await client.components.dispatch(interaction);
         if (!handled) {
+          // Nothing acknowledged this interaction, so Discord renders "This interaction
+          // failed" and the user clicks again. Usually a customId from a message that
+          // outlived the process that registered its handler.
+          recordDiagnostic('interaction.dropped', {
+            interactionId: interaction.id,
+            userId: interaction.user.id,
+            customId: 'customId' in interaction ? interaction.customId : null,
+            type: interaction.type,
+            ageOnArrivalMs: Date.now() - interaction.createdTimestamp,
+          });
           return;
         }
       }

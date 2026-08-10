@@ -9,6 +9,7 @@ import { toRunPartPlainDocument } from './run-part-documents';
 import { ensureBotRunTrackerRxDatabase, seedBotRunRxDBFromLegacyKvIfNeeded } from './run-rxdb-store';
 import { destroySharedBotRunTrackerRxDatabase } from './database-manager';
 import { logger } from '../core/logger';
+import { recordDiagnostic } from '../core/diagnostics';
 import type { BotRunTrackerRxDatabase } from './init-database';
 
 export const MENU_ANALYTICS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -179,7 +180,8 @@ export async function loadBotMenuRunSummary(userId: string): Promise<BotMenuRunS
       throw error;
     }
     logger.warn('[menu-summary] resetting corrupt RxDB cache after query failure', { userId, error });
-    await destroySharedBotRunTrackerRxDatabase();
+    recordDiagnostic('rxdb.corrupt-read', { userId, message });
+    await destroySharedBotRunTrackerRxDatabase('menu-summary:ensureNotFalsy');
     return await loadBotMenuRunSummaryFromRxDB(userId);
   }
 }

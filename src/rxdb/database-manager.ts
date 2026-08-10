@@ -2,6 +2,8 @@ import type { BotRunTrackerRxDatabase } from './init-database';
 
 import { initSharedBotRunTrackerRxDatabase } from './init-database';
 
+import { recordDiagnostic, recordRxDatabaseGrant, summarizeRecentRxDatabaseGrants } from '../core/diagnostics';
+
 
 
 let sharedDatabase: BotRunTrackerRxDatabase | null = null;
@@ -11,7 +13,7 @@ let initPromise: Promise<BotRunTrackerRxDatabase> | null = null;
 
 
 export async function getOrInitBotRunTrackerRxDatabase(scopeId: string): Promise<BotRunTrackerRxDatabase> {
-  void scopeId;
+  recordRxDatabaseGrant(scopeId);
 
   if (sharedDatabase) {
 
@@ -76,11 +78,29 @@ export async function releaseBotRunTrackerRxDatabase(scopeId: string): Promise<v
 
 }
 
-export async function destroySharedBotRunTrackerRxDatabase(): Promise<void> {
+export async function destroySharedBotRunTrackerRxDatabase(trigger = 'unspecified'): Promise<void> {
   const { resetSharedBotRunTrackerRxDatabase } = await import('./init-database.js');
+
+  // Recorded before the caches are cleared: this wipe is process-wide, so the grant
+  // summary is the evidence for how many other users' in-flight work it can break.
+  recordDiagnostic('rxdb.destroy', {
+    trigger,
+    hadOpenDatabase: sharedDatabase !== null,
+    hadInitInFlight: initPromise !== null,
+    ...summarizeRecentRxDatabaseGrants(),
+  });
+
   sharedDatabase = null;
   initPromise = null;
   await resetSharedBotRunTrackerRxDatabase();
+
+  // The window between clearing the caches above and the wipe completing is where a
+  // concurrent getOrInit can build a database that this reset then deletes.
+  recordDiagnostic('rxdb.destroy', {
+    trigger,
+    phase: 'completed',
+    ...summarizeRecentRxDatabaseGrants(),
+  });
 }
 
 
