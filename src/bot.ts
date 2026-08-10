@@ -7,6 +7,7 @@ import { acquireSharedDiscordTokenLock, acquireSingleInstanceLock } from './core
 import { TrackerBotClient } from './core/tracker-bot-client';
 import { logger } from './core/logger';
 import { registerInteractionRouter } from './core/interaction-router';
+import { startEventLoopLagMonitor } from './core/diagnostics';
 import { registerEvents } from './events';
 import { commandModules } from './commands';
 import { registerComponentHandlers } from './interactions';
@@ -56,6 +57,7 @@ async function bootstrap() {
   registerShutdownHandlers(cleanup);
 
   try {
+    startEventLoopLagMonitor();
     await assertTrackerKvPersistentStorage();
     registerBotRunInboundChangeHandler(({ userId, runs }) => {
       logger.debug('[rxdb] inbound run store updated', { userId, count: runs.length });

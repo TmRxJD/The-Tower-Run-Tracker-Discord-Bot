@@ -23,7 +23,11 @@ export type DiagnosticEvent =
   /** The menu summary hit the corrupt-cache path that triggers the wipe. */
   | 'rxdb.corrupt-read'
   /** A cached identity resolved to no cloud user, which is cached for the process lifetime. */
-  | 'identity.unusable';
+  | 'identity.unusable'
+  /** The event loop stalled long enough to threaten the interaction ACK budget. */
+  | 'eventloop.lag'
+  /** A menu summary finished — carries the document counts and blocking read cost. */
+  | 'menu.summary';
 
 export function recordDiagnostic(event: DiagnosticEvent, meta: Record<string, unknown>): void {
   logger.warn(`[diag] ${event}`, meta);
@@ -51,6 +55,49 @@ export function recordRxDatabaseGrant(scopeId: string): void {
   if (recentGrants.length > MAX_TRACKED_GRANTS) {
     recentGrants.splice(0, recentGrants.length - MAX_TRACKED_GRANTS);
   }
+}
+
+/**
+ * The RxDB localstorage storage keeps one node-localstorage file per document, and
+ * node-localstorage is synchronous fs. Every document read therefore blocks the event
+ * loop, which is what would push an unrelated user's interaction past its ACK budget.
+ *
+ * A timer that measures its own lateness is the cheapest way to see that from prod: the
+ * drift is exactly the time the loop spent unable to run anything else.
+ */
+const LAG_SAMPLE_INTERVAL_MS = 500;
+const LAG_REPORT_THRESHOLD_MS = 250;
+let lagTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startEventLoopLagMonitor(): void {
+  if (lagTimer) return;
+
+  let expectedAt = Date.now() + LAG_SAMPLE_INTERVAL_MS;
+  lagTimer = setInterval(() => {
+    const now = Date.now();
+    const lagMs = now - expectedAt;
+    expectedAt = now + LAG_SAMPLE_INTERVAL_MS;
+
+    if (lagMs >= LAG_REPORT_THRESHOLD_MS) {
+      recordDiagnostic('eventloop.lag', {
+        lagMs,
+        thresholdMs: LAG_REPORT_THRESHOLD_MS,
+        // Anything at or above the ACK budget guarantees a dropped interaction for
+        // whoever happened to be invoking a command during the stall.
+        exceededAckBudget: lagMs >= INTERACTION_ACK_BUDGET_MS,
+        ...summarizeRecentRxDatabaseGrants(),
+      });
+    }
+  }, LAG_SAMPLE_INTERVAL_MS);
+
+  // Never hold the process open for a diagnostic.
+  lagTimer.unref?.();
+}
+
+export function stopEventLoopLagMonitor(): void {
+  if (!lagTimer) return;
+  clearInterval(lagTimer);
+  lagTimer = null;
 }
 
 export function summarizeRecentRxDatabaseGrants(): {

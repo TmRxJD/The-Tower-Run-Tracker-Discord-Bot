@@ -191,7 +191,12 @@ async function loadBotMenuRunSummaryFromRxDB(userId: string): Promise<BotMenuRun
   await seedBotRunRxDBFromLegacyKvIfNeeded(scopeUserId);
   const db = await ensureBotRunTrackerRxDatabase(scopeUserId);
 
+  // Both collections are read in full for this scope on every menu open. The stitching
+  // below is windowed, but the reads are not, and each document is a separate
+  // synchronous file read under the localstorage storage engine.
+  const startedAt = Date.now();
   const part1Docs = await db.run_part_1.find({ selector: buildScopeSelector(scopeUserId) }).exec();
+  const part1LoadedAt = Date.now();
   const part1Plain = part1Docs
     .map((document) => toRunPartPlainDocument(document))
     .filter((document): document is TrackerRunPartDocument => document !== null)
@@ -205,6 +210,14 @@ async function loadBotMenuRunSummaryFromRxDB(userId: string): Promise<BotMenuRun
 
   const sortedPart1 = [...part1Plain].sort(comparePart1ForMenuSort);
   const extendedById = await loadPart2ByIdMap(db, scopeUserId);
+  recordDiagnostic('menu.summary', {
+    userId: scopeUserId,
+    part1Docs: part1Docs.length,
+    part2Docs: extendedById.size,
+    part1LoadMs: part1LoadedAt - startedAt,
+    part2LoadMs: Date.now() - part1LoadedAt,
+    totalLoadMs: Date.now() - startedAt,
+  });
   const lastRun = stitchPart1WithMap(sortedPart1[0] ?? null, extendedById);
 
   const recentCutoff = Date.now() - ANALYTICS_LOOKBACK_MS;
