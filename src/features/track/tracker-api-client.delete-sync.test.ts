@@ -359,8 +359,7 @@ describe('tracker-api-client delete sync', () => {
     const userId = 'discord-extended-fallback';
     isTrackerCloudAddressableUserIdMock.mockReturnValue(true);
 
-    listDocumentsMock.mockImplementation(async (_databaseId: string, collectionId: string, queries?: unknown[]) => {
-      const queryText = Array.isArray(queries) ? queries.map(value => String(value)).join(' ') : '';
+    listDocumentsMock.mockImplementation(async (_databaseId: string, collectionId: string) => {
       if (collectionId === 'runs') {
         return {
           documents: [{

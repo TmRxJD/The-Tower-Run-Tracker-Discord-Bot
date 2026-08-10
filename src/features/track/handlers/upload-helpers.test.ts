@@ -174,4 +174,33 @@ describe('upload-helpers single-line paste parsing', () => {
       '🟪🟪🟪🟪🟪🟪🟪🟪⬛⬛',
     ].join('\n'));
   });
+
+  it('prefers killsWithOrbs over enemiesHitByOrbs for orbs coverage', () => {
+    const description = generateCoverageDescription({
+      totalEnemies: '1010402',
+      enemiesHitByOrbs: '693.02K',
+      killsWithOrbs: '733986',
+    });
+
+    expect(description).toContain('Orbs: 73%');
+  });
+
+  it('falls back to enemiesHitByOrbs when killsWithOrbs is missing', () => {
+    const description = generateCoverageDescription({
+      totalEnemies: '1010402',
+      enemiesHitByOrbs: '693.02K',
+    });
+
+    expect(description).toContain('Orbs: 69%');
+  });
+
+  it('treats a present zero killsWithOrbs as zero rather than falling back to hits', () => {
+    const description = generateCoverageDescription({
+      totalEnemies: '1010402',
+      enemiesHitByOrbs: '693.02K',
+      killsWithOrbs: '0',
+    });
+
+    expect(description).not.toContain('Orbs:');
+  });
 });

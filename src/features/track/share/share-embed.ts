@@ -98,7 +98,7 @@ function buildDescription(
 
   function delta(key: string): string {
     if (!deltaResult) return '';
-    const annotation = getDeltaAnnotationForStat(run, key as TrackerDeltaStatKey, deltaResult.baseline);
+    const annotation = getDeltaAnnotationForStat(run, key as TrackerDeltaStatKey, deltaResult.baseline, deltaResult.coverageBasis);
     return annotation ? ` ${annotation}` : '';
   }
 
@@ -251,7 +251,7 @@ export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options
     : run;
   const deltaCallbackForCoverage = deltaResult
     ? (key: string) => {
-        const annotation = getDeltaAnnotationForStat(coverageSource, key as TrackerDeltaStatKey, deltaResult.baseline);
+        const annotation = getDeltaAnnotationForStat(coverageSource, key as TrackerDeltaStatKey, deltaResult.baseline, deltaResult.coverageBasis);
         return annotation ? ` ${annotation}` : '';
       }
     : undefined;

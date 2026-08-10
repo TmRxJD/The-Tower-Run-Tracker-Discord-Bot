@@ -469,6 +469,17 @@ export function generateCoverageDescription(
     runData['Enemies Hit by Orbs'] ??
       runData.enemiesHitByOrbs,
   );
+  // The game reports Orbs and Black Hole coverage from the "Killed With Effect Active"
+  // rows, which differ from the "Enemies Hit By" rows. Fall back to hits only for older
+  // runs that predate the kill-tagged fields — presence decides, not magnitude, so a
+  // genuine zero stays zero here exactly as it does in the platform's delta extractor.
+  const getOptionalVal = (raw: unknown): number | null => {
+    if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+    const parsed = parseNumberInput(String(raw));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const orbsCoverage = getOptionalVal(runData.killsWithOrbs) ?? enemiesHitByOrbs;
+  const blackHoleCoverage = getOptionalVal(runData.killsWithBlackHole) ?? enemiesHitByBlackHole;
   const taggedByDeathWave = getVal(runData['Tagged by Death Wave'] ?? runData.taggedByDeathWave);
   const destroyedInSpotlight = getVal(runData['Destroyed in Spotlight'] ?? runData.destroyedInSpotlight);
   const destroyedInGoldenBot = getVal(runData['Destroyed in Golden Bot'] ?? runData.destroyedInGoldenBot);
@@ -493,10 +504,10 @@ export function generateCoverageDescription(
 
   const allMetrics: { label: string; value: number | null; block: string; deltaKey: string; metricKey: string }[] = [
     { label: 'Golden Tower', value: toPct(killsWithGoldenTower), block: '🟨', deltaKey: 'killsWithGoldenTowerPercentage', metricKey: 'goldenTower' },
-    { label: 'Black Hole',   value: toPct(enemiesHitByBlackHole), block: '🟪', deltaKey: 'destroyedByBlackHolePercentage', metricKey: 'blackHole' },
+    { label: 'Black Hole',   value: toPct(blackHoleCoverage), block: '🟪', deltaKey: 'destroyedByBlackHolePercentage', metricKey: 'blackHole' },
     { label: 'Spotlight',    value: toPct(destroyedInSpotlight), block: '⬜', deltaKey: 'destroyedInSpotlightPercentage', metricKey: 'spotlight' },
     { label: 'Death Wave',   value: toPct(taggedByDeathWave), block: '🟥', deltaKey: 'taggedByDeathWavePercentage', metricKey: 'deathWave' },
-    { label: 'Orbs',         value: toPct(enemiesHitByOrbs), block: '🟪', deltaKey: 'hitByOrbsPercentage', metricKey: 'orbs' },
+    { label: 'Orbs',         value: toPct(orbsCoverage), block: '🟪', deltaKey: 'hitByOrbsPercentage', metricKey: 'orbs' },
     { label: 'Golden Bot',   value: toPct(destroyedInGoldenBot), block: '🟨', deltaKey: 'destroyedInGoldenBotPercentage', metricKey: 'goldenBot' },
     { label: 'Amp Bot',      value: toPct(killsWithAmplifyBot), block: '🟦', deltaKey: 'killsWithAmplifyBotPercentage', metricKey: 'ampBot' },
     { label: 'Summoned',     value: toPct(summonedEnemies), block: '🟪', deltaKey: 'summonedEnemiesPercentage', metricKey: 'summoned' },

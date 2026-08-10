@@ -284,7 +284,7 @@ export function createInitialEmbed(params: {
 
     function delta(key: string): string {
       if (!deltaResult) return '';
-      const annotation = getDeltaAnnotationForStat(lastRun as Record<string, unknown>, key as TrackerDeltaStatKey, deltaResult.baseline);
+      const annotation = getDeltaAnnotationForStat(lastRun as Record<string, unknown>, key as TrackerDeltaStatKey, deltaResult.baseline, deltaResult.coverageBasis);
       return annotation ? ` ${annotation}` : '';
     }
 

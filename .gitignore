@@ -10,3 +10,8 @@ coverage/
 Thumbs.db
 Desktop.ini
 .platform-mode
+
+# Local one-off diagnostics, not part of the shipped bot
+scripts/check-run-pair-boundary.mjs
+scripts/count-runs-and-users.mjs
+scripts/.run-pair-boundary-baseline.json

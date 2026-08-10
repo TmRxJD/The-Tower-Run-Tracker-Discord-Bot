@@ -43,6 +43,8 @@ function normalizeCoverageFields(data: RunDataLike): RunDataLike {
   const killsWithGoldenTower = getFirstMeaningfulRunDataValue(data.killsWithGoldenTower, data['Golden Tower'])
   const enemiesHitByBlackHole = getFirstMeaningfulRunDataValue(data.enemiesHitByBlackHole, data['Enemies Hit By Black Hole'])
   const enemiesHitByOrbs = getFirstMeaningfulRunDataValue(data.enemiesHitByOrbs, data['Enemies Hit by Orbs'])
+  const killsWithOrbs = getFirstMeaningfulRunDataValue(data.killsWithOrbs)
+  const killsWithBlackHole = getFirstMeaningfulRunDataValue(data.killsWithBlackHole)
   const taggedByDeathWave = getFirstMeaningfulRunDataValue(data.taggedByDeathWave, data['Tagged by Death Wave'])
   const destroyedInSpotlight = getFirstMeaningfulRunDataValue(data.destroyedInSpotlight, data['Destroyed in Spotlight'])
   const destroyedInGoldenBot = getFirstMeaningfulRunDataValue(data.destroyedInGoldenBot, data['Destroyed in Golden Bot'])
@@ -60,6 +62,8 @@ function normalizeCoverageFields(data: RunDataLike): RunDataLike {
           ['Enemies Hit by Orbs']: enemiesHitByOrbs,
         }
       : {}),
+    ...(killsWithOrbs !== undefined ? { killsWithOrbs } : {}),
+    ...(killsWithBlackHole !== undefined ? { killsWithBlackHole } : {}),
     ...(taggedByDeathWave !== undefined ? { taggedByDeathWave, ['Tagged by Death Wave']: taggedByDeathWave } : {}),
     ...(destroyedInSpotlight !== undefined ? { destroyedInSpotlight, ['Destroyed in Spotlight']: destroyedInSpotlight } : {}),
     ...(destroyedInGoldenBot !== undefined ? { destroyedInGoldenBot, ['Destroyed in Golden Bot']: destroyedInGoldenBot } : {}),
@@ -129,7 +133,7 @@ export function buildSubmissionResultEmbed(params: {
 
   function delta(key: string): string {
     if (!deltaResult) return ''
-    const annotation = getDeltaAnnotationForStat(coverageData, key as TrackerDeltaStatKey, deltaResult.baseline)
+    const annotation = getDeltaAnnotationForStat(coverageData, key as TrackerDeltaStatKey, deltaResult.baseline, deltaResult.coverageBasis)
     return annotation ? ` ${annotation}` : ''
   }
 
@@ -171,7 +175,7 @@ export function buildSubmissionResultEmbed(params: {
 
   const deltaCallbackForCoverage = deltaResult
     ? (key: string) => {
-        const annotation = getDeltaAnnotationForStat(coverageData, key as TrackerDeltaStatKey, deltaResult.baseline)
+        const annotation = getDeltaAnnotationForStat(coverageData, key as TrackerDeltaStatKey, deltaResult.baseline, deltaResult.coverageBasis)
         return annotation ? ` ${annotation}` : ''
       }
     : undefined
