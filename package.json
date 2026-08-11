@@ -8,6 +8,7 @@
     "pnpm": "10.8.1"
   },
   "description": "TypeScript rewrite of the Tower Run Tracker bot",
+  "license": "GPL-3.0-or-later",
   "keywords": [],
   "main": "dist/bot.js",
   "scripts": {
