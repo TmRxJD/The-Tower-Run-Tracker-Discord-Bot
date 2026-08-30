@@ -2,7 +2,7 @@ import { Colors, EmbedBuilder } from 'discord.js'
 import { getFirstMeaningfulRunDataValue, type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools'
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math'
 import { getTrackUiConfig } from '../../../config/tracker-ui-config'
-import { calculateHourlyRate } from '../tracker-helpers'
+import { computeHourlyRate } from '../tracker-helpers'
 import { generateCoverageDescription, trimDisplayTimeSeconds } from '../handlers/upload-helpers'
 
 type RunDataLike = Record<string, unknown>
@@ -116,12 +116,12 @@ export function buildSubmissionResultEmbed(params: {
   const coinsStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalCoins ?? coverageData?.coins ?? '0'))))
   const cellsStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalCells ?? coverageData?.cells ?? '0'))))
   const diceStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? '0'))))
-  const coinsPerHour = calculateHourlyRate(String(coverageData?.totalCoins ?? coverageData?.coins ?? ''), durationRaw) || 'N/A'
-  const cellsPerHour = calculateHourlyRate(String(coverageData?.totalCells ?? coverageData?.cells ?? ''), durationRaw) || 'N/A'
-  const dicePerHour = calculateHourlyRate(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? ''), durationRaw) || 'N/A'
-  const moduleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(coverageData), durationRaw) || 'N/A'
-  const wavesPerHour = calculateHourlyRate(String(coverageData?.wave ?? ''), durationRaw) || 'N/A'
-  const enemiesPerHour = calculateHourlyRate(String(coverageData?.totalEnemies ?? ''), durationRaw) || 'N/A'
+  const coinsPerHour = computeHourlyRate(String(coverageData?.totalCoins ?? coverageData?.coins ?? ''), durationRaw) || 'N/A'
+  const cellsPerHour = computeHourlyRate(String(coverageData?.totalCells ?? coverageData?.cells ?? ''), durationRaw) || 'N/A'
+  const dicePerHour = computeHourlyRate(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? ''), durationRaw) || 'N/A'
+  const moduleShardsPerHour = computeHourlyRate(resolveModuleShardsTotal(coverageData), durationRaw) || 'N/A'
+  const wavesPerHour = computeHourlyRate(String(coverageData?.wave ?? ''), durationRaw) || 'N/A'
+  const enemiesPerHour = computeHourlyRate(String(coverageData?.totalEnemies ?? ''), durationRaw) || 'N/A'
 
   const tierDisplay = coverageData?.tierDisplay && String(coverageData.tierDisplay).trim()
     ? String(coverageData.tierDisplay)

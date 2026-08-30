@@ -1,7 +1,7 @@
 import * as platformMath from '@tmrxjd/platform/math'
 
 export {
-  calculateHourlyRate,
+  computeHourlyRate,
   convertToNumericValue,
   formatNumberForDisplay,
   formatRateWithNotation,

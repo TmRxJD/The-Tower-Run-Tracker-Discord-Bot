@@ -1,4 +1,4 @@
-import { calculateHourlyRate } from '../features/track/tracker-helpers';
+import { computeHourlyRate } from '../features/track/tracker-helpers';
 import { formatNumberForDisplay, parseDurationToHours, parseNumberInput, standardizeNotation } from '../utils/tracker-math';
 
 type Case = {
@@ -43,9 +43,9 @@ function run() {
   for (const c of cases) {
     const expected = expectedHourly(c.value, c.duration);
 
-    const coins = calculateHourlyRate(c.value, c.duration);
-    const cells = calculateHourlyRate(c.value, c.duration);
-    const dice = calculateHourlyRate(c.value, c.duration);
+    const coins = computeHourlyRate(c.value, c.duration);
+    const cells = computeHourlyRate(c.value, c.duration);
+    const dice = computeHourlyRate(c.value, c.duration);
 
     assertEqual(`coins ${c.value}/${c.duration}`, coins, expected);
     assertEqual(`cells ${c.value}/${c.duration}`, cells, expected);

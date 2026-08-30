@@ -1,5 +1,5 @@
 export {
-  calculateHourlyRate,
+  computeHourlyRate,
   formatDateToISO,
   formatTimeTo24h,
   normalizeDecimalSeparators,

@@ -1,6 +1,6 @@
 import {
   buildTrackerRunIdentityContext,
-  extractTrackerAppwriteUserIdFromJwt,
+  readTrackerAppwriteUserIdFromJwt,
   type TrackerRunIdentityContext,
 } from '@tmrxjd/platform/tools';
 import { resolveAppwriteIdForDiscordUser } from '../../services/discord-identity-resolver';
@@ -49,7 +49,7 @@ export async function resolveBotRunCloudIdentity(discordUserId: string): Promise
     // unreadable by the very user who created it.
     const linkedAppwriteUserId = await resolveAppwriteIdForDiscordUser(normalized);
     const appwriteUserId = linkedAppwriteUserId
-      ?? extractTrackerAppwriteUserIdFromJwt(process.env.APPWRITE_JWT);
+      ?? readTrackerAppwriteUserIdFromJwt(process.env.APPWRITE_JWT);
 
     const identity = buildTrackerRunIdentityContext({
       appwriteUserId,

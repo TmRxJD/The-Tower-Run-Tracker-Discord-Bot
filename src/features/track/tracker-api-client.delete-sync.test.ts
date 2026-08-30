@@ -62,7 +62,7 @@ vi.mock('../../services/discord-identity-resolver', () => ({
 }));
 
 vi.mock('@tmrxjd/platform/node', () => ({
-  extractTrackerImageText: vi.fn(),
+  readTrackerImageText: vi.fn(),
   preprocessTrackerImageForOcr: vi.fn(),
   getDocumentOrNull: vi.fn(async () => null),
   updateOrCreateDocument: vi.fn(),
@@ -83,7 +83,7 @@ vi.mock('@tmrxjd/platform/tools', async () => {
   return {
     ...actual,
     isTrackerCloudAddressableUserId: (...args: Parameters<typeof isTrackerCloudAddressableUserIdMock>) => isTrackerCloudAddressableUserIdMock(...args),
-    extractTrackerAppwriteUserIdFromJwt: vi.fn(() => null),
+    readTrackerAppwriteUserIdFromJwt: vi.fn(() => null),
     deleteTrackerRunCloudDocuments: (...args: Parameters<typeof deleteTrackerRunCloudDocumentsMock>) => deleteTrackerRunCloudDocumentsMock(...args),
   };
 });

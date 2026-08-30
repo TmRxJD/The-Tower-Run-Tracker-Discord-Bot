@@ -17,9 +17,9 @@ import {
   deleteTrackerRunCloudDocuments,
   estimateTrackerRunTimestamp,
   settleRetryQueueItems,
-  extractOcrTextLines,
-  extractTrackerLeaderboardCompatibilityCandidates,
-  extractTrackerRunCoverageData,
+  readOcrTextLines,
+  readTrackerLeaderboardCompatibilityCandidates,
+  readTrackerRunCoverageData,
   hasMaterialTrackerRunEntryChange,
   hydrateTrackerCloudRun,
   hydrateTrackerRunEntryFromDocument,
@@ -36,7 +36,7 @@ import {
   parseTrackerRunDeleteTarget,
   parseTrackerRunExtendedDocumentRecord,
   compareTrackerVerificationSnapshots,
-  createTrackerVerificationSnapshot,
+  buildTrackerVerificationSnapshot,
   isTrackerCloudAddressableUserId,
   sanitizeTrackerLeaderboardDocumentId,
   stripUndefinedFields,
@@ -55,7 +55,7 @@ import { createAppwriteClient } from '../../persistence/appwrite-client';
 import { isUnauthorizedAppwriteError } from '../../persistence/appwrite-error-utils';
 import { formatDateToISO, formatTimeTo24h, normalizeDecimalSeparators } from './tracker-helpers';
 import {
-  extractTrackerImageText,
+  readTrackerImageText,
   getDocumentOrNull,
   preprocessTrackerImageForOcr,
 } from '@tmrxjd/platform/node';
@@ -286,8 +286,8 @@ function parseOcrRunDataFromLines(lines: string[]): Record<string, unknown> {
 
 async function runLocalGutenyeOcr(file: AttachmentPayload): Promise<ParsedOcrResult> {
   const imageBuffer = await preprocessTrackerImageForOcr(Buffer.from(file.data));
-  const gutenyeResult = await extractTrackerImageText(imageBuffer);
-  const text = extractOcrTextLines(gutenyeResult);
+  const gutenyeResult = await readTrackerImageText(imageBuffer);
+  const text = readOcrTextLines(gutenyeResult);
   const dateTimeInfo = await extractDateTimeFromImage({
     name: file.filename,
     filename: file.filename,
@@ -891,8 +891,8 @@ async function uploadScreenshotForRunWrite(userId: string, screenshot: Attachmen
 function buildLocalRunUpsertPayload(runData: RunRecord, canonicalRunData?: RunRecord | null): RunRecord {
   const normalizedRunData = canonicalizeTrackerRunData(runData);
   const canonical = canonicalRunData && typeof canonicalRunData === 'object' ? canonicalizeTrackerRunData(canonicalRunData) : null;
-  const coverage = extractTrackerRunCoverageData(normalizedRunData);
-  const canonicalCoverage = canonical ? extractTrackerRunCoverageData(canonical) : {};
+  const coverage = readTrackerRunCoverageData(normalizedRunData);
+  const canonicalCoverage = canonical ? readTrackerRunCoverageData(canonical) : {};
 
   return {
     ...collectTrackerRunScalarFields(normalizedRunData, canonical),
@@ -920,8 +920,8 @@ function buildCloudRunEntry(params: {
     ?? ID.unique();
   const createdAt = pickString(params.existingEntry?.createdAt) ?? nowIso;
   const scalarRunFields = collectTrackerRunScalarFields(normalizedRunData, normalizedCanonicalRunData);
-  const coverage = extractTrackerRunCoverageData(normalizedRunData);
-  const canonicalCoverage = normalizedCanonicalRunData ? extractTrackerRunCoverageData(normalizedCanonicalRunData) : {};
+  const coverage = readTrackerRunCoverageData(normalizedRunData);
+  const canonicalCoverage = normalizedCanonicalRunData ? readTrackerRunCoverageData(normalizedCanonicalRunData) : {};
 
   const extractedRunDate = formatDateToISO(String(normalizedRunData.runDate ?? normalizedRunData.date ?? params.existingEntry?.runDate ?? uploadDateStr));
   const extractedRunTime = formatTimeTo24h(String(normalizedRunData.runTime ?? normalizedRunData.time ?? params.existingEntry?.runTime ?? uploadTimeStr));
@@ -1391,7 +1391,7 @@ export async function verifyRunWithScreenshot(runData: RunRecord, screenshot: At
     return { verified: false, status: 'review', mismatchedFields: [], reason: 'missing_screenshot' };
   }
 
-  const expectedSnapshot = createTrackerVerificationSnapshot(runData);
+  const expectedSnapshot = buildTrackerVerificationSnapshot(runData);
   if (!expectedSnapshot) {
     return { verified: false, status: 'review', mismatchedFields: [], reason: 'invalid_run_data' };
   }
@@ -1399,7 +1399,7 @@ export async function verifyRunWithScreenshot(runData: RunRecord, screenshot: At
   try {
     const ocrPayload = await runOCR(screenshot);
     const ocrRunData = ocrPayload.runData;
-    const ocrSnapshot = createTrackerVerificationSnapshot(ocrRunData);
+    const ocrSnapshot = buildTrackerVerificationSnapshot(ocrRunData);
     if (!ocrSnapshot) {
       return { verified: false, status: 'review', mismatchedFields: [], reason: 'ocr_incomplete' };
     }
@@ -2825,7 +2825,7 @@ export async function getCloudLeaderboardRows(options: {
       const fallbackUsername = pickString(blob.username) ?? null;
       const fallbackUserId = pickString(blob.userId) ?? documentId;
 
-      for (const extractedCandidate of extractTrackerLeaderboardCompatibilityCandidates(blob, options.requestedTier, options.sourceFilter)) {
+      for (const extractedCandidate of readTrackerLeaderboardCompatibilityCandidates(blob, options.requestedTier, options.sourceFilter)) {
         const normalized = normalizeTrackerLeaderboardCompatibilityCandidate(
           extractedCandidate.metric,
           extractedCandidate.tier,

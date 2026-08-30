@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { applyRetryFailureState, buildBattleRunDedupKeysFromStoredRun, buildTrackerQueuedRunReferenceIdentity, buildTrackerRunFingerprint, canonicalizeTrackerRunData, createRetryScheduleState, enqueueUniqueItemsByKey, isPopulatedBattleRunDedupKey, parseRetryScheduleState, replaceOrInsertMatchingItem, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
+import { applyRetryFailureState, buildBattleRunDedupKeysFromStoredRun, buildTrackerQueuedRunReferenceIdentity, buildTrackerRunFingerprint, canonicalizeTrackerRunData, buildRetryScheduleState, enqueueUniqueItemsByKey, isPopulatedBattleRunDedupKey, parseRetryScheduleState, replaceOrInsertMatchingItem, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
 import { trackerStoredSettingsSchema, type TrackerSettings } from './types';
 import { logger } from '../../core/logger';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
@@ -585,7 +585,7 @@ async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<v
   if (targetRunId) {
     cache.queue = cache.queue.filter(item => !(item.op === 'delete' && item.userId === input.userId && item.runId === targetRunId));
   }
-  const retryState = createRetryScheduleState();
+  const retryState = buildRetryScheduleState();
   const nextQueue = replaceOrInsertMatchingItem({
     existingItems: cache.queue,
     matchesExisting: item => {
@@ -639,7 +639,7 @@ export async function queueCloudUpsertsBatch(inputs: QueueCloudUpsertInput[]): P
 
 export async function queueCloudDelete(input: { userId: string; username: string; runId: string }) {
   await ensureLoaded();
-  const retryState = createRetryScheduleState();
+  const retryState = buildRetryScheduleState();
   const nextQueue = enqueueUniqueItemsByKey({
     existingItems: cache!.queue,
     incomingItems: [{
@@ -669,7 +669,7 @@ export async function queueCloudSettings(input: {
   settingsUpdatedAt: number;
 }) {
   await ensureLoaded();
-  const retryState = createRetryScheduleState();
+  const retryState = buildRetryScheduleState();
   const parsedSettings = trackerStoredSettingsSchema.parse({
     ...input.settingsData,
     updatedAt: input.settingsUpdatedAt,

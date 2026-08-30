@@ -1,6 +1,6 @@
 import { getAppConfig } from '../../config';
 import { logger } from '../../core/logger';
-import { extractChatCompletionText, extractJsonObject, extractOcrTextLines, resolveChatCompletionsEndpoint } from '@tmrxjd/platform/tools';
+import { readChatCompletionText, readJsonObject, readOcrTextLines, resolveChatCompletionsEndpoint } from '@tmrxjd/platform/tools';
 import type { AttachmentPayload } from './types';
 
 type VisionOcrPayload = {
@@ -138,8 +138,8 @@ export async function runDirectVisionOcr(file: AttachmentPayload): Promise<Visio
   }
 
   const payload = (await response.json()) as ChatCompletionResponse;
-  const rawContent = extractChatCompletionText(payload);
-  const jsonText = extractJsonObject(rawContent);
+  const rawContent = readChatCompletionText(payload);
+  const jsonText = readJsonObject(rawContent);
   if (!jsonText) {
     throw new Error('Vision API returned non-JSON content');
   }
@@ -148,7 +148,7 @@ export async function runDirectVisionOcr(file: AttachmentPayload): Promise<Visio
     runData?: unknown;
   };
 
-  const textLines = extractOcrTextLines(parsed.textLines);
+  const textLines = readOcrTextLines(parsed.textLines);
   if (textLines.length === 0) {
     logger.warn('Vision API OCR returned no text lines', { filename: file.filename });
     throw new Error('Vision API OCR returned no text lines');

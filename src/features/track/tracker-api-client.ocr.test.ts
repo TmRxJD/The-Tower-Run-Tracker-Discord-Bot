@@ -61,7 +61,7 @@ vi.mock('../../services/idb', () => ({
 
 vi.mock('@tmrxjd/platform/node', () => ({
   createOrUpdateDocument: vi.fn(),
-  extractTrackerImageText: (...args: unknown[]) => extractTrackerImageTextMock(...args),
+  readTrackerImageText: (...args: unknown[]) => extractTrackerImageTextMock(...args),
   getDocumentOrNull: vi.fn(),
   isUnauthorizedAppwriteError: vi.fn(),
   preprocessTrackerImageForOcr: (...args: unknown[]) => preprocessTrackerImageForOcrMock(...args),

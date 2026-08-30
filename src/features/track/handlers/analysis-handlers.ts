@@ -11,7 +11,7 @@ import {
 } from 'discord.js';
 import { createCanvas } from '@napi-rs/canvas';
 import {
-  createNapiRsCanvasChartRenderRuntime,
+  buildNapiRsCanvasChartRenderRuntime,
   renderAnalyticsLineChartPng,
 } from '@tmrxjd/platform/tools';
 import { getLastRun } from '../tracker-api-client';
@@ -19,7 +19,7 @@ import { TRACKER_IDS } from '../track-custom-ids';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { logError } from './error-handlers';
 
-const runtime = createNapiRsCanvasChartRenderRuntime((w, h) => createCanvas(w, h));
+const runtime = buildNapiRsCanvasChartRenderRuntime((w, h) => createCanvas(w, h));
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
 

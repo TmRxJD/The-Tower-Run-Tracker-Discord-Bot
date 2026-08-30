@@ -4,7 +4,7 @@ export {
   canonicalizeTrackerRunData,
   dedupeEquivalentRunDataKeys,
   getFirstMeaningfulRunDataValue,
-  normalizeGuardianSummonedEnemiesFromDamage,
+  normalizeGuardianSummonedEnemies,
   serializeTrackerRunForCloudAttributes,
 } from '@tmrxjd/platform/tools'
 export type {

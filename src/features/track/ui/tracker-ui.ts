@@ -1,5 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
-import { calculateHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
+import { computeHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { trimDisplayTimeSeconds } from '../handlers/upload-helpers';
@@ -98,9 +98,9 @@ export function createDataReviewEmbed(
   const standardOrder = review.standardFieldOrder as string[];
   const numericFieldKeys = new Set<string>(review.numericFieldKeys as string[]);
   const derivedDurationRaw = String(viewData.roundDuration ?? viewData.duration ?? '');
-  const derivedModuleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(viewData), derivedDurationRaw) || 'N/A';
-  const derivedWavesPerHour = calculateHourlyRate(String(viewData.wave ?? ''), derivedDurationRaw) || 'N/A';
-  const derivedEnemiesPerHour = calculateHourlyRate(String(viewData.totalEnemies ?? ''), derivedDurationRaw) || 'N/A';
+  const derivedModuleShardsPerHour = computeHourlyRate(resolveModuleShardsTotal(viewData), derivedDurationRaw) || 'N/A';
+  const derivedWavesPerHour = computeHourlyRate(String(viewData.wave ?? ''), derivedDurationRaw) || 'N/A';
+  const derivedEnemiesPerHour = computeHourlyRate(String(viewData.totalEnemies ?? ''), derivedDurationRaw) || 'N/A';
   viewData.moduleShardsPerHour = firstPresentValue(viewData, ['moduleShardsPerHour']) ?? derivedModuleShardsPerHour;
   viewData.wavesPerHour = firstPresentValue(viewData, ['wavesPerHour']) ?? derivedWavesPerHour;
   viewData.enemiesPerHour = firstPresentValue(viewData, ['enemiesPerHour']) ?? derivedEnemiesPerHour;
@@ -275,12 +275,12 @@ export function createInitialEmbed(params: {
     const rawRunTime = String(lastRun.runTime || lastRun.time || '').trim();
     const dateValue = `${(rawRunDate ? formatDateToISO(rawRunDate) : '') || 'Unknown'} ${rawRunTime ? trimDisplayTimeSeconds(formatTimeTo24h(rawRunTime)) : ''}`.trim();
 
-    const coinsPerHour = calculateHourlyRate(coinsValue, durationValue) || 'N/A';
-    const cellsPerHour = calculateHourlyRate(cellsValue, durationValue) || 'N/A';
-    const dicePerHour = calculateHourlyRate(diceValue, durationValue) || 'N/A';
-    const moduleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(lastRun as Record<string, unknown>), durationValue) || 'N/A';
-    const wavesPerHour = calculateHourlyRate(waveValue, durationValue) || 'N/A';
-    const enemiesPerHour = calculateHourlyRate(String(lastRun.totalEnemies ?? ''), durationValue) || 'N/A';
+    const coinsPerHour = computeHourlyRate(coinsValue, durationValue) || 'N/A';
+    const cellsPerHour = computeHourlyRate(cellsValue, durationValue) || 'N/A';
+    const dicePerHour = computeHourlyRate(diceValue, durationValue) || 'N/A';
+    const moduleShardsPerHour = computeHourlyRate(resolveModuleShardsTotal(lastRun as Record<string, unknown>), durationValue) || 'N/A';
+    const wavesPerHour = computeHourlyRate(waveValue, durationValue) || 'N/A';
+    const enemiesPerHour = computeHourlyRate(String(lastRun.totalEnemies ?? ''), durationValue) || 'N/A';
 
     function delta(key: string): string {
       if (!deltaResult) return '';

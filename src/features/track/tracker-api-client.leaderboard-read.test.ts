@@ -44,7 +44,7 @@ vi.mock('../../core/logger', () => ({
 }));
 
 vi.mock('@tmrxjd/platform/node', () => ({
-  extractTrackerImageText: vi.fn(),
+  readTrackerImageText: vi.fn(),
   preprocessTrackerImageForOcr: vi.fn(),
   getDocumentOrNull: vi.fn(),
   createOrUpdateDocument: vi.fn(),

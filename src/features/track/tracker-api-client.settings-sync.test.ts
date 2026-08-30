@@ -57,7 +57,7 @@ vi.mock('../../core/logger', () => ({
 }));
 
 vi.mock('@tmrxjd/platform/node', () => ({
-  extractTrackerImageText: vi.fn(),
+  readTrackerImageText: vi.fn(),
   preprocessTrackerImageForOcr: vi.fn(),
   getDocumentOrNull: (...args: unknown[]) => getDocumentOrNullMock(...args),
   updateOrCreateDocument: async ({ databaseId, collectionId, documentId, data }: { databaseId: string; collectionId: string; documentId: string; data: Record<string, unknown> }) => {

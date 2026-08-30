@@ -1,6 +1,6 @@
 import { Colors, EmbedBuilder } from 'discord.js';
 import { generateCoverageDescription, formatDuration as formatRunDuration } from '../handlers/upload-helpers';
-import { calculateHourlyRate } from '../tracker-helpers';
+import { computeHourlyRate } from '../tracker-helpers';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 import { type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools';
@@ -205,12 +205,12 @@ export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options
   const typeCount = Math.max(1, Number(rawTypeCount) || 0);
 
   const durationRaw = firstAvailable(run, ['roundDuration', 'duration']);
-  const coinsPerHour = calculateHourlyRate(firstAvailable(run, ['totalCoins', 'coins']), durationRaw) || '0';
-  const cellsPerHour = calculateHourlyRate(firstAvailable(run, ['totalCells', 'cells']), durationRaw) || '0';
-  const dicePerHour = calculateHourlyRate(firstAvailable(run, ['totalDice', 'rerollShards', 'dice']), durationRaw) || '0';
-  const moduleShardsPerHour = calculateHourlyRate(resolveModuleShardsTotal(run), durationRaw) || '0';
-  const wavesPerHour = calculateHourlyRate(firstAvailable(run, ['wave']), durationRaw) || '0';
-  const enemiesPerHour = calculateHourlyRate(firstAvailable(run, ['totalEnemies']), durationRaw) || '0';
+  const coinsPerHour = computeHourlyRate(firstAvailable(run, ['totalCoins', 'coins']), durationRaw) || '0';
+  const cellsPerHour = computeHourlyRate(firstAvailable(run, ['totalCells', 'cells']), durationRaw) || '0';
+  const dicePerHour = computeHourlyRate(firstAvailable(run, ['totalDice', 'rerollShards', 'dice']), durationRaw) || '0';
+  const moduleShardsPerHour = computeHourlyRate(resolveModuleShardsTotal(run), durationRaw) || '0';
+  const wavesPerHour = computeHourlyRate(firstAvailable(run, ['wave']), durationRaw) || '0';
+  const enemiesPerHour = computeHourlyRate(firstAvailable(run, ['totalEnemies']), durationRaw) || '0';
 
   const embed = new EmbedBuilder()
     .setAuthor({

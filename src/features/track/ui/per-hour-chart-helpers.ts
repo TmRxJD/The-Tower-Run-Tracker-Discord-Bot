@@ -1,13 +1,13 @@
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { createCanvas } from '@napi-rs/canvas';
 import {
-  createNapiRsCanvasChartRenderRuntime,
+  buildNapiRsCanvasChartRenderRuntime,
   renderAnalyticsLineChartPng,
 } from '@tmrxjd/platform/tools';
 import { logger } from '../../../core/logger';
 import { parseDurationToHours, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
 
-const runtime = createNapiRsCanvasChartRenderRuntime((w, h) => createCanvas(w, h));
+const runtime = buildNapiRsCanvasChartRenderRuntime((w, h) => createCanvas(w, h));
 
 function toNum(val: unknown): number | null {
   if (val === null || val === undefined || val === '') return null;
