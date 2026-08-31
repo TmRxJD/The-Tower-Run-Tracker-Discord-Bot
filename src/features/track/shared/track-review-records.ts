@@ -1,4 +1,5 @@
-import { canonicalizeTrackerRunData } from './run-data-normalization'
+import { canonicalizeRunData } from './run-data-normalization'
+import type { BotProfileOption } from '../upload-target-profile'
 
 export type RunDataRecord = Record<string, unknown> & {
   localId?: unknown
@@ -40,6 +41,10 @@ export type PendingRecordLike = {
   decimalPreference?: string
   isDuplicate?: boolean
   defaultRunType?: string
+  /** Profiles the user can retarget this run to (Main + alts). Empty/1-entry = no selector. */
+  profileOptions?: BotProfileOption[]
+  /** Currently-selected upload target for this pending run (null = Main). */
+  uploadProfileId?: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -64,12 +69,14 @@ export function toPendingRecord(value: unknown): PendingRecordLike | null {
   return {
     userId: record.userId,
     username: record.username,
-    runData: canonicalizeTrackerRunData(toRunDataRecord(record.runData)),
-    canonicalRunData: record.canonicalRunData ? canonicalizeTrackerRunData(toRunDataRecord(record.canonicalRunData)) : null,
+    runData: canonicalizeRunData(toRunDataRecord(record.runData)),
+    canonicalRunData: record.canonicalRunData ? canonicalizeRunData(toRunDataRecord(record.canonicalRunData)) : null,
     rawParseFields: isRecord(record.rawParseFields) ? { ...record.rawParseFields } : null,
     screenshot,
     decimalPreference: typeof record.decimalPreference === 'string' ? record.decimalPreference : undefined,
     isDuplicate: typeof record.isDuplicate === 'boolean' ? record.isDuplicate : undefined,
     defaultRunType: typeof record.defaultRunType === 'string' ? record.defaultRunType : undefined,
+    profileOptions: Array.isArray(record.profileOptions) ? (record.profileOptions as PendingRecordLike['profileOptions']) : undefined,
+    uploadProfileId: typeof record.uploadProfileId === 'string' ? record.uploadProfileId : (record.uploadProfileId === null ? null : undefined),
   }
 }

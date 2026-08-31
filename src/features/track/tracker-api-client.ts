@@ -12,7 +12,7 @@ import {
   buildTrackerLifetimeCloudWritePayload,
   buildTrackerRunMainDocumentPayload,
   createOrUpdateCloudDocumentWithFallback,
-  collectTrackerRunScalarFields,
+  collectRunScalarFields,
   createOrUpdateCloudDocument,
   deleteTrackerRunCloudDocuments,
   estimateTrackerRunTimestamp,
@@ -25,8 +25,8 @@ import {
   hydrateTrackerRunEntryFromDocument,
   listCloudDocumentsByUserIds,
   normalizeTrackerLeaderboardCompatibilityCandidate,
-  normalizeTrackerLifetimeDate,
-  normalizeTrackerLifetimeEntryValues,
+  normalizeLifetimeDate,
+  normalizeLifetimeEntryValues,
   parseTrackerLeaderboardBooleanLike,
   parseTrackerLeaderboardCompatibilityBlob,
   normalizeTrackerRunMetricValue,
@@ -77,7 +77,7 @@ import {
   mergeLifetimeEntriesDelta,
   sortLifetimeEntriesByTimestamp,
 } from './shared/tracker-parity-core';
-import { canonicalizeTrackerRunData } from './shared/run-data-normalization';
+import { canonicalizeRunData } from './shared/run-data-normalization';
 import {
   getLocalLifetime,
   getLocalRuns,
@@ -889,13 +889,13 @@ async function uploadScreenshotForRunWrite(userId: string, screenshot: Attachmen
 }
 
 function buildLocalRunUpsertPayload(runData: RunRecord, canonicalRunData?: RunRecord | null): RunRecord {
-  const normalizedRunData = canonicalizeTrackerRunData(runData);
-  const canonical = canonicalRunData && typeof canonicalRunData === 'object' ? canonicalizeTrackerRunData(canonicalRunData) : null;
+  const normalizedRunData = canonicalizeRunData(runData);
+  const canonical = canonicalRunData && typeof canonicalRunData === 'object' ? canonicalizeRunData(canonicalRunData) : null;
   const coverage = readTrackerRunCoverageData(normalizedRunData);
   const canonicalCoverage = canonical ? readTrackerRunCoverageData(canonical) : {};
 
   return {
-    ...collectTrackerRunScalarFields(normalizedRunData, canonical),
+    ...collectRunScalarFields(normalizedRunData, canonical),
     ...coverage,
     ...canonicalCoverage,
   };
@@ -909,8 +909,8 @@ function buildCloudRunEntry(params: {
   screenshotUrl?: string | null;
   existingEntry?: RunRecord | null;
 }): RunRecord {
-  const normalizedRunData = canonicalizeTrackerRunData(params.runData);
-  const normalizedCanonicalRunData = params.canonicalRunData ? canonicalizeTrackerRunData(params.canonicalRunData) : null;
+  const normalizedRunData = canonicalizeRunData(params.runData);
+  const normalizedCanonicalRunData = params.canonicalRunData ? canonicalizeRunData(params.canonicalRunData) : null;
   const nowIso = new Date().toISOString();
   const uploadDateStr = nowIso.split('T')[0];
   const uploadTimeStr = nowIso.split('T')[1]?.slice(0, 8) ?? '00:00:00';
@@ -919,7 +919,7 @@ function buildCloudRunEntry(params: {
     ?? pickString(params.existingEntry?.runId)
     ?? ID.unique();
   const createdAt = pickString(params.existingEntry?.createdAt) ?? nowIso;
-  const scalarRunFields = collectTrackerRunScalarFields(normalizedRunData, normalizedCanonicalRunData);
+  const scalarRunFields = collectRunScalarFields(normalizedRunData, normalizedCanonicalRunData);
   const coverage = readTrackerRunCoverageData(normalizedRunData);
   const canonicalCoverage = normalizedCanonicalRunData ? readTrackerRunCoverageData(normalizedCanonicalRunData) : {};
 
@@ -1225,7 +1225,7 @@ export async function saveLifetimeEntry(params: {
   entryId?: string;
   screenshotUrl?: string | null;
 }) {
-  const baseDate = normalizeTrackerLifetimeDate(params.entryData.date);
+  const baseDate = normalizeLifetimeDate(params.entryData.date);
   const entryId = pickString(params.entryId)
     ?? pickString(params.entryData.id)
     ?? pickString(params.entryData.$id)
@@ -1241,7 +1241,7 @@ export async function saveLifetimeEntry(params: {
     date: baseDate,
   };
 
-  const normalizedEntry = normalizeTrackerLifetimeEntryValues(nextEntry, {
+  const normalizedEntry = normalizeLifetimeEntryValues(nextEntry, {
     normalizeNumericValue: value => standardizeNotation(value.replace(',', '.')),
   });
 
@@ -2588,7 +2588,7 @@ export async function logRun(params: {
       runId: local.runId,
       runData: params.runData,
     });
-    const deferredRunData = canonicalizeTrackerRunData({
+    const deferredRunData = canonicalizeRunData({
       ...params.runData,
       localId: deferredReference.localId ?? undefined,
     });
@@ -2896,7 +2896,7 @@ export async function editRun(params: {
       runData: params.runData,
       fallbackRunId: local.runId,
     });
-    const deferredRunData = canonicalizeTrackerRunData({
+    const deferredRunData = canonicalizeRunData({
       ...params.runData,
       localId: deferredReference.localId ?? undefined,
     });

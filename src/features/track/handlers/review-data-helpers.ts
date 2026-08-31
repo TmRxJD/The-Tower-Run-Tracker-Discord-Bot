@@ -1,7 +1,7 @@
 import { formatDate, formatTime } from './upload-helpers';
 import {
   canonicalizeRunDataForOutput,
-  canonicalizeTrackerRunData,
+  canonicalizeRunData,
   TRACK_RUN_BATTLE_REPORT_FIELDS,
   TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS,
 } from '@tmrxjd/platform/tools';
@@ -392,7 +392,7 @@ export async function sendRawParseMessage(interaction: TrackReplyInteractionLike
 }
 
 export async function buildSubmitPayload(userId: string, username: string, data: RunDataRecord, includeType: boolean, includeNotes: boolean) {
-  const canonical = canonicalizeTrackerRunData(canonicalizeRunDataForOutput(data));
+  const canonical = canonicalizeRunData(canonicalizeRunDataForOutput(data));
   const runData: Record<string, unknown> = {
     ...canonical,
     tier: canonical.tier ?? '1',

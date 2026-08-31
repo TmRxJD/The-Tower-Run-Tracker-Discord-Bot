@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
+import { canonicalizeRunData } from '@tmrxjd/platform/tools';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
+import type { BotProfileOption } from './upload-target-profile';
 
 interface PendingRunRecord {
   token: string;
@@ -13,6 +14,8 @@ interface PendingRunRecord {
   decimalPreference?: string;
   isDuplicate?: boolean;
   defaultRunType?: string;
+  profileOptions?: BotProfileOption[];
+  uploadProfileId?: string | null;
   runSource?: 'paste' | 'ocr' | 'manual' | 'unknown';
   createdAt: number;
   lastActivity: number;
@@ -45,8 +48,8 @@ export async function createPendingRun(input: Omit<PendingRunRecord, 'token' | '
   const now = Date.now();
   const record: PendingRunRecord = {
     ...input,
-    runData: canonicalizeTrackerRunData(input.runData ?? {}),
-    canonicalRunData: input.canonicalRunData ? canonicalizeTrackerRunData(input.canonicalRunData) : null,
+    runData: canonicalizeRunData(input.runData ?? {}),
+    canonicalRunData: input.canonicalRunData ? canonicalizeRunData(input.canonicalRunData) : null,
     rawParseFields: input.rawParseFields && typeof input.rawParseFields === 'object' ? { ...input.rawParseFields } : null,
     token,
     createdAt: now,
@@ -69,9 +72,9 @@ export async function updatePendingRun(token: string, patch: Partial<PendingRunR
   const next: PendingRunRecord = {
     ...current,
     ...patch,
-    runData: patch.runData ? canonicalizeTrackerRunData(patch.runData) : current.runData,
+    runData: patch.runData ? canonicalizeRunData(patch.runData) : current.runData,
     canonicalRunData: patch.canonicalRunData
-      ? canonicalizeTrackerRunData(patch.canonicalRunData)
+      ? canonicalizeRunData(patch.canonicalRunData)
       : (patch.canonicalRunData === null ? null : current.canonicalRunData),
     rawParseFields: patch.rawParseFields
       ? { ...patch.rawParseFields }

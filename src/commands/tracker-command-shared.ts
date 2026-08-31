@@ -4,6 +4,7 @@ import type { TrackerBotClient } from '../core/tracker-bot-client';
 import { logger } from '../core/logger';
 import { resolveInteractionDisplayName } from '../features/track/discord-display-name';
 import { resolveBotRunCloudIdentity } from '../features/track/run-cloud-identity';
+import { resolveBotUploadProfileId, setPendingUploadProfile } from '../features/track/upload-target-profile';
 import { syncBotsTrackerState } from '../services/bots-tracker-db';
 import { handleTrackWorkflow } from '../features/track/track-workflow';
 import { ensureDeferredEphemeralReply } from '../features/track/interaction-ack';
@@ -104,6 +105,9 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
   const saveFile = 'savefile' in options && options.savefile
     ? interaction.options.getAttachment(options.savefile.name) ?? undefined
     : undefined;
+  const altIndex = 'alt' in options && options.alt
+    ? interaction.options.getInteger(options.alt.name) ?? null
+    : null;
 
   await client.persistence?.users.touch(interaction.user.id, resolveInteractionDisplayName(interaction)).catch(() => {});
 
@@ -121,6 +125,20 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
       content: 'Link your Discord account on the Tower Run Tracker website before using cloud-backed tracker commands.',
     }).catch(() => {});
     return;
+  }
+
+  // Resolve which profile this upload targets (alt 1-4, else Main) and stash it for the
+  // run-write choke point. Always set (even to null/Main) so it is never stale.
+  try {
+    const uploadTarget = await resolveBotUploadProfileId(interaction.user.id, altIndex);
+    if (uploadTarget.error) {
+      await interaction.editReply({ content: uploadTarget.error }).catch(() => {});
+      return;
+    }
+    setPendingUploadProfile(interaction.user.id, uploadTarget.profileId);
+  } catch (error) {
+    logger.warn('Upload profile resolution failed', error);
+    setPendingUploadProfile(interaction.user.id, null); // safe fallback: Main
   }
 
   if (!settingsRequested) {

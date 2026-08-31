@@ -1,13 +1,13 @@
 export {
   applyRunDataAliasGroups,
   canonicalizeRunDataForOutput,
-  canonicalizeTrackerRunData,
+  canonicalizeRunData,
   dedupeEquivalentRunDataKeys,
   getFirstMeaningfulRunDataValue,
   normalizeGuardianSummonedEnemies,
-  serializeTrackerRunForCloudAttributes,
+  serializeRunForCloudAttributes,
 } from '@tmrxjd/platform/tools'
 export type {
   RunDataRecordLike,
-  TrackerCanonicalRunData,
+  CanonicalRunData,
 } from '@tmrxjd/platform/tools'

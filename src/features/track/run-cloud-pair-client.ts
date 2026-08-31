@@ -15,6 +15,7 @@ import {
 } from '@tmrxjd/platform/tools';
 import { createAppwriteClient } from '../../persistence/appwrite-client';
 import { resolveBotRunCloudIdentity } from './run-cloud-identity';
+import { peekPendingUploadProfile } from './upload-target-profile';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
 
@@ -147,5 +148,8 @@ export async function writeBotRunCloudDocumentPair(params: {
     username: params.username,
     run: params.run,
     permissions,
+    // Target profile for this /track upload (null = Main). NEW runs take it; the
+    // pair-writer never re-stamps an existing run, so a Main run is never moved.
+    profileId: peekPendingUploadProfile(params.userId),
   });
 }

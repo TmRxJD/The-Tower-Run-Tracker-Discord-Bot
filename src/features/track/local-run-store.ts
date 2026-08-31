@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { applyRetryFailureState, buildBattleRunDedupKeysFromStoredRun, buildTrackerQueuedRunReferenceIdentity, buildTrackerRunFingerprint, canonicalizeTrackerRunData, buildRetryScheduleState, enqueueUniqueItemsByKey, isPopulatedBattleRunDedupKey, parseRetryScheduleState, replaceOrInsertMatchingItem, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
+import { applyRetryFailureState, buildBattleRunDedupKeysFromStoredRun, buildTrackerQueuedRunReferenceIdentity, buildTrackerRunFingerprint, canonicalizeRunData, buildRetryScheduleState, enqueueUniqueItemsByKey, isPopulatedBattleRunDedupKey, parseRetryScheduleState, replaceOrInsertMatchingItem, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
 import { trackerStoredSettingsSchema, type TrackerSettings } from './types';
 import { logger } from '../../core/logger';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
@@ -198,8 +198,8 @@ function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
   const canonicalRunDataRecord = asRecord(record.canonicalRunData);
   const screenshotRecord = asRecord(record.screenshot);
 
-  const runData = runDataRecord ? canonicalizeTrackerRunData(runDataRecord) : undefined;
-  const canonicalRunData = canonicalRunDataRecord ? canonicalizeTrackerRunData(canonicalRunDataRecord) : undefined;
+  const runData = runDataRecord ? canonicalizeRunData(runDataRecord) : undefined;
+  const canonicalRunData = canonicalRunDataRecord ? canonicalizeRunData(canonicalRunDataRecord) : undefined;
 
   return {
     id: typeof record.id === 'string' && record.id.trim().length > 0 ? record.id : randomUUID(),
@@ -409,7 +409,7 @@ export function upsertRunInRunList(
   now: number,
 ): { runs: LocalRunRecord[]; record: LocalRunRecord; wasUpdate: boolean } {
   const nextRuns = [...runs];
-  const normalizedRunData = canonicalizeTrackerRunData(runData);
+  const normalizedRunData = canonicalizeRunData(runData);
 
   const incoming = {
     ...normalizedRunData,
@@ -571,8 +571,8 @@ export type QueueCloudUpsertInput = {
 
 async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<void> {
   if (!cache) throw new Error('Local store not loaded');
-  const normalizedRunData = canonicalizeTrackerRunData(input.runData ?? {});
-  const normalizedCanonicalRunData = input.canonicalRunData ? canonicalizeTrackerRunData(input.canonicalRunData) : undefined;
+  const normalizedRunData = canonicalizeRunData(input.runData ?? {});
+  const normalizedCanonicalRunData = input.canonicalRunData ? canonicalizeRunData(input.canonicalRunData) : undefined;
   const targetReference = buildTrackerQueuedRunReferenceIdentity({
     localId: input.localId,
     runData: normalizedRunData,

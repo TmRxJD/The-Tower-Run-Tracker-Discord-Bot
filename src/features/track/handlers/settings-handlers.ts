@@ -38,6 +38,15 @@ import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { getEffectiveUserSharedSettings, saveUserSharedSettings } from '../../../services/user-shared-settings-db';
+import {
+  formatProfileDisplayName,
+  listBotUserProfiles,
+  renameBotUserProfile,
+  resolveDefaultUploadProfileId,
+  setDefaultUploadProfileId,
+  type BotProfileOption,
+} from '../upload-target-profile';
+import { buildProfileSelectRow, MAIN_PROFILE_VALUE, resolveSelectedProfileId } from '../ui/profile-select';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
 type SettingsUpdatePayload = {
@@ -192,6 +201,12 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
   const logChannelId = typeof current?.logChannelId === 'string' ? current.logChannelId.trim() : '';
   const logChannelDisplay = logChannelId ? `<#${logChannelId}>` : 'Not configured';
 
+  // Multi-profile ("alt") controls only appear when the user actually has >1 profile.
+  const profileOptions = await listBotUserProfiles(userId).catch(() => [] as BotProfileOption[]);
+  const hasMultipleProfiles = profileOptions.length > 1;
+  const defaultProfileId = hasMultipleProfiles ? await resolveDefaultUploadProfileId(userId).catch(() => null) : null;
+  const defaultProfileName = formatProfileDisplayName(profileOptions, defaultProfileId);
+
   const settingsEmbed = new EmbedBuilder()
     .setTitle('⚙️ Tracker Settings')
     .setDescription('Use the buttons and dropdowns below to customize your tracking experience. Your changes will be saved automatically.')
@@ -209,6 +224,10 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
       { name: 'Comparison Mode', value: formatDeltaModeLabel(sharedSettings.runDeltaMode), inline: true },
     )
     .setColor(0x3b82f6);
+
+  if (hasMultipleProfiles) {
+    settingsEmbed.addFields({ name: 'Default Upload Profile', value: defaultProfileName, inline: true });
+  }
 
   if (queued > 0) {
     settingsEmbed.addFields({ name: settingsUi.labels.queuedCloudUploads, value: String(queued), inline: true });
@@ -248,6 +267,17 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
       new ButtonBuilder()
         .setCustomId(TRACKER_IDS.settings.forceSave)
         .setLabel(settingsUi.buttons.forceSave ?? 'Force Save')
+        .setStyle(ButtonStyle.Primary),
+    );
+  }
+
+  // Profile management entry point (alts) — only when the user has >1 profile. Added to
+  // the actions row because the settings message already uses its 5-row component budget.
+  if (hasMultipleProfiles) {
+    actionsButtons.push(
+      new ButtonBuilder()
+        .setCustomId(TRACKER_IDS.settings.profileMenu)
+        .setLabel('Profiles')
         .setStyle(ButtonStyle.Primary),
     );
   }
@@ -992,6 +1022,187 @@ export async function handleTrackMenuToggleShareStyle(interaction: TrackMenuInte
     const ui = getTrackUiConfig();
     await logError(interaction.client, interaction.user, error, 'track_menu_toggle_share_style');
     await updateInPlace(interaction, { content: ui.settings.shareFailed, components: [], embeds: [] });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-profile ("alt") management screen (Surfaces 3 & 4)
+// ---------------------------------------------------------------------------
+
+async function buildProfileManagementPayload(userId: string): Promise<SettingsUpdatePayload> {
+  const profileOptions = await listBotUserProfiles(userId).catch(() => [] as BotProfileOption[]);
+  const alts = profileOptions.filter(option => !option.isPrimary);
+  const defaultProfileId = await resolveDefaultUploadProfileId(userId).catch(() => null);
+  const defaultProfileName = formatProfileDisplayName(profileOptions, defaultProfileId);
+
+  const embed = new EmbedBuilder()
+    .setTitle('👤 Profiles')
+    .setColor(0x3b82f6)
+    .setDescription(
+      [
+        'Manage your account profiles (alts) and pick which one the bot uploads to by default.',
+        '',
+        ...profileOptions.map(option => {
+          const label = option.isPrimary ? '**Main**' : `**Alt ${option.index}** · ${option.name}`;
+          const marker = (option.isPrimary ? defaultProfileId == null : option.id === defaultProfileId) ? ' — default' : '';
+          return `• ${label}${marker}`;
+        }),
+      ].join('\n'),
+    )
+    .addFields({ name: 'Default Upload Profile', value: defaultProfileName, inline: true });
+
+  const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [];
+
+  const defaultRow = buildProfileSelectRow({
+    customId: TRACKER_IDS.settings.profileDefault,
+    options: profileOptions,
+    selectedProfileId: defaultProfileId,
+    placeholder: 'Set default upload profile',
+  });
+  if (defaultRow) components.push(defaultRow);
+
+  if (alts.length > 0) {
+    const renameRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(TRACKER_IDS.settings.profileRenameSelect)
+        .setPlaceholder('Rename an alt')
+        .setMinValues(1)
+        .setMaxValues(1)
+        .addOptions(...alts.map(alt => ({ label: `Alt ${alt.index} · ${alt.name}`.slice(0, 100), value: alt.id }))),
+    );
+    components.push(renameRow);
+
+    const deleteRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(TRACKER_IDS.settings.profileDeleteSelect)
+        .setPlaceholder('Delete an alt')
+        .setMinValues(1)
+        .setMaxValues(1)
+        .addOptions(...alts.map(alt => ({ label: `Alt ${alt.index} · ${alt.name}`.slice(0, 100), value: alt.id }))),
+    );
+    components.push(deleteRow);
+  }
+
+  components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(TRACKER_IDS.settings.profileBack).setLabel('Back to Settings').setStyle(ButtonStyle.Secondary),
+  ));
+
+  return {
+    content: profileOptions.length > 1
+      ? 'Pick your default upload profile, or rename an alt below.'
+      : 'You have no alt profiles yet — create one on the Tower Run Tracker website.',
+    embeds: [embed],
+    components,
+  };
+}
+
+export async function handleTrackMenuProfileMenu(interaction: TrackMenuInteraction) {
+  try {
+    const payload = await buildProfileManagementPayload(interaction.user.id);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_profile_menu');
+    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuProfileBack(interaction: TrackMenuInteraction) {
+  try {
+    const refreshed = await getUserSettings(interaction.user.id);
+    const payload = await buildSettingsPayload(interaction.user.id, refreshed);
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_profile_back');
+    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuSelectDefaultProfile(interaction: TrackMenuInteraction) {
+  try {
+    if (canUpdate(interaction) && !interaction.deferred && !interaction.replied) {
+      await interaction.deferUpdate().catch(() => {});
+    }
+    const selected = getSelectedValues(interaction)[0] ?? MAIN_PROFILE_VALUE;
+    const profileId = resolveSelectedProfileId(selected);
+    const result = await setDefaultUploadProfileId(interaction.user.id, profileId);
+    const payload = await buildProfileManagementPayload(interaction.user.id);
+    if (result.error) {
+      payload.content = result.error;
+    }
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_select_default_profile');
+    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuProfileRename(interaction: TrackMenuInteraction) {
+  try {
+    if (!('showModal' in interaction) || typeof interaction.showModal !== 'function') {
+      await updateInPlace(interaction, { content: 'Renaming can only be started from the Profiles screen.', components: [], embeds: [] });
+      return;
+    }
+    const profileId = getSelectedValues(interaction)[0] ?? '';
+    if (!profileId) {
+      await updateInPlace(interaction, { content: 'No profile selected.', components: [], embeds: [] });
+      return;
+    }
+
+    const currentOptions = await listBotUserProfiles(interaction.user.id).catch(() => [] as BotProfileOption[]);
+    const target = currentOptions.find(option => option.id === profileId && !option.isPrimary);
+    if (!target) {
+      await updateInPlace(interaction, { content: 'That alt no longer exists.', components: [], embeds: [] });
+      return;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`${TRACKER_IDS.settings.profileRenameModal}:${profileId}`)
+      .setTitle(`Rename Alt ${target.index}`);
+    const nameInput = new TextInputBuilder()
+      .setCustomId(TRACKER_IDS.settings.profileRenameInput)
+      .setLabel('New name')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setMaxLength(60)
+      .setValue(target.name);
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(nameInput));
+
+    await interaction.showModal(modal);
+
+    const submitted = await awaitOwnedModalSubmit(interaction as MessageComponentInteraction, `${TRACKER_IDS.settings.profileRenameModal}:${profileId}`);
+    if (!submitted.deferred && !submitted.replied) {
+      await submitted.deferUpdate().catch(() => {});
+    }
+
+    const newName = submitted.fields.getTextInputValue(TRACKER_IDS.settings.profileRenameInput) ?? '';
+    const result = await renameBotUserProfile(interaction.user.id, profileId, newName);
+    const payload = await buildProfileManagementPayload(interaction.user.id);
+    payload.content = result.ok ? `Renamed to “${result.name}”.` : (result.error ?? 'Rename failed.');
+    await submitted.editReply({ content: payload.content, embeds: payload.embeds, components: payload.components }).catch(() => {});
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_profile_rename');
+    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
+  }
+}
+
+export async function handleTrackMenuProfileDelete(interaction: TrackMenuInteraction) {
+  // Deleting an alt must also remove that alt's cloud data the same Main-safe way the site
+  // does. That sweep (profiles.service.ts deleteAltCloudData) runs against the user's own
+  // Appwrite session and is NOT available bot-side, so we deliberately do NOT perform a
+  // partial (profile-doc-only) delete here — that would orphan the alt's runs. Flag it as
+  // website-only instead. See docs/MULTI_PROFILE_DESIGN.md.
+  try {
+    const payload = await buildProfileManagementPayload(interaction.user.id);
+    payload.content = 'Deleting an alt (and its cloud data) is done on the Tower Run Tracker website so it stays Main-safe. Rename and set-default are available here.';
+    await updateInPlace(interaction, payload);
+  } catch (error) {
+    const ui = getTrackUiConfig();
+    await logError(interaction.client, interaction.user, error, 'track_menu_profile_delete');
+    await updateInPlace(interaction, { content: ui.settings.loadFailed, components: [], embeds: [] });
   }
 }
 

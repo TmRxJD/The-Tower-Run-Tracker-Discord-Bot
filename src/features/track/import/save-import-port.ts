@@ -1,12 +1,12 @@
 import {
 
-  applyBotsTrackerImportPayloadToSnapshot,
+  applyBotsImportPayloadToSnapshot,
 
   buildBattleRunDedupKeysFromStoredRun,
 
   buildBotsTrackerLocalPersistPayload,
 
-  canonicalizeTrackerRunData,
+  canonicalizeRunData,
 
   normalizeBotsTrackerLocalSnapshot,
 
@@ -156,7 +156,7 @@ export function createDiscordSaveImportPort(
 
         username,
 
-        runData: canonicalizeTrackerRunData(run),
+        runData: canonicalizeRunData(run),
 
       }));
 
@@ -298,7 +298,7 @@ export function createDiscordSaveImportPort(
 
       const current = normalizeBotsTrackerLocalSnapshot(await getBotsTrackerLocalState(userId));
 
-      const merged = applyBotsTrackerImportPayloadToSnapshot(current, payload);
+      const merged = applyBotsImportPayloadToSnapshot(current, payload);
 
       await saveBotsTrackerLocalState(userId, buildBotsTrackerLocalPersistPayload(merged));
 

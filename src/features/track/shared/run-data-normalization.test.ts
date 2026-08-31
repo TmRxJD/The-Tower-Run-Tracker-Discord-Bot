@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   applyRunDataAliasGroups,
   canonicalizeRunDataForOutput,
-  canonicalizeTrackerRunData,
-  serializeTrackerRunForCloudAttributes,
+  canonicalizeRunData,
+  serializeRunForCloudAttributes,
 } from './run-data-normalization'
 import { TRACK_RUN_SUBMIT_ALIAS_GROUPS } from './track-run-field-vocabulary'
 
@@ -60,7 +60,7 @@ describe('run data normalization', () => {
   })
 
   it('builds a single canonical tracker run record and drops raw aliases', () => {
-    const canonical = canonicalizeTrackerRunData({
+    const canonical = canonicalizeRunData({
       tier: '11',
       Tier: '11+',
       wave: '7676',
@@ -95,7 +95,7 @@ describe('run data normalization', () => {
   })
 
   it('omits oversized optional cloud attributes instead of sending invalid Appwrite values', () => {
-    const serialized = serializeTrackerRunForCloudAttributes({
+    const serialized = serializeRunForCloudAttributes({
       tier: '11',
       wave: '7676',
       roundDuration: '9h54m5s',

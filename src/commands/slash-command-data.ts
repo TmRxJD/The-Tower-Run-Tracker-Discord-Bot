@@ -59,6 +59,15 @@ function buildTrackerCommandData(commandKey: TrackerCommandKey) {
         .setRequired(false));
   }
 
+  if ('alt' in options && options.alt) {
+    data.addIntegerOption(option =>
+      option.setName(options.alt.name)
+        .setDescription(options.alt.description)
+        .setMinValue(1)
+        .setMaxValue(4)
+        .setRequired(false));
+  }
+
   return data.toJSON();
 }
 

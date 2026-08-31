@@ -14,14 +14,14 @@ import {
 } from 'discord.js';
 import { logger } from '../../../core/logger';
 import {
-  defaultSelectedSaveImportTrackerKeys,
+  defaultSelectedSaveImportTargetKeys,
   detectMisplacedPlayerInfoSave,
-  discoverSaveImportTrackers,
-  executeSaveImportTrackers,
+  discoverSaveImportTargets,
+  executeSaveImports,
   formatSaveImportDiscoverySummary,
-  SAVE_IMPORT_TRACKER_ORDER,
+  SAVE_IMPORT_TARGET_ORDER,
   type SaveImportExecutionOutcome,
-  type SaveImportTrackerKey,
+  type SaveImportTargetKey,
 } from '@tmrxjd/platform/tools';
 import { createDiscordSaveImportPort } from '../import/save-import-port';
 import { decodePlayerInfoSaveBytes } from '@tmrxjd/platform/node';
@@ -43,6 +43,13 @@ import {
   type ImportTrackerOutcome,
 } from '../import/import-pending-store';
 import type { TrackReplyInteractionLike } from '../interaction-types';
+import {
+  listBotUserProfiles,
+  peekPendingUploadProfile,
+  resolveDefaultUploadProfileId,
+  setPendingUploadProfile,
+} from '../upload-target-profile';
+import { buildProfileSelectMenu, buildProfileSelectRow, resolveSelectedProfileId } from '../ui/profile-select';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
 type LogClient = { channels: { fetch: (id: string) => Promise<unknown> } };
@@ -50,6 +57,7 @@ type BuildersLike = {
   LabelBuilder: new () => {
     setLabel: (label: string) => {
       setFileUploadComponent: (component: unknown) => unknown;
+      setStringSelectMenuComponent: (component: StringSelectMenuBuilder) => unknown;
     };
   };
   FileUploadBuilder: new () => {
@@ -270,8 +278,15 @@ async function renderImportReviewSession(
   }
 
   const selectRow = buildImportTrackerSelectRow(session);
+  const profileRow = buildProfileSelectRow({
+    customId: withToken(TRACKER_IDS.flow.importProfilePrefix, session.token),
+    options: session.profileOptions ?? [],
+    selectedProfileId: session.selectedProfileId ?? null,
+    placeholder: 'Import to profile',
+  });
   const components = [
     ...(selectRow ? [selectRow] : []),
+    ...(profileRow ? [profileRow] : []),
     ...buildImportReviewButtons(session.token),
   ];
 
@@ -290,14 +305,14 @@ async function importSelectedTrackers(
 ): Promise<ImportTrackerOutcome[]> {
   const selectedKeys = session.selectedTrackerKeys.filter(key =>
     session.discoveries.some(tracker => tracker.key === key && tracker.count > 0),
-  ) as SaveImportTrackerKey[];
+  ) as SaveImportTargetKey[];
 
   const port = createDiscordSaveImportPort(interaction);
   const ui = getTrackUiConfig();
   invalidateBotLocalRunsCache(interaction.user.id);
   const existingRuns = await getLocalRuns(interaction.user.id);
 
-  const outcomes = await executeSaveImportTrackers({
+  const outcomes = await executeSaveImports({
     parsedRoot: session.parsedRoot,
     selectedKeys,
     port,
@@ -366,17 +381,29 @@ function buildImportSuccessButtons() {
 async function renderImportReview(
   interaction: TrackMenuInteraction,
   parsedRoot: Record<string, unknown>,
-  discovery: ReturnType<typeof discoverSaveImportTrackers>,
+  discovery: ReturnType<typeof discoverSaveImportTargets>,
   autoImported = false,
 ) {
   const ui = getTrackUiConfig();
   const userId = interaction.user.id;
-  const { battleReportPlan, trackers } = discovery;
-  const selectedTrackerKeys = defaultSelectedSaveImportTrackerKeys(trackers);
+  const { battleReportPlan, targets: trackers } = discovery;
+  const selectedTrackerKeys = defaultSelectedSaveImportTargetKeys(trackers);
 
   if (!selectedTrackerKeys.length && !trackers.some(tracker => tracker.count > 0)) {
     await interaction.editReply({ content: ui.import.noRunsFound, embeds: [], components: [], files: [] }).catch(() => {});
     return;
+  }
+
+  let profileOptions: Awaited<ReturnType<typeof listBotUserProfiles>> = [];
+  let selectedProfileId: string | null = null;
+  try {
+    profileOptions = await listBotUserProfiles(userId);
+    if (profileOptions.length > 1) {
+      selectedProfileId = peekPendingUploadProfile(userId) ?? (await resolveDefaultUploadProfileId(userId));
+    }
+  } catch {
+    profileOptions = [];
+    selectedProfileId = null;
   }
 
   const session = createImportPendingSession({
@@ -387,6 +414,8 @@ async function renderImportReview(
     selectedTrackerKeys,
     skippedDuplicates: battleReportPlan.skippedDuplicates,
     totalInSave: battleReportPlan.totalInSave,
+    profileOptions,
+    selectedProfileId,
   });
 
   if (autoImported) {
@@ -428,15 +457,15 @@ export async function processPlayerInfoSaveBuffer(
     }
     invalidateBotLocalRunsCache(interaction.user.id);
     const existingRuns = await getLocalRuns(interaction.user.id);
-    const discovery = discoverSaveImportTrackers(decoded.parsedRoot, { existingRuns });
+    const discovery = discoverSaveImportTargets(decoded.parsedRoot, { existingRuns });
     logger.info('[save-import] discovery summary', {
       userId: interaction.user.id,
       wasGzip: decoded.wasGzip,
       battleRunCount: decoded.battleRunCount,
       rootKeyCount: Object.keys(decoded.parsedRoot).length,
-      bots: discovery.trackers.find(tracker => tracker.key === 'bots'),
-      cards: discovery.trackers.find(tracker => tracker.key === 'cards'),
-      selectedByDefault: defaultSelectedSaveImportTrackerKeys(discovery.trackers),
+      bots: discovery.targets.find(tracker => tracker.key === 'bots'),
+      cards: discovery.targets.find(tracker => tracker.key === 'cards'),
+      selectedByDefault: defaultSelectedSaveImportTargetKeys(discovery.targets),
     });
     const settings = await getUserSettings(interaction.user.id);
     const autoImport = settings?.confirmBeforeSubmit === false;
@@ -496,6 +525,12 @@ export async function handleTrackMenuImport(interaction: TrackMenuInteraction) {
 export async function handleTrackMenuImportOpen(interaction: TrackMenuInteraction) {
   if (!('showModal' in interaction) || typeof interaction.showModal !== 'function') return;
   const ui = getTrackUiConfig();
+  const userId = interaction.user.id;
+  // Fetch profiles BEFORE showing the modal so we can embed a profile picker (only when the
+  // user has more than one profile). showModal must still be the first response to the button.
+  const profiles = await listBotUserProfiles(userId);
+  const defaultProfileId = profiles.length > 1 ? await resolveDefaultUploadProfileId(userId) : null;
+
   const Builders = Discord as unknown as BuildersLike;
   const modal = new ModalBuilder()
     .setCustomId(TRACKER_IDS.flow.importModal)
@@ -512,6 +547,16 @@ export async function handleTrackMenuImportOpen(interaction: TrackMenuInteractio
     .setFileUploadComponent(fileUpload);
   (modal as ModalWithLabelComponents).addLabelComponents(labeledFile);
 
+  const profileMenu = buildProfileSelectMenu({
+    customId: TRACKER_IDS.flow.importModalProfile,
+    options: profiles,
+    selectedProfileId: defaultProfileId,
+  });
+  if (profileMenu) {
+    const labeledProfile = new Builders.LabelBuilder().setLabel('Import to profile').setStringSelectMenuComponent(profileMenu);
+    (modal as ModalWithLabelComponents).addLabelComponents(labeledProfile);
+  }
+
   await interaction.showModal(modal);
 
   try {
@@ -522,6 +567,13 @@ export async function handleTrackMenuImportOpen(interaction: TrackMenuInteractio
       await submitted.editReply({ content: ui.import.noFile, embeds: [], components: [], files: [] }).catch(() => {});
       return;
     }
+    // Stamp imported runs with the chosen profile (null = Main) BEFORE processing, at the
+    // run-write choke point. Only present when the picker was shown (>1 profile).
+    if (profiles.length > 1) {
+      const selected = submitted.fields.getStringSelectValues(TRACKER_IDS.flow.importModalProfile)[0];
+      setPendingUploadProfile(userId, resolveSelectedProfileId(selected));
+    }
+
     const buffer = await downloadFileBuffer(uploaded);
     await processPlayerInfoSaveBuffer(submitted, buffer, {
       sourcePath: resolveSaveImportSourcePathFromFileName(uploaded.name),
@@ -557,6 +609,10 @@ export async function handleImportAccept(
 
   await interaction.editReply({ content: ui.import.importing, embeds: [], components: [], files: [] }).catch(() => {});
 
+  // Stamp every imported run with the chosen profile (null = Main). Read at the run-write
+  // choke point; Main-safe because the pair-writer never re-stamps an existing run.
+  setPendingUploadProfile(interaction.user.id, session.selectedProfileId ?? null);
+
   try {
     const outcomes = await importSelectedTrackers(
       interaction,
@@ -582,11 +638,34 @@ export async function handleTrackMenuImportSelect(interaction: TrackMenuInteract
   }
 
   const selectedValues = interaction.isStringSelectMenu()
-    ? interaction.values.filter((value): value is SaveImportTrackerKey =>
-      SAVE_IMPORT_TRACKER_ORDER.includes(value as SaveImportTrackerKey))
+    ? interaction.values.filter((value): value is SaveImportTargetKey =>
+      SAVE_IMPORT_TARGET_ORDER.includes(value as SaveImportTargetKey))
     : [];
 
   const updated = updateImportPendingSession(token, { selectedTrackerKeys: selectedValues });
+  if (!updated) {
+    await interaction.editReply({ content: ui.import.sessionExpired, embeds: [], components: [], files: [] }).catch(() => {});
+    return;
+  }
+
+  await interaction.deferUpdate().catch(() => {});
+  await renderImportReviewSession(interaction, updated);
+}
+
+export async function handleTrackMenuImportProfile(interaction: TrackMenuInteraction) {
+  const ui = getTrackUiConfig();
+  const token = interaction.customId.split(':').slice(1).join(':');
+  const session = getImportPendingSession(token);
+  if (!session || session.userId !== interaction.user.id) {
+    await interaction.editReply({ content: ui.import.sessionExpired, embeds: [], components: [], files: [] }).catch(() => {});
+    return;
+  }
+
+  const selectedValue = interaction.isStringSelectMenu() ? interaction.values[0] : undefined;
+  const selectedProfileId = resolveSelectedProfileId(selectedValue);
+  setPendingUploadProfile(interaction.user.id, selectedProfileId);
+
+  const updated = updateImportPendingSession(token, { selectedProfileId });
   if (!updated) {
     await interaction.editReply({ content: ui.import.sessionExpired, embeds: [], components: [], files: [] }).catch(() => {});
     return;

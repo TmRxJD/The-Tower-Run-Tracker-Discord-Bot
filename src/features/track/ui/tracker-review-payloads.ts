@@ -1,5 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
-import { canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
+import { canonicalizeRunData } from '@tmrxjd/platform/tools';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 import { standardizeNotation } from '../../../utils/tracker-math';
 import { getTrackerFlowMode } from '../flow-mode-store';
@@ -7,6 +7,7 @@ import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { createAddNoteAndShowFullParseButtonRow, createConfirmationButtons, createDataReviewEmbed, createShowFullParseButtonRow, createTypeSelectionRow } from './tracker-ui';
 import { parseTierString } from '../handlers/upload-helpers';
 import type { PendingRecordLike, RunDataRecord } from '../shared/track-review-records';
+import { buildProfileSelectRow } from './profile-select';
 
 function createEditNotesButtonRow(token: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -29,21 +30,21 @@ export function applyEditFieldValue(runData: RunDataRecord, field: string, rawVa
     nextRunData.tier = parsed.numeric ?? runData?.tier ?? null;
     nextRunData.tierDisplay = parsed.hasPlus && parsed.numeric !== null ? `${parsed.numeric}+` : rawValue;
     nextRunData.tierHasPlus = parsed.hasPlus;
-    return canonicalizeTrackerRunData(nextRunData);
+    return canonicalizeRunData(nextRunData);
   }
 
   if (field === 'totalCoins' || field === 'totalCells' || field === 'totalDice') {
     nextRunData[field] = rawValue ? standardizeNotation(rawValue) : null;
-    return canonicalizeTrackerRunData(nextRunData);
+    return canonicalizeRunData(nextRunData);
   }
 
   if (field === 'wave') {
     nextRunData.wave = rawValue;
-    return canonicalizeTrackerRunData(nextRunData);
+    return canonicalizeRunData(nextRunData);
   }
 
   nextRunData[field] = rawValue;
-  return canonicalizeTrackerRunData(nextRunData);
+  return canonicalizeRunData(nextRunData);
 }
 
 export function buildReviewPayload(params: {
@@ -58,6 +59,18 @@ export function buildReviewPayload(params: {
     ? createAddNoteAndShowFullParseButtonRow(params.token)
     : createShowFullParseButtonRow(params.token);
 
+  // Retarget-this-run profile selector (only when the user has >1 profile).
+  const profileRow = buildProfileSelectRow({
+    customId: withToken(TRACKER_IDS.review.profileSelectPrefix, params.token),
+    options: params.pending.profileOptions ?? [],
+    selectedProfileId: params.pending.uploadProfileId ?? null,
+    placeholder: 'Upload this run to profile',
+  });
+
+  const baseRows = params.includeType
+    ? [createTypeSelectionRow(params.token, params.selectedType), noteAndParseRow, ...createConfirmationButtons(params.token)]
+    : [noteAndParseRow, ...createConfirmationButtons(params.token)];
+
   return {
     embeds: [createDataReviewEmbed(
       params.pending.runData,
@@ -66,9 +79,7 @@ export function buildReviewPayload(params: {
       params.pending.screenshot?.url ?? null,
       getTrackerFlowMode(params.pending.userId),
     )],
-    components: params.includeType
-      ? [createTypeSelectionRow(params.token, params.selectedType), noteAndParseRow, ...createConfirmationButtons(params.token)]
-      : [noteAndParseRow, ...createConfirmationButtons(params.token)],
+    components: profileRow ? [profileRow, ...baseRows] : baseRows,
   };
 }
 

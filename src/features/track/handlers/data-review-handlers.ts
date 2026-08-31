@@ -8,11 +8,12 @@ import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { handleError } from './error-handlers';
 import { buildSubmitPayload, resolveRawParseSourceData, sendRawParseMessage } from './review-data-helpers';
 import { asTrackReplyInteraction, ensureType, isTrackReviewFlowEnabled, resolveOwnedPendingInteraction, type ReviewInteraction, updateReviewMessage } from './review-interaction-helpers';
-import { applySubmittedReviewEditValues, buildReviewEditFieldModal, buildTypeSelectionReviewReplyPayload, getSelectedReviewFields, getSelectedReviewValue, renderDataReviewOrSubmit, resolveUpdatedPendingOrReplyExpired, resolveUpdatedPendingOrUpdateReviewMessage } from './review-edit-modal-helpers';
+import { applySubmittedReviewEditValues, buildCurrentReviewReplyPayload, buildReviewEditFieldModal, buildTypeSelectionReviewReplyPayload, getSelectedReviewFields, getSelectedReviewValue, renderDataReviewOrSubmit, resolveUpdatedPendingOrReplyExpired, resolveUpdatedPendingOrUpdateReviewMessage } from './review-edit-modal-helpers';
 import { openNoteModal } from './note-panel-handlers';
 import { submitLifetimePendingRun } from './review-lifetime-submission';
 import { buildCanonicalRunData, buildSubmissionDispatchPlan, buildSubmissionPresentationState, buildSubmitRunData, resolveDuplicateRunInfo, type LocalRunSummary, type SubmissionSyncResult } from './review-submission-helpers';
 import { updatePendingRun, deletePendingRun } from '../pending-run-store';
+import { setPendingUploadProfile } from '../upload-target-profile';
 import { TRACKER_IDS, parsePrefixedTrackerToken, parseTrackerToken, withTokenAndField } from '../track-custom-ids';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
@@ -40,6 +41,33 @@ export async function renderDataReview(interaction: TrackReplyInteractionLike, t
     totalEnemies: pending.runData?.totalEnemies,
   });
   await renderDataReviewOrSubmit(interaction, token, pending, label, getUserSettings, submitPendingRun);
+}
+
+export async function handleReviewProfileSelect(interaction: ReviewInteraction) {
+  try {
+    const component = interaction as MessageComponentInteraction;
+    const selected = getSelectedReviewValue(interaction);
+    const resolved = await resolveOwnedPendingInteraction(interaction);
+    if (!resolved) {
+      return;
+    }
+    const { token, pending } = resolved;
+    const { resolveSelectedProfileId } = await import('../ui/profile-select.js');
+    const { setPendingUploadProfile } = await import('../upload-target-profile.js');
+    const nextProfileId = resolveSelectedProfileId(selected);
+
+    // Persist the choice on the pending record (so rebuilds keep the selection) and on the
+    // per-user upload target read at the run-write choke point.
+    setPendingUploadProfile(pending.userId, nextProfileId);
+    const updated = await updatePendingRun(token, { uploadProfileId: nextProfileId });
+    const updatedPending = await resolveUpdatedPendingOrUpdateReviewMessage(interaction, updated, getTrackUiConfig().manual.sessionExpired);
+    if (!updatedPending) {
+      return;
+    }
+    await component.update(buildCurrentReviewReplyPayload(token, updatedPending)).catch(() => {});
+  } catch (error) {
+    await handleError({ client: interaction.client, user: interaction.user, error, context: 'review_profile_select' });
+  }
 }
 
 export async function handleTypeSelection(interaction: ReviewInteraction) {
@@ -152,6 +180,16 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
   const includeType = isTrackReviewFlowEnabled(userId);
   const includeNotes = isTrackReviewFlowEnabled(userId);
   const isLifetimeMode = getTrackerFlowMode(userId) === 'lifetime';
+
+  // Re-assert the per-user upload target from THIS reviewed session's stored choice right
+  // before dispatching to the write choke point. The module-level pending-target map can
+  // have been overwritten by an interleaved /track command (or a second in-flight flow)
+  // between this review being rendered and Submit being clicked; reading it blindly could
+  // misfile a brand-new run onto the wrong profile — including a Main-intended run onto an
+  // alt. Existing-run edits are still protected by the platform pair-writer's no-re-stamp
+  // guard, so this only ever corrects NEW writes. `undefined` (single-profile user, or a
+  // flow that never showed a picker) resolves to null = Main.
+  setPendingUploadProfile(userId, pending.uploadProfileId ?? null);
 
   try {
     const mergedSourceData = {

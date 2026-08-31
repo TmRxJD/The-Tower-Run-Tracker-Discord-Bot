@@ -1,4 +1,4 @@
-import { buildTrackerResolvedRunReference, canonicalizeTrackerRunData } from '@tmrxjd/platform/tools';
+import { buildTrackerResolvedRunReference, canonicalizeRunData } from '@tmrxjd/platform/tools';
 import type { PendingRecordLike } from '../shared/track-review-records';
 
 export type SubmissionSyncResult = {
@@ -46,7 +46,7 @@ function flattenRunDataValues(source: Record<string, unknown> | null | undefined
 }
 
 function canonicalizeSubmissionRunData(...sources: Array<Record<string, unknown> | null | undefined>) {
-  return canonicalizeTrackerRunData(
+  return canonicalizeRunData(
     sources.reduce<Record<string, unknown>>((merged, source) => ({
       ...merged,
       ...flattenRunDataValues(source),

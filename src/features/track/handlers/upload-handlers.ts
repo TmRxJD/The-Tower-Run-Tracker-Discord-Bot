@@ -1,5 +1,5 @@
 import * as Discord from 'discord.js';
-import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeTrackerRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import {
 } from '@tmrxjd/platform/node';
 import type {
@@ -51,6 +51,13 @@ import { createManualHandlers } from './manual-handlers';
 import { getTrackerFlowMode, getTrackerInitialRunType } from '../flow-mode-store';
 import { parseLifetimeStatsFromOcrText } from './lifetime-ocr';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
+import {
+  listBotUserProfiles,
+  peekPendingUploadProfile,
+  resolveDefaultUploadProfileId,
+  setPendingUploadProfile,
+} from '../upload-target-profile';
+import { buildProfileSelectMenu, resolveSelectedProfileId } from '../ui/profile-select';
 
 type LooseRecord = Record<string, unknown>;
 
@@ -335,16 +342,37 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
     /* Ignore duplicate detection failures; proceed without flagging */
   }
 
+  // Resolve which profiles the user can retarget this run to. The `/track` command
+  // already stashed a per-user upload target (alt: option, else stored default); prefer
+  // that as the pre-selected value so the review select and the eventual write agree.
+  let profileOptions: Awaited<ReturnType<typeof listBotUserProfiles>> = [];
+  let uploadProfileId: string | null = null;
+  try {
+    profileOptions = await listBotUserProfiles(userId);
+    if (profileOptions.length > 1) {
+      const pending = peekPendingUploadProfile(userId);
+      uploadProfileId = pending ?? (await resolveDefaultUploadProfileId(userId));
+      // Keep the pending target consistent with the shown default (covers the
+      // confirm-before-submit=off path, which skips the review selector).
+      setPendingUploadProfile(userId, uploadProfileId);
+    }
+  } catch {
+    profileOptions = [];
+    uploadProfileId = null;
+  }
+
   return createPendingRun({
     userId,
     username,
-    runData: canonicalizeTrackerRunData(hydratedRunData),
-    canonicalRunData: canonicalRunData ? canonicalizeTrackerRunData(canonicalRunData) : null,
+    runData: canonicalizeRunData(hydratedRunData),
+    canonicalRunData: canonicalRunData ? canonicalizeRunData(canonicalRunData) : null,
     rawParseFields,
     screenshot,
     isDuplicate,
     decimalPreference,
     defaultRunType: params.defaultRunType ?? undefined,
+    profileOptions,
+    uploadProfileId,
   });
 }
 
@@ -386,7 +414,7 @@ function buildProcessedRunDataFromParsed(
     processedData.notes = params.preNote;
   }
 
-  return canonicalizeTrackerRunData(canonicalizeRunDataForOutput(processedData)) as RunDataLike;
+  return canonicalizeRunData(canonicalizeRunDataForOutput(processedData)) as RunDataLike;
 }
 
 function normalizeVerificationValue(key: string, value: unknown): string {
@@ -1141,10 +1169,26 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
   const userId = interaction.user.id;
   const username = interaction.user.username;
 
+  // Fetch the caller's profiles BEFORE showing the modal so we can embed a profile picker
+  // (only when they have more than one profile). showModal must still be the first response.
+  const profiles = await listBotUserProfiles(userId);
+  const defaultProfileId = profiles.length > 1 ? await resolveDefaultUploadProfileId(userId) : null;
+
+  const Builders = Discord as unknown as BuildersLike;
   const modal = new ModalBuilder().setCustomId(TRACKER_IDS.flow.pasteModal).setTitle(uploadUi.pasteModalTitle);
   const textInput = new TextInputBuilder().setCustomId(TRACKER_IDS.flow.pasteText).setLabel(uploadUi.battleReportLabel).setStyle(TextInputStyle.Paragraph).setRequired(true);
   const noteInput = new TextInputBuilder().setCustomId(TRACKER_IDS.flow.pasteNote).setLabel(uploadUi.optionalNoteLabel).setStyle(TextInputStyle.Short).setRequired(false);
   modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(textInput), new ActionRowBuilder<TextInputBuilder>().addComponents(noteInput));
+
+  const profileMenu = buildProfileSelectMenu({
+    customId: TRACKER_IDS.flow.pasteProfile,
+    options: profiles,
+    selectedProfileId: defaultProfileId,
+  });
+  if (profileMenu) {
+    const labeledProfile = new Builders.LabelBuilder().setLabel('Upload to profile').setStringSelectMenuComponent(profileMenu);
+    (modal as ModalWithLabelComponents).addLabelComponents(labeledProfile);
+  }
 
   await interaction.showModal(modal);
 
@@ -1158,6 +1202,14 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
 
     const text = submitted.fields.getTextInputValue(TRACKER_IDS.flow.pasteText);
     const preNote = submitted.fields.getTextInputValue(TRACKER_IDS.flow.pasteNote) || null;
+
+    // Stamp the chosen profile (null = Main) at the run-write choke point BEFORE creating the
+    // pending run. Only present when the picker was shown (>1 profile); otherwise leave untouched.
+    if (profiles.length > 1) {
+      const selected = submitted.fields.getStringSelectValues(TRACKER_IDS.flow.pasteProfile)[0];
+      setPendingUploadProfile(userId, resolveSelectedProfileId(selected));
+    }
+
     await interaction.editReply({ embeds: [createLoadingEmbed(uploadUi.processingPaste)], components: [] }).catch(() => {});
 
     try {
@@ -1238,6 +1290,21 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
   }
   (modal as ModalWithLabelComponents).addLabelComponents(labeledFile);
 
+  // Profile picker inside the add-run modal (only when the user has more than one
+  // profile). Fetched before showModal so the options are ready; showModal is still the
+  // first response to the interaction.
+  const profiles = await listBotUserProfiles(userId);
+  const defaultProfileId = profiles.length > 1 ? await resolveDefaultUploadProfileId(userId) : null;
+  const profileMenu = buildProfileSelectMenu({
+    customId: TRACKER_IDS.flow.addRunProfile,
+    options: profiles,
+    selectedProfileId: defaultProfileId,
+  });
+  if (profileMenu) {
+    const labeledProfile = new Builders.LabelBuilder().setLabel('Upload to profile').setStringSelectMenuComponent(profileMenu);
+    (modal as ModalWithLabelComponents).addLabelComponents(labeledProfile);
+  }
+
   await interaction.showModal(modal);
 
   try {
@@ -1253,6 +1320,14 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
     const preNote = includeNotes
       ? submitted.fields.getTextInputValue(TRACKER_IDS.flow.addRunNote)?.trim() || null
       : null;
+
+    // Stamp the chosen profile (null = Main) at the run-write choke point BEFORE the run
+    // is created. Only present when the picker was shown (>1 profile).
+    if (profiles.length > 1) {
+      const selected = submitted.fields.getStringSelectValues(TRACKER_IDS.flow.addRunProfile)[0];
+      setPendingUploadProfile(userId, resolveSelectedProfileId(selected));
+    }
+
     let normalizedAttachment: NormalizedAttachment | null = null;
 
     const assignNormalizedAttachment = (file: unknown) => {
