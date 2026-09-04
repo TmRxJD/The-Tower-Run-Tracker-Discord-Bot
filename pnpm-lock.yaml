@@ -15,8 +15,8 @@ importers:
         specifier: ^0.1.97
         version: 0.1.97
       '@tmrxjd/platform':
-        specifier: 0.2.1
-        version: 0.2.1
+        specifier: 0.2.2
+        version: 0.2.2
       dexie:
         specifier: ^4.4.4
         version: 4.4.4
@@ -900,11 +900,11 @@ packages:
   '@techstark/opencv-js@4.9.0-release.3':
     resolution: {integrity: sha512-y+KoLLlkXVUHWozYlN1vmMD9TQMPJObqml5nPA5vPWgHtOgm8q5O74UtzM23eayidvmeFX6tF5e2gDdyxcpy3Q==}
 
-  '@tmrxjd/platform@0.2.1':
-    resolution: {integrity: sha512-wYP0+trgy243HM4cH6jjoC55fR3GpdXgBtzH9D6iwvs09E3tjHoDEfEpOTp7jP+yewFHZVNNaZVsiX0c37zYNQ==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.2.1/8d3183316dbfdc56c9ecf1c666dba48eeee138fe}
+  '@tmrxjd/platform@0.2.2':
+    resolution: {integrity: sha512-7ngp1dKnlV67I8ZgiP9I5X8sezw5et5Wgx1710uhVwGq0n96DBT5XIfUhIJAGsuSfyBxeIaeEN9I2+dLz+NssQ==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.2.2/1485acfb605f66439cb83b5b66af3c07024aa80f}
 
-  '@tmrxjd/tracker-languages@0.1.22':
-    resolution: {integrity: sha512-ThuamyYnSAeHPE2dFxuNxvMi+W46GWjLbS8BQkCNXuVgt/WsNRrrXT4bGil1KHvxNN+lqzoHe0jlXnH+YgZxhQ==, tarball: https://npm.pkg.github.com/download/@tmrxjd/tracker-languages/0.1.22/b107d3e79b3fad7727fdaca696c855b0b07402cf}
+  '@tmrxjd/tracker-languages@0.1.23':
+    resolution: {integrity: sha512-UAcF0ZqMSeRysnmBfh1zqhgCdiYq19ag3187C1PJFcRyOuwPXMhLILq9lPEJTAJNrHZcbqbqR3+1bwzOswQGkg==, tarball: https://npm.pkg.github.com/download/@tmrxjd/tracker-languages/0.1.23/c66b9fcf2a4f581eca6028ae2c4a6c0fa1e89e77}
 
   '@tootallnate/once@1.1.2':
     resolution: {integrity: sha512-RbzJvlNzmRq5c3O09UipeuXno4tA1FE6ikOjxZK0tuxVv3412l64l5t1W5pj4+rJq9vpkm/kwiR07aZXnsKPxw==}
@@ -1301,6 +1301,7 @@ packages:
 
   crypto-js@4.2.0:
     resolution: {integrity: sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==}
+    deprecated: Active development of CryptoJS has been discontinued. This library is no longer maintained.
 
   custom-idle-queue@5.0.2:
     resolution: {integrity: sha512-Hy1CTGAyzC9Onqx7XzkykylTAqfPDPm/pQr8gfq0KgzKf8MbJsZ0O2wC/2kqWrOeG+1vVNxD3QGWf0h0Hbx9Uw==}
@@ -1445,6 +1446,7 @@ packages:
   eslint@9.39.2:
     resolution: {integrity: sha512-LEyamqS7W5HB3ujJyvi0HQK/dtVINZvd5mAAp9eT5S/ujByGjiZLCzPcHVzuXbpJDJF/cxwHlfceVUDZ2lnSTw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -2374,15 +2376,10 @@ packages:
     resolution: {integrity: sha512-tOG/7GyXpFevhXVh8jOPJrmtRpOTsYqUIkVdVooZYJS/z8WhfQUX8RJILmeuJNinGAMSu1veBr4asSHFt5/hng==}
     engines: {node: '>=18'}
 
-  thetowersdk@0.5.3:
-    resolution: {integrity: sha512-Hc/jjpq2InP83dBKrLf/vBAcGjCOTixFWgysq6SWMrExPVSB06w8vtn9Af4GJbildPA/hRO5ssX4fd2vDNEOSg==}
+  thetowersdk@0.10.1:
+    resolution: {integrity: sha512-eLpAvQFlHld+lyZKtkV54p1Musy3Uu9TpdbWWXQFExnuTTiH2YO8J2vHjxZkT7elmnflNHouz0icGqEa8cKnuQ==}
     engines: {node: '>=20'}
     hasBin: true
-    peerDependencies:
-      '@tmrxjd/governance-engine': '>=0.1.0'
-    peerDependenciesMeta:
-      '@tmrxjd/governance-engine':
-        optional: true
 
   tiny-emitter@2.1.0:
     resolution: {integrity: sha512-NB6Dk1A9xgQPMoGqC5CVXn123gWyte215ONT5Pp5a0yt4nlEoO1ZWeCwpncaekPHXO60i47ihFnZPiRPjRMq4Q==}
@@ -3287,11 +3284,11 @@ snapshots:
 
   '@techstark/opencv-js@4.9.0-release.3': {}
 
-  '@tmrxjd/platform@0.2.1':
+  '@tmrxjd/platform@0.2.2':
     dependencies:
       '@gutenye/ocr-node': 1.4.8
       '@huggingface/transformers': 3.8.1
-      '@tmrxjd/tracker-languages': 0.1.22
+      '@tmrxjd/tracker-languages': 0.1.23
       '@vue/compiler-dom': 3.5.32
       '@vue/compiler-sfc': 3.5.32
       fake-indexeddb: 6.2.5
@@ -3300,15 +3297,14 @@ snapshots:
       magic-string: 0.30.21
       sharp: 0.34.5
       sqlite3: 5.1.7
-      thetowersdk: 0.5.3
+      thetowersdk: 0.10.1
       typescript: 5.8.3
       zod: 4.4.3
     transitivePeerDependencies:
-      - '@tmrxjd/governance-engine'
       - bluebird
       - supports-color
 
-  '@tmrxjd/tracker-languages@0.1.22':
+  '@tmrxjd/tracker-languages@0.1.23':
     dependencies:
       zod: 4.4.3
 
@@ -5003,7 +4999,7 @@ snapshots:
       minizlib: 3.1.0
       yallist: 5.0.0
 
-  thetowersdk@0.5.3:
+  thetowersdk@0.10.1:
     dependencies:
       zod: 4.4.3
 
