@@ -62,7 +62,8 @@
     "register:commands:prod": "cross-env DEPLOYMENT_MODE=prod NODE_ENV=production BOT_LOG_LEVEL=error ts-node-dev --transpile-only --no-notify --exit-child src/scripts/register-commands.ts --mode=prod",
     "register:commands:clear:global": "cross-env DEPLOYMENT_MODE=prod NODE_ENV=production BOT_LOG_LEVEL=error ts-node-dev --transpile-only --no-notify --exit-child src/scripts/delete-global-commands.ts",
     "bench:storage": "cross-env DEPLOYMENT_MODE=dev NODE_ENV=development BOT_LOG_LEVEL=error ts-node-dev --transpile-only --no-notify --exit-child --project tsconfig.json scripts/bench-rxdb-storage.ts",
-    "simulate:corruption": "cross-env DEPLOYMENT_MODE=dev NODE_ENV=development BOT_LOG_LEVEL=error ts-node-dev --transpile-only --no-notify --exit-child --project tsconfig.json scripts/simulate-rxdb-corruption.ts"
+    "simulate:corruption": "cross-env DEPLOYMENT_MODE=dev NODE_ENV=development BOT_LOG_LEVEL=error ts-node-dev --transpile-only --no-notify --exit-child --project tsconfig.json scripts/simulate-rxdb-corruption.ts",
+    "exercise:interactions": "cross-env DEPLOYMENT_MODE=dev NODE_ENV=development BOT_LOG_LEVEL=error ts-node-dev --transpile-only --no-notify --exit-child --project tsconfig.json scripts/exercise-interactions.ts"
   },
   "dependencies": {
     "@discordjs/rest": "^2.6.3",
