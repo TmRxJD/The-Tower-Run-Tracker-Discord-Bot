@@ -48,7 +48,7 @@ jobs:
           if (process.env.GITHUB_EVENT_NAME === 'repository_dispatch') {
             platformVersion = ${{ toJSON(github.event.client_payload.version) }} || ''
           } else {
-            const pkg = require('./package.json')
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
             platformVersion = pkg.dependencies?.['@tmrxjd/platform'] || pkg.devDependencies?.['@tmrxjd/platform'] || ''
           }
           fs.appendFileSync(process.env.GITHUB_ENV, `PLATFORM_VERSION=${platformVersion}\n`)
