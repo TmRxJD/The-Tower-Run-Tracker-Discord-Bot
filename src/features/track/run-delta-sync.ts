@@ -19,7 +19,27 @@ import { fetchTrackerRunDeltasFromFunction, type TrackerRunDeltaFunctionResult }
 import { ingestMergedRunsIntoBotStore } from './run-sync-ingest';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
-const BULK_IMPORT_PARALLEL_PAGES = 10;
+/**
+ * How many delta pages the bulk import fetches at once.
+ *
+ * Every request resolves the Appwrite hostname again — Node caches DNS not at all — so this
+ * is also the burst size hitting the resolver. At 10 the import sustained ~114 lookups/s
+ * for a single hostname, which made the resolver return spurious ENOTFOUND; the SDK then
+ * retried, resolving again. 342k of those failures are in the production logs, and 97% of
+ * the minutes containing them were minutes with a parallel-fetch storm.
+ *
+ * The Appwrite function is the throughput bottleneck, not client parallelism, so a smaller
+ * fan-out costs little. Overridable so it can be tuned on the host without a deploy.
+ */
+export function resolveBulkImportParallelPages(): number {
+  const raw = Number(process.env.TRACKER_BOT_BULK_IMPORT_PARALLEL_PAGES);
+  if (!Number.isFinite(raw) || raw < 1) {
+    return 4;
+  }
+  return Math.min(Math.floor(raw), 10);
+}
+
+const BULK_IMPORT_PARALLEL_PAGES = resolveBulkImportParallelPages();
 
 type DeltaSyncOptions = {
   maxPages?: number;
