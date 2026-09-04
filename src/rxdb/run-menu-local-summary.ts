@@ -7,9 +7,10 @@ import {
 import { BOT_RUN_RXDB_SCOPE_USER_ID_FIELD } from './bot-run-schemas';
 import { toRunPartPlainDocument } from './run-part-documents';
 import { ensureBotRunTrackerRxDatabase, seedBotRunRxDBFromLegacyKvIfNeeded } from './run-rxdb-store';
-import { destroySharedBotRunTrackerRxDatabase } from './database-manager';
+import { destroySharedBotRunTrackerRxDatabase, reopenSharedBotRunTrackerRxDatabase } from './database-manager';
 import { logger } from '../core/logger';
 import { recordDiagnostic } from '../core/diagnostics';
+import { repairBotRxStorageIndexes } from './localstorage-index-repair';
 import type { BotRunTrackerRxDatabase } from './init-database';
 
 export const MENU_ANALYTICS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -179,8 +180,35 @@ export async function loadBotMenuRunSummary(userId: string): Promise<BotMenuRunS
     if (!message.includes('ensureNotFalsy')) {
       throw error;
     }
+    // Repair the dangling index entries rather than wiping the shared database. The wipe
+    // discarded every other user's cache to fix one user's rows, and is O(n^2) and
+    // synchronous — 3.6s at 5000 document files — which pushed bystanders' interactions
+    // past Discord's ACK budget and produced 10062s of its own.
+    const repair = repairBotRxStorageIndexes();
+    recordDiagnostic('rxdb.corrupt-read', {
+      userId,
+      message,
+      recovery: repair.repairedIndexes > 0 ? 'index-repair' : 'wipe',
+      removedIndexEntries: repair.removedEntries,
+      repairedIndexes: repair.repairedIndexes,
+    });
+
+    if (repair.repairedIndexes > 0) {
+      logger.warn('[menu-summary] dropped dangling RxDB index entries after query failure', {
+        userId,
+        removedEntries: repair.removedEntries,
+        repairedIndexes: repair.repairedIndexes,
+      });
+      // The repair edits index files underneath RxDB, which caches query results and only
+      // re-runs a query when it thinks the collection changed. Without dropping the
+      // instance it keeps serving the pre-repair view — including rows for documents that
+      // no longer exist. Reopening keeps every stored document, unlike the wipe below.
+      await reopenSharedBotRunTrackerRxDatabase('menu-summary:index-repair');
+      return await loadBotMenuRunSummaryFromRxDB(userId);
+    }
+
+    // Nothing to repair means the corruption is something else; fall back to the wipe.
     logger.warn('[menu-summary] resetting corrupt RxDB cache after query failure', { userId, error });
-    recordDiagnostic('rxdb.corrupt-read', { userId, message });
     await destroySharedBotRunTrackerRxDatabase('menu-summary:ensureNotFalsy');
     return await loadBotMenuRunSummaryFromRxDB(userId);
   }

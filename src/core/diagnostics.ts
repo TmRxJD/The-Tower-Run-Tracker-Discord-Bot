@@ -18,6 +18,8 @@ export type DiagnosticEvent =
   | 'interaction.dropped'
   /** The shared RxDB was wiped, taking every user's local cache with it. */
   | 'rxdb.destroy'
+  /** The shared RxDB was dropped and reopened, keeping all stored data. */
+  | 'rxdb.reopen'
   /** A handle was handed out — used to size concurrency around a destroy. */
   | 'rxdb.grant'
   /** The menu summary hit the corrupt-cache path that triggers the wipe. */

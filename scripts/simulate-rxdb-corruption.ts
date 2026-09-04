@@ -56,7 +56,8 @@ function spawnPhase(sandbox: string, phase: 'seed' | 'read'): number {
         TS_NODE_TRANSPILE_ONLY: 'true',
         TRACKER_BOT_RXDB_STORAGE: 'localstorage',
         TRACKER_BOT_RXDB_DATA_DIR: join(sandbox, 'rxdb'),
-        BOT_LOG_LEVEL: 'error',
+        // Honour an override so the [diag] probes can be inspected.
+        BOT_LOG_LEVEL: process.env.SIM_LOG_LEVEL ?? 'error',
       },
     },
   );

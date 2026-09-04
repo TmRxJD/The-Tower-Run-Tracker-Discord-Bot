@@ -92,6 +92,22 @@ export async function initSharedBotRunTrackerRxDatabase(): Promise<BotRunTracker
   return sharedInitPromise;
 }
 
+/**
+ * Closes the shared database without deleting anything, so the next call rebuilds it.
+ *
+ * Needed after the index files are repaired underneath RxDB. RxDB caches query results and
+ * documents in memory and only re-runs a query when it believes the collection changed, so
+ * a repair applied at the storage layer is invisible to it — it will keep serving rows for
+ * documents that no longer exist. Dropping the instance is what makes the repair take
+ * effect, and unlike a wipe it costs nothing but a reopen.
+ */
+export async function closeSharedBotRunTrackerRxDatabase(): Promise<void> {
+  sharedInitPromise = null;
+  const previous = sharedDatabase;
+  sharedDatabase = null;
+  await closeQuietly(previous);
+}
+
 export async function resetSharedBotRunTrackerRxDatabase(): Promise<void> {
   sharedInitPromise = null;
 

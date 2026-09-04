@@ -67,34 +67,66 @@ function buildScopeSelector(scopeUserId: string) {
 
 
 
+/**
+ * The localstorage storage engine writes each document with a synchronous fs call and
+ * rewrites every index of the collection per bulkWrite, so one large bulkUpsert blocks the
+ * event loop for as long as it takes — measured at ~13s for 3200 documents. Nothing else
+ * runs during that, including another user's deferReply(), which Discord abandons after
+ * ~3s with "Unknown interaction" (10062).
+ *
+ * Splitting the write bounds how long any single burst can hold the loop. The batch size is
+ * a trade: smaller means shorter stalls but more index rewrites, since each bulkWrite
+ * re-serialises every index of the collection.
+ */
+const BULK_UPSERT_CHUNK_SIZE = 50;
+
+function chunkDocuments<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+/** Hand the loop back so queued interactions can be acknowledged between chunks. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => { setImmediate(resolve); });
+}
+
 export async function batchUpsertRunPartsToBotRxDB(
-
   db: BotRunTrackerRxDatabase,
-
   scopeUserId: string,
-
   part1Documents: TrackerRunPartDocument[],
-
   part2Documents: TrackerRunPartDocument[],
-
 ): Promise<void> {
-
   if (part1Documents.length === 0 && part2Documents.length === 0) {
-
     return;
-
   }
 
+  const part1Chunks = chunkDocuments(
+    part1Documents.map((doc) => stampBotScopeUserId(scopeUserId, doc)),
+    BULK_UPSERT_CHUNK_SIZE,
+  );
+  const part2Chunks = chunkDocuments(
+    part2Documents.map((doc) => stampBotScopeUserId(scopeUserId, doc)),
+    BULK_UPSERT_CHUNK_SIZE,
+  );
 
-
-  await Promise.all([
-
-    db.run_part_1.bulkUpsert(part1Documents.map((doc) => stampBotScopeUserId(scopeUserId, doc))),
-
-    db.run_part_2.bulkUpsert(part2Documents.map((doc) => stampBotScopeUserId(scopeUserId, doc))),
-
-  ]);
-
+  // Sequential, not Promise.all: the storage engine is synchronous, so writing both
+  // collections "concurrently" only runs two blocking bursts back to back with no yield.
+  const batches = Math.max(part1Chunks.length, part2Chunks.length);
+  for (let index = 0; index < batches; index += 1) {
+    const part1Chunk = part1Chunks[index];
+    if (part1Chunk && part1Chunk.length > 0) {
+      await db.run_part_1.bulkUpsert(part1Chunk);
+      await yieldToEventLoop();
+    }
+    const part2Chunk = part2Chunks[index];
+    if (part2Chunk && part2Chunk.length > 0) {
+      await db.run_part_2.bulkUpsert(part2Chunk);
+      await yieldToEventLoop();
+    }
+  }
 }
 
 
