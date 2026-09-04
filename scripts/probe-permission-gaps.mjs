@@ -3,11 +3,9 @@
  * Queries all docs for the Discord snowflake userId and checks whether each
  * doc's $permissions includes the Appwrite account ID (so site session can read it).
  */
-import { createRequire } from 'module';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
-const require = createRequire(import.meta.url);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -23,7 +21,7 @@ function loadEnv() {
         env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
       }
       return env;
-    } catch {}
+    } catch { /* try the next candidate path */ }
   }
   return {};
 }
@@ -37,7 +35,6 @@ const DB_ID = env.APPWRITE_RUNS_DATABASE_ID ?? 'run-tracker-data';
 const COLL_ID = env.APPWRITE_RUNS_COLLECTION_ID ?? 'runs';
 const DISCORD_ID = '371914184822095873';
 const APPWRITE_ID = '681ab667ce6096096b3b';
-const EXPECTED_PERMISSION = `user:${APPWRITE_ID}`;
 
 // Fetch all docs under the Discord snowflake userId
 async function fetchAllDocs(userId) {

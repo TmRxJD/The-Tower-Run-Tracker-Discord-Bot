@@ -7,10 +7,8 @@
 import { Client, Databases, Query } from 'node-appwrite';
 import { config as dotenvConfig } from 'dotenv';
 import { existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = process.cwd();
 
 // Load env the same way the bot does

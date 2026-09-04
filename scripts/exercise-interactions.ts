@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
+ 
 
 function parseArg(name: string, fallback: string): string {
   const hit = process.argv.find((arg) => arg.startsWith(`--${name}=`));

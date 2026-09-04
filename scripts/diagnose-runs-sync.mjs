@@ -8,7 +8,7 @@
  */
 
 import { Client, Databases, Users, Query } from 'node-appwrite';
-import { trackerRunCloudDocumentSchema, buildTrackerRunIdentityKey } from '@tmrxjd/platform/tools';
+import { trackerRunCloudDocumentSchema } from '@tmrxjd/platform/tools';
 
 const ENDPOINT = process.env.APPWRITE_ENDPOINT;
 const PROJECT_ID = process.env.APPWRITE_PROJECT_ID;

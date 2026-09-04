@@ -1,6 +1,6 @@
 import { logger } from '../core/logger';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import sqlite3 from 'sqlite3';
 import { type AnalyticsEventDocument, type GuildDocument, type UserSettingsDocument, userSettingsDocumentSchema } from '../persistence/types';
 
@@ -23,7 +23,15 @@ let dbReady: Promise<sqlite3.Database> | null = null;
 let storageUnavailable = false;
 const inMemoryKv = new Map<string, KvRecord>();
 const allowMemoryFallback = String(process.env.TRACKER_BOT_ALLOW_MEMORY_KV_FALLBACK || '').toLowerCase() === 'true';
-const trackerKvDbPath = join(process.cwd(), '.data', 'indexeddb', 'tracker-bot-idb.sqlite');
+/**
+ * Where the KV/sqlite store lives. Overridable so a test run does not write into the
+ * working copy's `.data`: the path is resolved from cwd, so without an override every test
+ * that touches the KV accumulates fixture rows in the developer's real store — which then
+ * get rewritten in full on every queue mutation.
+ */
+const trackerKvDbPath = process.env.TRACKER_BOT_KV_DB_PATH?.trim()
+  || join(process.cwd(), '.data', 'indexeddb', 'tracker-bot-idb.sqlite');
+const trackerKvDbDirectory = dirname(trackerKvDbPath);
 
 function formatStorageError(error: unknown): string {
   if (error instanceof Error) {
@@ -92,7 +100,7 @@ async function getTrackerBotDb(): Promise<sqlite3.Database | null> {
 
   dbReady = (async () => {
     try {
-      const dataDir = join(process.cwd(), '.data', 'indexeddb');
+      const dataDir = trackerKvDbDirectory;
       mkdirSync(dataDir, { recursive: true });
 
       const db = await new Promise<sqlite3.Database>((resolve, reject) => {

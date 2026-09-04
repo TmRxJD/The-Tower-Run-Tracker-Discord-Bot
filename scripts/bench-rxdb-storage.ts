@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 type BenchMode = 'localstorage' | 'dexie' | 'memory';
 
@@ -64,7 +64,7 @@ function startLagSampler() {
 
   return {
     /**
-     * A synchronous burst is only observable by a timer that fires AFTER it — the interval
+     * A synchronous burst is only observable by a timer that fires AFTER it ï¿½ the interval
      * cannot run while the loop is blocked. Stopping the sampler the instant an operation
      * returns therefore reports 0 for a burst that actually stalled for seconds, so let one
      * more sample land before reading the result.
@@ -116,12 +116,12 @@ function buildDocument(
 async function main(): Promise<void> {
   // require, not dynamic import: ts-node hooks the CJS loader only, and these have to be
   // loaded lazily so the env above is in place before the storage module reads it.
-  /* eslint-disable @typescript-eslint/no-require-imports */
+   
   const { trackerRunPart1RxJsonSchema, trackerRunPart2RxJsonSchema } = require('@tmrxjd/platform/tools');
   const { ensureBotRunTrackerRxDatabase } = require('../src/rxdb/run-rxdb-store');
   const { batchUpsertRunPartsToBotRxDB } = require('../src/rxdb/persistence');
   const { loadBotMenuRunSummary } = require('../src/rxdb/run-menu-local-summary');
-  /* eslint-enable @typescript-eslint/no-require-imports */
+   
 
   const db = await ensureBotRunTrackerRxDatabase('bench-seed');
   const userIds = Array.from({ length: userCount }, (_, index) => `bench-user-${index + 1}`);
@@ -146,7 +146,7 @@ async function main(): Promise<void> {
       }));
       part2.push(buildDocument(trackerRunPart2RxJsonSchema, id, userId, runDate.getTime(), { userId }));
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     await batchUpsertRunPartsToBotRxDB(db, userId, part1 as any, part2 as any);
   }
   const seedMs = Date.now() - seedStartedAt;

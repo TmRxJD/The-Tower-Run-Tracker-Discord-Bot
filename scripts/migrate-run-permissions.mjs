@@ -77,26 +77,6 @@ function needsNormalization(doc) {
   return wrongUserId || missingPerms
 }
 
-async function fetchAllForUserId(userId) {
-  const results = []
-  let cursorAfter = null
-  while (true) {
-    const queries = [
-      Query.equal('userId', userId),
-      Query.limit(PAGE_SIZE),
-      ...(cursorAfter ? [Query.cursorAfter(cursorAfter)] : []),
-    ]
-    const page = await databases.listDocuments(RUNS_DATABASE_ID, RUNS_COLLECTION_ID, queries)
-    const docs = Array.isArray(page.documents) ? page.documents : []
-    results.push(...docs)
-    if (docs.length < PAGE_SIZE) break
-    const last = docs[docs.length - 1]
-    cursorAfter = last?.$id ?? null
-    if (!cursorAfter) break
-  }
-  return results
-}
-
 async function migrateCollection(collectionId, label) {
   const [discordDocs, appwriteDocs] = await Promise.all([
     fetchAllForUserIdInCollection(collectionId, DISCORD_USER_ID),

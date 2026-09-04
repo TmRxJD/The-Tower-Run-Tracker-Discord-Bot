@@ -2,11 +2,9 @@
  * Probe: Count actual Appwrite run documents per userId variant and identify
  * the source of the 2-run discrepancy between site (948) and bot (950).
  */
-import { createRequire } from 'module';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
-const require = createRequire(import.meta.url);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -32,7 +30,7 @@ function loadEnv() {
       }
       console.log(`Loaded env from: ${p}`);
       break;
-    } catch {}
+    } catch { /* try the next candidate path */ }
   }
   return env;
 }

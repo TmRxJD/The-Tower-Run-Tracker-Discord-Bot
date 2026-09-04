@@ -1,5 +1,3 @@
-/* eslint-env node */
-/* global fetch */
 
 import { execSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
