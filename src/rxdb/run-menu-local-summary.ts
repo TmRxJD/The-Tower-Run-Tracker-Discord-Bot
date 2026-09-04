@@ -7,10 +7,11 @@ import {
 import { BOT_RUN_RXDB_SCOPE_USER_ID_FIELD } from './bot-run-schemas';
 import { toRunPartPlainDocument } from './run-part-documents';
 import { ensureBotRunTrackerRxDatabase, seedBotRunRxDBFromLegacyKvIfNeeded } from './run-rxdb-store';
-import { destroySharedBotRunTrackerRxDatabase, reopenSharedBotRunTrackerRxDatabase } from './database-manager';
+import { destroySharedBotRunTrackerRxDatabase } from './database-manager';
 import { logger } from '../core/logger';
 import { recordDiagnostic } from '../core/diagnostics';
 import { repairBotRxStorageIndexes } from './localstorage-index-repair';
+import { invalidateBotRunQueryCaches } from './query-cache-invalidation';
 import type { BotRunTrackerRxDatabase } from './init-database';
 
 export const MENU_ANALYTICS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -172,6 +173,52 @@ function stitchPart1WithMap(
  * Menu-fast local summary: one part1 scan, part2 map load, stitch only last + recent window.
  * Avoids stitching the full run history on every menu open.
  */
+/**
+ * Only one recovery runs at a time. Several users can hit the same dangling rows at once,
+ * and each repairing independently would repeat the work and clear caches underneath the
+ * others; the later arrivals just wait for the first and then retry their read.
+ */
+let recoveryInFlight: Promise<boolean> | null = null;
+
+async function recoverFromCorruptRead(userId: string, message: string): Promise<boolean> {
+  if (recoveryInFlight) {
+    return recoveryInFlight;
+  }
+
+  recoveryInFlight = (async () => {
+    const repair = repairBotRxStorageIndexes();
+    recordDiagnostic('rxdb.corrupt-read', {
+      userId,
+      message,
+      recovery: repair.repairedIndexes > 0 ? 'index-repair' : 'wipe',
+      removedIndexEntries: repair.removedEntries,
+      repairedIndexes: repair.repairedIndexes,
+    });
+
+    if (repair.repairedIndexes === 0) {
+      return false;
+    }
+
+    logger.warn('[menu-summary] dropped dangling RxDB index entries after query failure', {
+      userId,
+      removedEntries: repair.removedEntries,
+      repairedIndexes: repair.repairedIndexes,
+    });
+
+    // Clear the cached queries rather than closing the database: a close would fail every
+    // concurrent user's in-flight read with COL21, which is what the wipe used to do.
+    const db = await ensureBotRunTrackerRxDatabase(userId);
+    invalidateBotRunQueryCaches(db);
+    return true;
+  })();
+
+  try {
+    return await recoveryInFlight;
+  } finally {
+    recoveryInFlight = null;
+  }
+}
+
 export async function loadBotMenuRunSummary(userId: string): Promise<BotMenuRunSummary> {
   try {
     return await loadBotMenuRunSummaryFromRxDB(userId);
@@ -184,26 +231,8 @@ export async function loadBotMenuRunSummary(userId: string): Promise<BotMenuRunS
     // discarded every other user's cache to fix one user's rows, and is O(n^2) and
     // synchronous — 3.6s at 5000 document files — which pushed bystanders' interactions
     // past Discord's ACK budget and produced 10062s of its own.
-    const repair = repairBotRxStorageIndexes();
-    recordDiagnostic('rxdb.corrupt-read', {
-      userId,
-      message,
-      recovery: repair.repairedIndexes > 0 ? 'index-repair' : 'wipe',
-      removedIndexEntries: repair.removedEntries,
-      repairedIndexes: repair.repairedIndexes,
-    });
-
-    if (repair.repairedIndexes > 0) {
-      logger.warn('[menu-summary] dropped dangling RxDB index entries after query failure', {
-        userId,
-        removedEntries: repair.removedEntries,
-        repairedIndexes: repair.repairedIndexes,
-      });
-      // The repair edits index files underneath RxDB, which caches query results and only
-      // re-runs a query when it thinks the collection changed. Without dropping the
-      // instance it keeps serving the pre-repair view — including rows for documents that
-      // no longer exist. Reopening keeps every stored document, unlike the wipe below.
-      await reopenSharedBotRunTrackerRxDatabase('menu-summary:index-repair');
+    const recovered = await recoverFromCorruptRead(userId, message);
+    if (recovered) {
       return await loadBotMenuRunSummaryFromRxDB(userId);
     }
 

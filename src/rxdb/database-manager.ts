@@ -78,26 +78,6 @@ export async function releaseBotRunTrackerRxDatabase(scopeId: string): Promise<v
 
 }
 
-/**
- * Drops the in-memory database so the next use reopens it, keeping all stored data.
- *
- * Used after an out-of-band index repair: RxDB's query and document caches would otherwise
- * keep serving the pre-repair view. This is the cheap alternative to
- * destroySharedBotRunTrackerRxDatabase, which deletes every user's cached runs.
- */
-export async function reopenSharedBotRunTrackerRxDatabase(trigger = 'unspecified'): Promise<void> {
-  const { closeSharedBotRunTrackerRxDatabase } = await import('./init-database.js');
-  recordDiagnostic('rxdb.reopen', {
-    trigger,
-    hadOpenDatabase: sharedDatabase !== null,
-    hadInitInFlight: initPromise !== null,
-    ...summarizeRecentRxDatabaseGrants(),
-  });
-  sharedDatabase = null;
-  initPromise = null;
-  await closeSharedBotRunTrackerRxDatabase();
-}
-
 export async function destroySharedBotRunTrackerRxDatabase(trigger = 'unspecified'): Promise<void> {
   const { resetSharedBotRunTrackerRxDatabase } = await import('./init-database.js');
 

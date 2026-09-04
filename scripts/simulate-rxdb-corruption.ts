@@ -35,6 +35,7 @@ function parseArg(name: string, fallback: string): string {
 const runCount = Number(parseArg('runs', '250'));
 const attempts = Number(parseArg('attempts', '8'));
 const isChild = process.argv.includes('--child');
+const concurrent = process.argv.includes('--concurrent');
 
 const VICTIM = 'discord-victim';
 const BYSTANDER = 'discord-bystander';
@@ -46,6 +47,7 @@ function spawnPhase(sandbox: string, phase: 'seed' | 'read'): number {
     [
       '-r', require.resolve('ts-node/register/transpile-only'),
       __filename, '--child', `--phase=${phase}`, `--runs=${runCount}`, `--attempts=${attempts}`,
+      ...(concurrent ? ['--concurrent'] : []),
     ],
     {
       cwd: sandbox,
@@ -141,25 +143,41 @@ async function child(): Promise<void> {
     return;
   }
 
-  console.log('both users start running /track:');
+  console.log(`both users start running /track${concurrent ? ' (concurrently)' : ''}:`);
   console.log();
   console.log('attempt  user                 result');
 
-  let ok = 0;
-  let failed = 0;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  const describeError = (error: any): string => error?.code
+    ?? (String(error?.message ?? '').match(/Error-Code: ([A-Za-z0-9]+)/) ?? [])[1]
+    ?? String(error?.message ?? 'error').split(String.fromCharCode(10))[0].slice(0, 60);
+
+  const runAttempt = async (attempt: number) => {
     const user = attempt % 2 === 0 ? BYSTANDER : VICTIM;
     try {
       const summary = await loadBotMenuRunSummary(user);
-      ok += 1;
-      console.log(`${String(attempt).padEnd(9)}${user.padEnd(21)}OK (${summary.totalRuns} runs)`);
+      return { attempt, user, ok: true, detail: `OK (${summary.totalRuns} runs)` };
     } catch (error: any) {
-      failed += 1;
-      const code = error?.code
-        ?? (String(error?.message ?? '').match(/Error-Code: (\w+)/) ?? [])[1]
-        ?? String(error?.message ?? 'error').split('\n')[0].slice(0, 60);
-      console.log(`${String(attempt).padEnd(9)}${user.padEnd(21)}FAILED — ${code}`);
+      return { attempt, user, ok: false, detail: `FAILED - ${describeError(error)}` };
     }
+  };
+
+  const attemptNumbers = Array.from({ length: attempts }, (_, index) => index + 1);
+  // Concurrent mode is the production shape: other users run /track while one user's read
+  // triggers the repair and the reopen that follows it. A reopen closes the database out
+  // from under anything already in flight, so this is where that would show up.
+  let results;
+  if (concurrent) {
+    results = await Promise.all(attemptNumbers.map(runAttempt));
+  } else {
+    results = [];
+    for (const attempt of attemptNumbers) results.push(await runAttempt(attempt));
+  }
+
+  let ok = 0;
+  let failed = 0;
+  for (const result of results.sort((a, b) => a.attempt - b.attempt)) {
+    if (result.ok) ok += 1; else failed += 1;
+    console.log(`${String(result.attempt).padEnd(9)}${result.user.padEnd(21)}${result.detail}`);
   }
 
   console.log(`\n${ok} succeeded, ${failed} failed out of ${attempts}`);

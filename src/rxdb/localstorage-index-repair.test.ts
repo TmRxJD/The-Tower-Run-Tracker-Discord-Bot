@@ -7,7 +7,7 @@ import { repairBotRxStorageIndexes } from './localstorage-index-repair';
 const DOC_KEY = 'RxDB-ls-doc-tracker_bot_rxdb_shared--run_part_1--0-';
 const INDEX_KEY = 'RxDB-ls-idx-tracker_bot_rxdb_shared--run_part_1--0_deleted|botScopeUserId|id';
 
-type MutableGlobal = typeof globalThis & { localStorage?: Storage };
+type MutableGlobal = { localStorage?: Storage };
 
 describe('repairBotRxStorageIndexes', () => {
   let directory: string;
@@ -25,8 +25,8 @@ describe('repairBotRxStorageIndexes', () => {
     process.env.TRACKER_BOT_RXDB_STORAGE = 'localstorage';
     process.env.TRACKER_BOT_RXDB_DATA_DIR = directory;
 
-    previousLocalStorage = (globalThis as MutableGlobal).localStorage;
-    (globalThis as MutableGlobal).localStorage = {
+    previousLocalStorage = (globalThis as unknown as MutableGlobal).localStorage;
+    (globalThis as unknown as MutableGlobal).localStorage = {
       getItem: (key: string) => {
         try {
           return readFileSync(fileFor(key), 'utf8');
@@ -43,7 +43,7 @@ describe('repairBotRxStorageIndexes', () => {
     else process.env.TRACKER_BOT_RXDB_STORAGE = previousMode;
     if (previousDir === undefined) delete process.env.TRACKER_BOT_RXDB_DATA_DIR;
     else process.env.TRACKER_BOT_RXDB_DATA_DIR = previousDir;
-    (globalThis as MutableGlobal).localStorage = previousLocalStorage;
+    (globalThis as unknown as MutableGlobal).localStorage = previousLocalStorage;
     rmSync(directory, { recursive: true, force: true });
   });
 
