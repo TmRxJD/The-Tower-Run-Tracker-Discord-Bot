@@ -41,14 +41,17 @@ jobs:
           always-auth: true
 
       - name: Resolve deployment metadata
-        shell: bash
+        shell: node {0}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
-            echo "PLATFORM_VERSION=${{ github.event.client_payload.version }}" >> "$GITHUB_ENV"
-          else
-            platformVersion=$(node -p "const pkg=require('./package.json'); pkg.dependencies?.['@tmrxjd/platform'] || pkg.devDependencies?.['@tmrxjd/platform'] || ''")
-            echo "PLATFORM_VERSION=$platformVersion" >> "$GITHUB_ENV"
-          fi
+          const fs = require('fs')
+          let platformVersion
+          if (process.env.GITHUB_EVENT_NAME === 'repository_dispatch') {
+            platformVersion = ${{ toJSON(github.event.client_payload.version) }} || ''
+          } else {
+            const pkg = require('./package.json')
+            platformVersion = pkg.dependencies?.['@tmrxjd/platform'] || pkg.devDependencies?.['@tmrxjd/platform'] || ''
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, `PLATFORM_VERSION=${platformVersion}\n`)
 
       - name: Run preflight checks
         env:
@@ -64,38 +67,30 @@ jobs:
         run: pnpm run deploy:install
 
       - name: Validate local runtime env files
-        shell: bash
+        shell: node {0}
         run: |
-          if [[ -n "$TRACKERBOT_ENV_DIR" ]]; then
-            if [[ ! -d "$TRACKERBOT_ENV_DIR" ]]; then
-              echo "TRACKERBOT_ENV_DIR does not exist: $TRACKERBOT_ENV_DIR" >&2
-              exit 1
-            fi
-            envRoot=$(cd "$TRACKERBOT_ENV_DIR" && pwd)
-          else
-            envRoot=$(pwd)
-          fi
+          const fs = require('fs')
+          const path = require('path')
+          let envRoot
+          if (process.env.TRACKERBOT_ENV_DIR) {
+            if (!fs.existsSync(process.env.TRACKERBOT_ENV_DIR)) {
+              console.error(`TRACKERBOT_ENV_DIR does not exist: ${process.env.TRACKERBOT_ENV_DIR}`)
+              process.exit(1)
+            }
+            envRoot = fs.realpathSync(process.env.TRACKERBOT_ENV_DIR)
+          } else {
+            envRoot = process.cwd()
+          }
 
-          expected=(
-            "$envRoot/.env.prod.local"
-            "$envRoot/.env.prod"
-            "$envRoot/.env.local"
-            "$envRoot/.env"
-          )
-          found=()
-          for candidate in "${expected[@]}"; do
-            if [[ -f "$candidate" ]]; then
-              found+=("$candidate")
-            fi
-          done
+          const expected = ['.env.prod.local', '.env.prod', '.env.local', '.env'].map(f => path.join(envRoot, f))
+          const found = expected.filter(f => fs.existsSync(f))
+          if (found.length > 0) {
+            console.log(`Using existing local env files from the runner: ${found.join(', ')}`)
+            process.exit(0)
+          }
 
-          if (( ${#found[@]} > 0 )); then
-            printf 'Using existing local env files from the runner: %s\n' "$(IFS=', '; echo "${found[*]}")"
-            exit 0
-          fi
-
-          printf 'No local env file found on the runner. Expected one of: %s\n' "$(IFS=', '; echo "${expected[*]}")" >&2
-          exit 1
+          console.error(`No local env file found on the runner. Expected one of: ${expected.join(', ')}`)
+          process.exit(1)
 
       - name: Build service
         run: pnpm run deploy:build
@@ -108,13 +103,14 @@ jobs:
 
       - name: Commit platform dependency bump
         if: github.event_name == 'repository_dispatch'
-        shell: bash
+        shell: node {0}
         run: |
-          if git diff --quiet -- package.json pnpm-lock.yaml; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json pnpm-lock.yaml
-          git commit -m "chore: bump @tmrxjd/platform to ${PLATFORM_VERSION}"
-          git push
+          const { execSync } = require('child_process')
+          const run = cmd => execSync(cmd, { stdio: 'inherit' })
+          const dirty = execSync('git status --porcelain -- package.json pnpm-lock.yaml').toString().trim()
+          if (!dirty) process.exit(0)
+          run('git config user.name "github-actions[bot]"')
+          run('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"')
+          run('git add package.json pnpm-lock.yaml')
+          run(`git commit -m "chore: bump @tmrxjd/platform to ${process.env.PLATFORM_VERSION}"`)
+          run('git push')
