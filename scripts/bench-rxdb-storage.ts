@@ -27,6 +27,8 @@ type BenchMode = 'localstorage' | 'dexie' | 'memory';
 const ACK_BUDGET_MS = 3000;
 /** Fine enough to catch a stall well under the ACK budget without perturbing the run. */
 const LAG_SAMPLE_INTERVAL_MS = 20;
+/** Long enough for a post-burst sample to land and reveal the stall. */
+const SETTLE_MS = 100;
 
 function parseArg(name: string, fallback: string): string {
   const hit = process.argv.find((arg) => arg.startsWith(`--${name}=`));
@@ -61,7 +63,14 @@ function startLagSampler() {
   timer.unref?.();
 
   return {
-    stop() {
+    /**
+     * A synchronous burst is only observable by a timer that fires AFTER it — the interval
+     * cannot run while the loop is blocked. Stopping the sampler the instant an operation
+     * returns therefore reports 0 for a burst that actually stalled for seconds, so let one
+     * more sample land before reading the result.
+     */
+    async stop() {
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
       clearInterval(timer);
       const maxLagMs = lags.length ? Math.max(...lags) : 0;
       return {
@@ -141,7 +150,7 @@ async function main(): Promise<void> {
     await batchUpsertRunPartsToBotRxDB(db, userId, part1 as any, part2 as any);
   }
   const seedMs = Date.now() - seedStartedAt;
-  const seedLag = seedSampler.stop();
+  const seedLag = await seedSampler.stop();
 
   // A delta sync or a fresh upload writes a handful of runs at a time. That is the write
   // shape that runs while other users are mid-command, so it is the one whose stall
@@ -167,7 +176,7 @@ async function main(): Promise<void> {
   const incrementalStartedAt = Date.now();
   await batchUpsertRunPartsToBotRxDB(db, incrementalUserId, incrementalPart1 as any, incrementalPart2 as any);
   const incrementalMs = Date.now() - incrementalStartedAt;
-  const incrementalLag = incrementalSampler.stop();
+  const incrementalLag = await incrementalSampler.stop();
 
   // The first read pays one-time costs (index parse, lazy init) that later reads do not,
   // and it is also the read a restarted bot serves, so report it separately.
@@ -178,7 +187,7 @@ async function main(): Promise<void> {
     const startedAt = Date.now();
     const summary = await loadBotMenuRunSummary(userId);
     const wallMs = Date.now() - startedAt;
-    const lag = sampler.stop();
+    const lag = await sampler.stop();
     results.push({
       iteration,
       wallMs,
