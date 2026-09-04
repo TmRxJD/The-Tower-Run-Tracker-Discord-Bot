@@ -115,13 +115,25 @@ function checkPackageAccess() {
     throw new Error('GitHub Packages auth is missing. Set NODE_AUTH_TOKEN (or GITHUB_PACKAGES_TOKEN) before installing @tmrxjd/platform.')
   }
 
-  execSync(`pnpm view @tmrxjd/platform version --registry ${platformRegistry} --json`, {
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      NODE_AUTH_TOKEN: authToken,
-    },
-  })
+  // Do NOT swallow the error: a registry-auth failure here previously surfaced
+  // only as "Command failed", which hid why the runner could not read the
+  // package. Capture stdout/stderr and re-throw with the real diagnostic.
+  try {
+    execSync(`pnpm view @tmrxjd/platform version --registry ${platformRegistry} --json`, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        NODE_AUTH_TOKEN: authToken,
+      },
+    })
+  } catch (error) {
+    const detail = [error?.stdout, error?.stderr].filter(Boolean).join('\n').trim()
+    throw new Error(
+      `Cannot read @tmrxjd/platform from ${platformRegistry} despite a present auth token. `
+      + (detail ? `\n\nRegistry output:\n${detail}` : ''),
+    )
+  }
 }
 
 async function warnOnGlobalCommands() {
