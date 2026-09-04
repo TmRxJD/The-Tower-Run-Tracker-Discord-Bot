@@ -18,8 +18,25 @@ export type BotRunTrackerRxDatabase = RxDatabase<{
 
 let sharedInitPromise: Promise<BotRunTrackerRxDatabase> | null = null;
 
+/**
+ * The live instance, tracked so a reset can close it.
+ *
+ * Dropping the reference is not enough. RxDB refuses to create a second database with the
+ * same name while the first is still open (DB8), and each storage instance stays
+ * subscribed to the localstorage plugin's module-global change stream — where its handler
+ * re-parses every subsequent write. An unclosed database therefore both locks out its own
+ * replacement and taxes every write that follows.
+ */
+let sharedDatabase: BotRunTrackerRxDatabase | null = null;
+
 function asRxJsonSchema(schema: TrackerRunPartRxJsonSchema): RxJsonSchema<TrackerRunPartDocument> {
   return schema as RxJsonSchema<TrackerRunPartDocument>;
+}
+
+/** Close without letting a teardown failure mask the error that prompted it. */
+async function closeQuietly(db: BotRunTrackerRxDatabase | null): Promise<void> {
+  if (!db) return;
+  await db.close().catch(() => {});
 }
 
 export async function initSharedBotRunTrackerRxDatabase(): Promise<BotRunTrackerRxDatabase> {
@@ -38,13 +55,21 @@ export async function initSharedBotRunTrackerRxDatabase(): Promise<BotRunTracker
         multiInstance: false,
       }) as BotRunTrackerRxDatabase;
 
-      if (!db.run_part_1) {
-        await db.addCollections({
-          run_part_1: { schema: asRxJsonSchema(botRunPart1RxJsonSchema) },
-          run_part_2: { schema: asRxJsonSchema(botRunPart2RxJsonSchema) },
-        });
+      try {
+        if (!db.run_part_1) {
+          await db.addCollections({
+            run_part_1: { schema: asRxJsonSchema(botRunPart1RxJsonSchema) },
+            run_part_2: { schema: asRxJsonSchema(botRunPart2RxJsonSchema) },
+          });
+        }
+      } catch (error) {
+        // The database opened but is unusable. Leaving it open would make the retry below
+        // — and every later open — fail with DB8.
+        await closeQuietly(db);
+        throw error;
       }
 
+      sharedDatabase = db;
       return db;
     }
 
@@ -69,6 +94,13 @@ export async function initSharedBotRunTrackerRxDatabase(): Promise<BotRunTracker
 
 export async function resetSharedBotRunTrackerRxDatabase(): Promise<void> {
   sharedInitPromise = null;
+
+  // Close before removing. removeRxDatabase deletes the stored data but leaves a live
+  // instance open, and that instance is what makes the next open fail with DB8.
+  const previous = sharedDatabase;
+  sharedDatabase = null;
+  await closeQuietly(previous);
+
   ensureBotRxStorageEnvironment();
   const storage = await getBotRxStorage();
   await removeRxDatabase(SHARED_BOT_RUN_RXDB_NAME, storage).catch(() => {});
