@@ -126,11 +126,20 @@ async function warnOnGlobalCommands() {
   return
 }
 
+function checkPlatformApi() {
+  // Development links the platform package locally while production resolves it from the
+  // registry, and the two drift without the version changing. Catch that here rather than
+  // as a wall of "has no exported member" errors partway through a deploy.
+  // deploy commands run from the repo root, as the other steps here assume.
+  run('node scripts/verify-platform-api.mjs')
+}
+
 async function preflight() {
   checkNodeVersion()
   checkPnpmVersion()
   checkPm2()
   checkPackageAccess()
+  checkPlatformApi()
   await warnOnGlobalCommands()
 }
 
