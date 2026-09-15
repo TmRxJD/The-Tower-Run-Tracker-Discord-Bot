@@ -11,12 +11,15 @@ importers:
       '@discordjs/rest':
         specifier: ^2.6.3
         version: 2.6.3
+      '@gutenye/ocr-node':
+        specifier: ^1.4.8
+        version: 1.4.8
       '@napi-rs/canvas':
         specifier: ^0.1.97
         version: 0.1.97
       '@tmrxjd/platform':
-        specifier: 0.2.3
-        version: 0.2.3
+        specifier: 0.2.4
+        version: 0.2.4(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)
       dexie:
         specifier: ^4.4.4
         version: 4.4.4
@@ -38,6 +41,9 @@ importers:
       rxdb:
         specifier: 17.4.0
         version: 17.4.0(rxjs@7.8.2)
+      sharp:
+        specifier: ^0.34.1
+        version: 0.34.5
       sqlite3:
         specifier: ^5.1.7
         version: 5.1.7
@@ -900,8 +906,20 @@ packages:
   '@techstark/opencv-js@4.9.0-release.3':
     resolution: {integrity: sha512-y+KoLLlkXVUHWozYlN1vmMD9TQMPJObqml5nPA5vPWgHtOgm8q5O74UtzM23eayidvmeFX6tF5e2gDdyxcpy3Q==}
 
-  '@tmrxjd/platform@0.2.3':
-    resolution: {integrity: sha512-NDISWS/9G997Zk5AnNDX2iaA2bDCoe5zTv49ljA3H7LFrrdWIsI6zcgn/eS1NwTyV6G1GiAv2zwLFKkfj7BlYw==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.2.3/d7e220fd52910df5f55dc76bd1f1f0ccb8df2d3d}
+  '@tmrxjd/platform@0.2.4':
+    resolution: {integrity: sha512-6HVQ6Tc1CRNff7FLikmSFu0FJkqyPgzzWV9hekwUSnq+aCHlMRP1K5iweyxJ94NLJKmdIUgKtT12Khu5s/C11A==, tarball: https://npm.pkg.github.com/download/@tmrxjd/platform/0.2.4/c4f789660fbee104dfddbf97f47a104bb4d19d3d}
+    peerDependencies:
+      '@gutenye/ocr-node': ^1.4.8
+      '@huggingface/transformers': ^3.8.1
+      '@vue/compiler-dom': ^3.5.27
+      '@vue/compiler-sfc': ^3.5.27
+      fake-indexeddb: ^6.0.0
+      hyperformula: ^3.2.0
+      indexeddb-js: ^0.0.14
+      magic-string: ^0.30.17
+      sharp: ^0.34.1
+      sqlite3: ^5.1.7
+      typescript: ~5.8.3
 
   '@tmrxjd/tracker-languages@0.1.23':
     resolution: {integrity: sha512-UAcF0ZqMSeRysnmBfh1zqhgCdiYq19ag3187C1PJFcRyOuwPXMhLILq9lPEJTAJNrHZcbqbqR3+1bwzOswQGkg==, tarball: https://npm.pkg.github.com/download/@tmrxjd/tracker-languages/0.1.23/c66b9fcf2a4f581eca6028ae2c4a6c0fa1e89e77}
@@ -2376,8 +2394,8 @@ packages:
     resolution: {integrity: sha512-tOG/7GyXpFevhXVh8jOPJrmtRpOTsYqUIkVdVooZYJS/z8WhfQUX8RJILmeuJNinGAMSu1veBr4asSHFt5/hng==}
     engines: {node: '>=18'}
 
-  thetowersdk@0.10.1:
-    resolution: {integrity: sha512-eLpAvQFlHld+lyZKtkV54p1Musy3Uu9TpdbWWXQFExnuTTiH2YO8J2vHjxZkT7elmnflNHouz0icGqEa8cKnuQ==}
+  thetowersdk@0.11.0:
+    resolution: {integrity: sha512-WT6cXWDangI0fkwdR1qL65OA6o/9vCJH0Vhgy+QlTlKl/6gNUg8aVaWZpp0SCMvj7yPknZ/zLPosMDWsQTzsKw==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -2464,11 +2482,6 @@ packages:
   type-fest@0.13.1:
     resolution: {integrity: sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==}
     engines: {node: '>=10'}
-
-  typescript@5.8.3:
-    resolution: {integrity: sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ==}
-    engines: {node: '>=14.17'}
-    hasBin: true
 
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
@@ -3161,7 +3174,7 @@ snapshots:
   '@npmcli/fs@1.1.1':
     dependencies:
       '@gar/promisify': 1.1.3
-      semver: 7.7.4
+      semver: 7.8.5
     optional: true
 
   '@npmcli/move-file@1.1.2':
@@ -3284,7 +3297,7 @@ snapshots:
 
   '@techstark/opencv-js@4.9.0-release.3': {}
 
-  '@tmrxjd/platform@0.2.3':
+  '@tmrxjd/platform@0.2.4(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)':
     dependencies:
       '@gutenye/ocr-node': 1.4.8
       '@huggingface/transformers': 3.8.1
@@ -3297,12 +3310,9 @@ snapshots:
       magic-string: 0.30.21
       sharp: 0.34.5
       sqlite3: 5.1.7
-      thetowersdk: 0.10.1
-      typescript: 5.8.3
+      thetowersdk: 0.11.0
+      typescript: 5.9.3
       zod: 4.4.3
-    transitivePeerDependencies:
-      - bluebird
-      - supports-color
 
   '@tmrxjd/tracker-languages@0.1.23':
     dependencies:
@@ -4432,7 +4442,7 @@ snapshots:
 
   node-abi@3.87.0:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.5
 
   node-addon-api@7.1.1: {}
 
@@ -4776,7 +4786,8 @@ snapshots:
 
   semver-compare@1.0.0: {}
 
-  semver@7.7.4: {}
+  semver@7.7.4:
+    optional: true
 
   semver@7.8.5: {}
 
@@ -4999,7 +5010,7 @@ snapshots:
       minizlib: 3.1.0
       yallist: 5.0.0
 
-  thetowersdk@0.10.1:
+  thetowersdk@0.11.0:
     dependencies:
       zod: 4.4.3
 
@@ -5089,8 +5100,6 @@ snapshots:
       prelude-ls: 1.2.1
 
   type-fest@0.13.1: {}
-
-  typescript@5.8.3: {}
 
   typescript@5.9.3: {}
 

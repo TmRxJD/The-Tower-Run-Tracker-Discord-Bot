@@ -64,8 +64,9 @@
   },
   "dependencies": {
     "@discordjs/rest": "^2.6.3",
+    "@gutenye/ocr-node": "^1.4.8",
     "@napi-rs/canvas": "^0.1.97",
-    "@tmrxjd/platform": "0.2.3",
+    "@tmrxjd/platform": "0.2.4",
     "dexie": "^4.4.4",
     "discord-api-types": "^0.37.120",
     "discord.js": "^14.27.0",
@@ -73,6 +74,7 @@
     "node-appwrite": "17.2.0",
     "node-localstorage": "^3.0.5",
     "rxdb": "17.4.0",
+    "sharp": "^0.34.1",
     "sqlite3": "^5.1.7",
     "zod": "^4.4.3"
   },
