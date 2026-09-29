@@ -29,10 +29,10 @@ export async function ensureMenuRunDataBeforeRender(userId: string): Promise<voi
 
   const task = (async () => {
     if (await shouldPrimeMenuFromCloud(userId)) {
-      const primed = await primeMenuCriticalRunsFromCloud(userId);
-      if (!primed?.lastRun && (primed?.totalRuns ?? 0) === 0) {
-        throw new Error('Menu cloud prime returned no run data');
-      }
+      // A null result means the cloud holds no runs for this account (a new user, or one
+      // who deleted everything). That is a valid, empty menu rather than a failure; real
+      // fetch failures throw out of the prime instead of returning null.
+      await primeMenuCriticalRunsFromCloud(userId);
       return;
     }
 

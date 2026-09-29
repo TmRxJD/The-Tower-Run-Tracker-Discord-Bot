@@ -2677,8 +2677,10 @@ export async function getMenuRunSummary(userId: string) {
   await ensureMenuRunDataBeforeRender(userId);
 
   const primed = peekMenuPrimedSummary(userId);
+  let localSummary: Awaited<ReturnType<typeof loadBotMenuRunSummary>> | null = null;
   try {
     const summary = await loadBotMenuRunSummary(userId);
+    localSummary = summary;
     if (summary.totalRuns > 0 && summary.lastRun) {
       clearMenuPrimedSummary(userId);
       return {
@@ -2696,7 +2698,9 @@ export async function getMenuRunSummary(userId: string) {
     return primed;
   }
 
-  const summary = await loadBotMenuRunSummary(userId);
+  // The read above already loaded this; a second synchronous pass over the same documents
+  // only happens when that first read threw.
+  const summary = localSummary ?? await loadBotMenuRunSummary(userId);
   const cloudTotalOverride = peekMenuCloudTotalCountOverride(userId);
   const totalRuns = cloudTotalOverride !== undefined && cloudTotalOverride > summary.totalRuns
     ? cloudTotalOverride
