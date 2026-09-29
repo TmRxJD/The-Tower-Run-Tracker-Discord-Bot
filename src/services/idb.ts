@@ -338,6 +338,21 @@ export async function getTrackerUserSettings(userId: string): Promise<UserSettin
   return row ? normalizeUserRow(row) : null;
 }
 
+/** Ids of users whose `lastSeen` is at or after `sinceIso` (touched on every tracker command). */
+export async function listTrackerUserIdsSeenSince(sinceIso: string): Promise<string[]> {
+  const db = await getTrackerBotDb();
+  if (!db) {
+    return [];
+  }
+
+  const rows = await allSqlRows<{ userId: string }>(
+    db,
+    'SELECT userId FROM tracker_users WHERE lastSeen IS NOT NULL AND lastSeen >= ?',
+    [sinceIso],
+  );
+  return rows.map((row) => row.userId);
+}
+
 export async function upsertTrackerUserSettings(document: UserSettingsDocument): Promise<void> {
   const db = await getTrackerBotDb();
   if (!db) {

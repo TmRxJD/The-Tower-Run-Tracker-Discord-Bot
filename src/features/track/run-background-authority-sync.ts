@@ -192,19 +192,24 @@ async function importCloudOnlyRunIds(
   return added + updated;
 }
 
+export interface BackgroundAuthoritySyncResult {
+  /** False when the cloud could not be queried at all, so callers can back off during an outage. */
+  cloudReachable: boolean;
+}
+
 /**
  * Canonical background sync pipeline.
  * Never blocks UI. Deletes locally only when cloud authority is verified.
  */
-export async function runBackgroundAuthoritySync(userId: string): Promise<void> {
+export async function runBackgroundAuthoritySync(userId: string): Promise<BackgroundAuthoritySyncResult> {
   const settings = await getLocalSettings(userId);
   if (!settings.cloudSyncEnabled) {
-    return;
+    return { cloudReachable: true };
   }
 
   const appConfig = getAppConfig();
   if (!appConfig.appwrite.apiKey?.trim()) {
-    return;
+    return { cloudReachable: true };
   }
 
   const identity = await resolveBotRunCloudIdentity(userId);
@@ -287,7 +292,7 @@ export async function runBackgroundAuthoritySync(userId: string): Promise<void> 
       }
       logger.info('[authority-sync] imported cloud-only runs without authority delete', { userId, imported });
     }
-    return;
+    return { cloudReachable: manifest.requestSucceeded };
   }
 
   let deleted = 0;
@@ -316,6 +321,7 @@ export async function runBackgroundAuthoritySync(userId: string): Promise<void> 
     imported,
     cloudCount: manifest.cloudIds.length,
   });
+  return { cloudReachable: true };
 }
 
 export function beginBackgroundAuthoritySync(userId: string): void {
@@ -324,6 +330,7 @@ export function beginBackgroundAuthoritySync(userId: string): void {
   }
 
   const task = runBackgroundAuthoritySync(userId)
+    .then(() => undefined)
     .catch((error) => {
       logger.warn('[authority-sync] background sync failed', { userId, error });
     })
