@@ -5,7 +5,13 @@ import {
   type TrackerRunPartRxJsonSchema,
 } from '@tmrxjd/platform/tools';
 import { botRunPart1RxJsonSchema, botRunPart2RxJsonSchema } from './bot-run-schemas';
-import { ensureBotRxStorageEnvironment, getBotRxStorage } from './bot-rx-storage';
+import { logger } from '../core/logger';
+import {
+  botRxStorageNeedsQuarantine,
+  ensureBotRxStorageEnvironment,
+  getBotRxStorage,
+  quarantineBotRxStorage,
+} from './bot-rx-storage';
 
 const SHARED_BOT_RUN_RXDB_NAME = 'tracker_bot_rxdb_shared';
 
@@ -29,12 +35,12 @@ export async function initSharedBotRunTrackerRxDatabase(): Promise<BotRunTracker
 
   sharedInitPromise = (async () => {
     ensureBotRxStorageEnvironment();
-    const storage = await getBotRxStorage();
 
     async function createAndCollect(): Promise<BotRunTrackerRxDatabase> {
+      // Fetched per attempt: discarding the store replaces the storage instance.
       const db = await createRxDatabase({
         name: SHARED_BOT_RUN_RXDB_NAME,
-        storage,
+        storage: await getBotRxStorage(),
         multiInstance: false,
       }) as BotRunTrackerRxDatabase;
 
@@ -56,7 +62,7 @@ export async function initSharedBotRunTrackerRxDatabase(): Promise<BotRunTracker
       const isSchemaError = error instanceof Error && (error as { code?: string }).code === 'DB6';
       if (!isSchemaError) throw error;
 
-      await removeRxDatabase(SHARED_BOT_RUN_RXDB_NAME, storage).catch(() => {});
+      await discardStoredSharedDatabase('schema mismatch (DB6)');
       return await createAndCollect();
     }
   })().catch((error) => {
@@ -67,11 +73,25 @@ export async function initSharedBotRunTrackerRxDatabase(): Promise<BotRunTracker
   return sharedInitPromise;
 }
 
+/**
+ * Drops the persisted shared database. With the localstorage engine that is a directory
+ * quarantine (instant); removeRxDatabase deletes one file per document synchronously and
+ * froze the whole bot for hours on a full-size cache. Other engines delete in memory.
+ */
+async function discardStoredSharedDatabase(reason: string): Promise<void> {
+  if (botRxStorageNeedsQuarantine()) {
+    const quarantined = await quarantineBotRxStorage(reason);
+    logger.warn('[rxdb] discarded local run cache', { reason, quarantined });
+    return;
+  }
+
+  await removeRxDatabase(SHARED_BOT_RUN_RXDB_NAME, await getBotRxStorage()).catch(() => {});
+}
+
 export async function resetSharedBotRunTrackerRxDatabase(): Promise<void> {
   sharedInitPromise = null;
   ensureBotRxStorageEnvironment();
-  const storage = await getBotRxStorage();
-  await removeRxDatabase(SHARED_BOT_RUN_RXDB_NAME, storage).catch(() => {});
+  await discardStoredSharedDatabase('reset requested');
 }
 
 /** @deprecated Use initSharedBotRunTrackerRxDatabase. Per-user DBs hit RxDB COL23 limits. */

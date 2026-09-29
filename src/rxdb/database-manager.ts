@@ -1,84 +1,64 @@
 import type { BotRunTrackerRxDatabase } from './init-database';
-
 import { initSharedBotRunTrackerRxDatabase } from './init-database';
-
 import { recordDiagnostic, recordRxDatabaseGrant, summarizeRecentRxDatabaseGrants } from '../core/diagnostics';
-
-
+import { logger } from '../core/logger';
 
 let sharedDatabase: BotRunTrackerRxDatabase | null = null;
-
 let initPromise: Promise<BotRunTrackerRxDatabase> | null = null;
-
-
+let destroyPromise: Promise<void> | null = null;
 
 export async function getOrInitBotRunTrackerRxDatabase(scopeId: string): Promise<BotRunTrackerRxDatabase> {
   recordRxDatabaseGrant(scopeId);
 
-  if (sharedDatabase) {
-
-    return sharedDatabase;
-
+  // A recovery in progress replaces the store underneath us; wait for it rather than
+  // handing out a handle that is about to be retired.
+  if (destroyPromise) {
+    await destroyPromise;
   }
 
-
+  if (sharedDatabase) {
+    return sharedDatabase;
+  }
 
   if (initPromise) {
-
     return initPromise;
-
   }
 
-
-
   initPromise = initSharedBotRunTrackerRxDatabase()
-
     .then((db) => {
-
       sharedDatabase = db;
-
       return db;
-
     })
-
-    .catch((error) => {
-
+    .finally(() => {
       initPromise = null;
-
-      throw error;
-
     });
 
-
-
-  const db = await initPromise;
-
-  initPromise = null;
-
-  return db;
-
+  return initPromise;
 }
-
-
 
 export function getActiveBotRunTrackerRxDatabase(scopeId?: string): BotRunTrackerRxDatabase | null {
   void scopeId;
-
   return sharedDatabase;
-
 }
-
-
 
 export async function releaseBotRunTrackerRxDatabase(scopeId: string): Promise<void> {
-
   const { unbindBotRunTrackerRxDBInboundSync } = await import('./reactive-sync.js');
-
   unbindBotRunTrackerRxDBInboundSync(scopeId);
-
 }
 
-export async function destroySharedBotRunTrackerRxDatabase(trigger = 'unspecified'): Promise<void> {
+/**
+ * Throws the shared run cache away so it rebuilds from the cloud. Concurrent callers share
+ * one recovery: several users tripping over the same corruption at once must not each
+ * start their own wipe.
+ */
+export function destroySharedBotRunTrackerRxDatabase(trigger = 'unspecified'): Promise<void> {
+  destroyPromise ??= runDestroy(trigger).finally(() => {
+    destroyPromise = null;
+  });
+  return destroyPromise;
+}
+
+async function runDestroy(trigger: string): Promise<void> {
   const { resetSharedBotRunTrackerRxDatabase } = await import('./init-database.js');
 
   // Recorded before the caches are cleared: this wipe is process-wide, so the grant
@@ -90,12 +70,20 @@ export async function destroySharedBotRunTrackerRxDatabase(trigger = 'unspecifie
     ...summarizeRecentRxDatabaseGrants(),
   });
 
+  // Let an in-flight init settle so it cannot build a database the reset then deletes.
+  await initPromise?.catch(() => null);
+
+  const previous = sharedDatabase;
   sharedDatabase = null;
   initPromise = null;
+
+  // Release the old handle before its backing store is swapped out.
+  await previous?.close().catch((error: unknown) => {
+    logger.warn('[rxdb] closing the previous database before reset failed', error);
+  });
+
   await resetSharedBotRunTrackerRxDatabase();
 
-  // The window between clearing the caches above and the wipe completing is where a
-  // concurrent getOrInit can build a database that this reset then deletes.
   recordDiagnostic('rxdb.destroy', {
     trigger,
     phase: 'completed',
@@ -103,28 +91,14 @@ export async function destroySharedBotRunTrackerRxDatabase(trigger = 'unspecifie
   });
 }
 
-
-
 export function getRunTrackerDatabaseManagerStats(): {
-
   openDatabases: number;
-
   openCollectionsEstimate: number;
-
   maxOpenDatabases: number;
-
 } {
-
   return {
-
     openDatabases: sharedDatabase ? 1 : 0,
-
     openCollectionsEstimate: sharedDatabase ? 2 : 0,
-
     maxOpenDatabases: 1,
-
   };
-
 }
-
-
