@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
 import { spawn } from 'node:child_process';
+import { constants, setPriority } from 'node:os';
 import { mkdirSync, readdirSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
@@ -225,13 +226,32 @@ export function purgeQuarantinedBotRxStorage(): void {
     return;
   }
 
-  const script = 'const fs=require("fs");for(const d of process.argv.slice(1)){try{fs.rmSync(d,{recursive:true,force:true,maxRetries:5,retryDelay:250})}catch{}}';
+  // Deleted in paced batches: the bot reads this same volume synchronously, and an
+  // unthrottled delete of ~150k files made its reads slow enough to stall the event loop
+  // for seconds at a time.
+  const script = [
+    'const fs=require("fs"),path=require("path");',
+    'const sleep=(ms)=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms);',
+    'for(const d of process.argv.slice(1)){try{',
+    'const names=fs.readdirSync(d);',
+    'for(let i=0;i<names.length;i++){try{fs.rmSync(path.join(d,names[i]),{recursive:true,force:true})}catch{}if(i%100===99)sleep(50)}',
+    'fs.rmSync(d,{recursive:true,force:true,maxRetries:5,retryDelay:250})',
+    '}catch{}}',
+  ].join('');
   try {
-    spawn(process.execPath, ['-e', script, ...stale], {
+    const child = spawn(process.execPath, ['-e', script, ...stale], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
-    }).unref();
+    });
+    if (child.pid) {
+      try {
+        setPriority(child.pid, constants.priority.PRIORITY_LOW);
+      } catch {
+        // Lowering priority is best effort.
+      }
+    }
+    child.unref();
   } catch {
     // Purging is housekeeping; the directories are picked up again on the next start.
   }
