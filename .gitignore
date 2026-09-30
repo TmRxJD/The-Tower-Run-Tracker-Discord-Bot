@@ -15,3 +15,6 @@ Desktop.ini
 scripts/check-run-pair-boundary.mjs
 scripts/count-runs-and-users.mjs
 scripts/.run-pair-boundary-baseline.json
+
+# Scratchpad for experiments and one-off scripts
+temp/

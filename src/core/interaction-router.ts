@@ -6,6 +6,13 @@ import type { TrackerBotClient } from './tracker-bot-client';
 import { ANALYTICS_EVENT_COMMAND_INVOKED } from '@tmrxjd/platform/tools';
 import { clearMainMenuSession } from '../features/track/handlers/upload-handlers';
 
+/**
+ * Shown for a button or select whose handler no longer exists (usually a menu that outlived
+ * the process that registered it). Without a reply Discord renders "This interaction failed"
+ * and the user retries a click that can never work.
+ */
+export const STALE_COMPONENT_MESSAGE = 'That menu is no longer active. Run the command again to open a fresh one.';
+
 export function registerInteractionRouter(client: TrackerBotClient) {
   const handleInteraction = async (interaction: Interaction) => {
     try {
@@ -55,6 +62,11 @@ export function registerInteractionRouter(client: TrackerBotClient) {
             type: interaction.type,
             ageOnArrivalMs: Date.now() - interaction.createdTimestamp,
           });
+          // Modal submits are claimed by command-local awaitModalSubmit waits and are
+          // expected to reach no registered handler; stay out of their way.
+          if (!interaction.isModalSubmit() && !interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: STALE_COMPONENT_MESSAGE, flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
+          }
           return;
         }
       }

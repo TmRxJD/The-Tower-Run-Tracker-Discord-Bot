@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-type StorageModule = typeof import('./bot-rx-storage.js');
+type StorageModule = Awaited<ReturnType<typeof importStorage>>;
+
+function importStorage() {
+  return import('./bot-rx-storage.js');
+}
 
 const ENV_KEYS = ['TRACKER_BOT_RXDB_STORAGE', 'TRACKER_BOT_RXDB_DATA_DIR'] as const;
 
@@ -14,7 +18,7 @@ describe('bot RxDB storage quarantine', () => {
 
   async function loadModule(): Promise<StorageModule> {
     vi.resetModules();
-    return import('./bot-rx-storage.js');
+    return importStorage();
   }
 
   async function waitFor(check: () => boolean, timeoutMs = 15_000): Promise<boolean> {
