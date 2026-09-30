@@ -89,6 +89,57 @@ function activateService() {
   run(`pm2 startOrRestart ecosystem.config.cjs --only ${serviceName} --env production --update-env`)
 }
 
+function readPm2Service() {
+  const raw = execSync('pm2 jlist', { encoding: 'utf8', env: process.env, maxBuffer: 64 * 1024 * 1024 })
+  // pm2 can print a banner before the JSON when its daemon has to start.
+  const list = JSON.parse(raw.slice(raw.indexOf('[')))
+  return list.find((entry) => entry.name === serviceName)
+}
+
+function tailFile(path, bytes = 6000) {
+  try {
+    const text = readFileSync(path, 'utf8')
+    return text.slice(-bytes)
+  } catch {
+    return '(log unavailable)'
+  }
+}
+
+/**
+ * A green "activate" only means pm2 accepted the command. A bot that crashes on startup
+ * restarts in a loop and still looks fine a second later, so watch it for a while: it must
+ * stay online and not restart. Fails the deploy (with the error log tail) if it does not.
+ */
+async function verifyService() {
+  const seconds = Number(getEnv('DEPLOY_VERIFY_SECONDS', '30'))
+  const first = readPm2Service()
+  if (!first) {
+    throw new Error(`${serviceName} is not registered with pm2 after activation`)
+  }
+
+  const baselineRestarts = first.pm2_env.restart_time
+  const deadline = Date.now() + seconds * 1000
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 3000))
+    const current = readPm2Service()
+    const problem = !current
+      ? 'disappeared from pm2'
+      : current.pm2_env.status !== 'online'
+        ? `status is ${current.pm2_env.status}`
+        : current.pm2_env.restart_time > baselineRestarts
+          ? `restarted ${current.pm2_env.restart_time - baselineRestarts} time(s)`
+          : null
+    if (problem) {
+      const errorLog = current?.pm2_env?.pm_err_log_path ?? first.pm2_env.pm_err_log_path
+      throw new Error(`${serviceName} is unhealthy after deploy: ${problem}.\n\nLast error log lines:\n${tailFile(errorLog)}`)
+    }
+  }
+
+  const finalState = readPm2Service()
+  const uptimeSeconds = Math.round((Date.now() - finalState.pm2_env.pm_uptime) / 1000)
+  process.stdout.write(`${serviceName} healthy: online for ${uptimeSeconds}s with no restarts over a ${seconds}s check\n`)
+}
+
 function updatePlatformDependency() {
   const version = getEnv('PLATFORM_VERSION')
   if (!version) {
@@ -178,6 +229,9 @@ switch (action) {
     break
   case 'activate':
     activateService()
+    break
+  case 'verify':
+    await verifyService()
     break
   case 'update-platform':
     updatePlatformDependency()

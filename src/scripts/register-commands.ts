@@ -4,10 +4,18 @@ import { getSlashCommandRegistrationPayload } from '../commands/slash-command-da
 import { validateBotBootstrapConfig } from '../core/bootstrap-contract';
 import { logger } from '../core/logger';
 import { getAppConfig, loadConfig } from '../config';
+import {
+  hashCommandPayload,
+  isRegistrationCurrent,
+  registrationStatePath,
+  writeRegistrationState,
+} from './command-registration-state';
 
 type RegisterCommandOptions = {
   deploymentMode?: 'dev' | 'prod';
   guildId?: string;
+  /** Register even if the command payload matches the last successful registration. */
+  force?: boolean;
 };
 
 function parseRegisterCommandOptions(argv: string[]): RegisterCommandOptions {
@@ -30,6 +38,11 @@ function parseRegisterCommandOptions(argv: string[]): RegisterCommandOptions {
       if (mode === 'dev' || mode === 'prod') {
         options.deploymentMode = mode;
       }
+      continue;
+    }
+
+    if (arg === '--force') {
+      options.force = true;
       continue;
     }
 
@@ -58,6 +71,16 @@ async function registerCommands() {
   const body = getSlashCommandRegistrationPayload();
   const isProd = runtime.deploymentMode === 'prod';
 
+  const payloadHash = hashCommandPayload(body, `${runtime.clientId}:${runtime.deploymentMode}`);
+  const statePath = registrationStatePath(runtime.deploymentMode);
+  // Checked before logging in or touching any guild: with the bot in many servers, that
+  // work is what makes registration slow, and most deploys change no commands. console.log
+  // rather than logger because these scripts run at the error log level.
+  if (!options.force && !options.guildId && await isRegistrationCurrent(statePath, payloadHash)) {
+    console.log(`Slash commands unchanged since the last registration (${body.length} commands); skipping. Use --force to register anyway.`);
+    return;
+  }
+
   logger.info(`Preparing command registration for ${runtime.deploymentMode} mode`);
 
   if (isProd) {
@@ -84,6 +107,12 @@ async function registerCommands() {
     }
     logger.info(`Slash commands refreshed across ${targetGuildIds.length} guild(s)`);
   }
+
+  // A single-guild run only covers that guild, so it must not mark everything as registered.
+  if (!options.guildId) {
+    await writeRegistrationState(statePath, payloadHash, body.length);
+  }
+  console.log(`Registered ${body.length} slash commands.`);
 }
 
 async function resolveTargetGuildIds(loginToken: string, explicitGuildId?: string): Promise<string[]> {

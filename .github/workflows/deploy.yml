@@ -3,12 +3,18 @@ name: Deploy Bot
 on:
   push:
     branches: [main]
+    # Docs-only pushes change nothing that runs.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   repository_dispatch:
     types: [platform-updated]
 
 concurrency:
   group: trackerbot-deploy-${{ github.event_name == 'repository_dispatch' && 'dispatch' || github.ref_name }}
-  cancel-in-progress: true
+  # Queue rather than cancel: killing a deploy halfway (mid-install, mid-restart) is worse than
+  # waiting. A newer push waits, and only the newest waiting run is kept.
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -26,6 +32,7 @@ jobs:
     runs-on: self-hosted
     if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     environment: production
+    timeout-minutes: 30
     env:
       NODE_AUTH_TOKEN: ${{ github.token }}
     defaults:
@@ -35,7 +42,9 @@ jobs:
     steps:
       - name: Fast-forward the production checkout
         # ff-only: a checkout with diverging local commits fails loudly instead of being merged.
-        run: git pull --ff-only origin main
+        run: |
+          git pull --ff-only origin main
+          git log -1 --format="Deploying %h %s"
 
       - name: Resolve deployment metadata
         shell: node {0}
@@ -88,11 +97,17 @@ jobs:
         run: pnpm run test:run
 
       - name: Register slash commands
+        # Skips itself (in about a second) when the command definitions are unchanged since the
+        # last successful registration; only a real change pays for the per-server work.
         run: pnpm run deploy:commands
 
       - name: Activate bot service
         # activate compiles dist/ in place, then start-or-restarts pm2 from ecosystem.config.cjs.
         run: pnpm run deploy:activate
+
+      - name: Verify the bot stays up
+        # Fails the job (with the error log tail) if the new build crash-loops or drops offline.
+        run: pnpm run deploy:verify
 
       - name: Commit platform dependency bump
         if: github.event_name == 'repository_dispatch'
