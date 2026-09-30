@@ -74,13 +74,19 @@ function writeEnvFile() {
   writeFileSync(envFilePath, `${lines.join('\n')}\n`, 'utf8')
 }
 
+/**
+ * A restart only picks up new code if dist/ was rebuilt first, and `pm2 restart --update-env`
+ * does not re-read ecosystem.config.cjs, so changes there (e.g. UV_THREADPOOL_SIZE) never
+ * applied. A running bot once kept a weeks-old build in memory after a "deploy".
+ * DEPLOY_SKIP_BUILD=true skips the rebuild for callers that just ran it.
+ */
 function activateService() {
-  try {
-    execSync(`pm2 describe ${serviceName}`, { stdio: 'ignore', env: process.env })
-    run(`pm2 restart ${serviceName} --update-env`)
-  } catch {
-    run('pm2 start ecosystem.config.cjs --env production')
+  if (getEnv('DEPLOY_SKIP_BUILD') !== 'true') {
+    // In-place compile rather than `build` (which rimrafs dist first): the running bot
+    // lazy-loads some modules and must not find dist/ missing mid-deploy.
+    run('pnpm run build:refresh')
   }
+  run(`pm2 startOrRestart ecosystem.config.cjs --only ${serviceName} --env production --update-env`)
 }
 
 function updatePlatformDependency() {

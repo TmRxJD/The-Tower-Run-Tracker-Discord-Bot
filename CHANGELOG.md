@@ -22,3 +22,7 @@
   (`BOT_LOG_THROTTLE_PER_MINUTE`, 0 disables).
 - Gateway disconnect/reconnect/resume/error events are logged.
 - PM2 config sets `UV_THREADPOOL_SIZE=16`.
+
+### Deploy
+- `deploy:activate` now rebuilds `dist/` (in place) and runs `pm2 startOrRestart ecosystem.config.cjs` so new code and ecosystem env
+  changes take effect; a plain `pm2 restart --update-env` did neither. `DEPLOY_SKIP_BUILD=true` skips the rebuild.

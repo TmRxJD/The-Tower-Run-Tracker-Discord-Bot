@@ -26,6 +26,7 @@
     "dev:app": "cross-env NODE_OPTIONS=--inspect=localhost:5176 DEPLOYMENT_MODE=dev NODE_ENV=development ts-node-dev --respawn --transpile-only src/bot.ts",
     "dev:managed": "node scripts/dev-managed.mjs",
     "build": "rimraf dist && tsc -p tsconfig.build.json",
+    "build:refresh": "tsc -p tsconfig.build.json",
     "start": "cross-env DEPLOYMENT_MODE=prod NODE_ENV=production node dist/bot.js",
     "deploy:install": "pnpm install --frozen-lockfile",
     "deploy:preflight": "node scripts/deploy.mjs preflight",
