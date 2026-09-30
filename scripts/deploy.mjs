@@ -131,8 +131,15 @@ function runIsolatedTests() {
 
 function readPm2Service() {
   const raw = execSync('pm2 jlist', { encoding: 'utf8', env: process.env, maxBuffer: 64 * 1024 * 1024 })
-  // pm2 can print a banner before the JSON when its daemon has to start.
-  const list = JSON.parse(raw.slice(raw.indexOf('[')))
+  // pm2 prints banners ahead of the JSON ("[PM2] ..." when its daemon starts or a locally installed
+  // pm2 is newer than the running daemon), so the array cannot be found by its first '['. The
+  // JSON array is the one that opens a line with an object or closes immediately.
+  const start = raw.search(/^\[\s*(\{|\])/m)
+  if (start < 0) {
+    throw new Error(`Could not find the JSON list in pm2 jlist output:
+${raw.slice(0, 600)}`)
+  }
+  const list = JSON.parse(raw.slice(start))
   return list.find((entry) => entry.name === serviceName)
 }
 
