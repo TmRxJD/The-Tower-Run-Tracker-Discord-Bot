@@ -211,10 +211,7 @@ export async function quarantineBotRxStorage(reason: string): Promise<string | n
  * idempotent and a directory that is already gone is ignored.
  */
 export function purgeQuarantinedBotRxStorage(): void {
-  if (resolveBotRxStorageMode() !== 'localstorage') {
-    return;
-  }
-
+  // Runs in every mode: leftovers from a previous localstorage run still need removing.
   const directory = resolveBotRxStorageDirectory();
   const parent = dirname(directory);
   const prefix = `${basename(directory)}${QUARANTINE_MARKER}`;
