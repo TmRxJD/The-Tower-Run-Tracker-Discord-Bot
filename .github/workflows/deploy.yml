@@ -94,7 +94,9 @@ jobs:
         run: pnpm run lint
 
       - name: Test
-        run: pnpm run test:run
+        # From an isolated copy of the committed files: the bots resolve their data relative to the
+        # working directory, so running in place would let tests read and write production state.
+        run: pnpm run deploy:test
 
       - name: Register slash commands
         # Skips itself (in about a second) when the command definitions are unchanged since the

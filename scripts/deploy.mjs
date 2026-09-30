@@ -2,7 +2,9 @@
 /* global fetch */
 
 import { execSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import process from 'node:process'
 
 const action = process.argv[2]
@@ -87,6 +89,44 @@ function activateService() {
     run('pnpm run build:refresh')
   }
   run(`pm2 startOrRestart ecosystem.config.cjs --only ${serviceName} --env production --update-env`)
+}
+
+/**
+ * Runs the test suite from a throwaway checkout instead of this folder.
+ *
+ * Every bot resolves its data (.data, data/, sqlite files) relative to the working directory,
+ * and this folder is the live bot's. Tests that touch storage would otherwise read and write
+ * production state; one did, and drained a real user's pending cloud write through a mock.
+ * A detached git worktree is a clean checkout of exactly what is committed (no .env, no data),
+ * node_modules is linked in, and vitest is invoked directly so no pretest hook can touch it.
+ */
+function runIsolatedTests() {
+  const scratch = mkdtempSync(join(tmpdir(), `${serviceName}-ci-`))
+  const checkout = join(scratch, 'repo')
+  const linkedModules = join(checkout, 'node_modules')
+  try {
+    run(`git worktree add --detach "${checkout}" HEAD`)
+    symlinkSync(resolve('node_modules'), linkedModules, 'junction')
+    run('node node_modules/vitest/vitest.mjs run', { cwd: checkout })
+  } finally {
+    try {
+      // Remove the link itself first so deleting the checkout can never follow it into node_modules.
+      rmdirSync(linkedModules)
+    } catch {
+      // Not created, or already gone.
+    }
+    try {
+      run(`git worktree remove --force "${checkout}"`, { stdio: 'ignore' })
+    } catch {
+      // Fall through to deleting the directory and pruning the stale registration.
+    }
+    rmSync(scratch, { recursive: true, force: true })
+    try {
+      run('git worktree prune', { stdio: 'ignore' })
+    } catch {
+      // Best effort.
+    }
+  }
 }
 
 function readPm2Service() {
@@ -229,6 +269,9 @@ switch (action) {
     break
   case 'activate':
     activateService()
+    break
+  case 'test':
+    runIsolatedTests()
     break
   case 'verify':
     await verifyService()

@@ -44,6 +44,7 @@
     "deploy:build": "pnpm run build",
     "deploy:commands": "pnpm run register:commands:prod",
     "deploy:activate": "node scripts/deploy.mjs activate",
+    "deploy:test": "node scripts/deploy.mjs test",
     "deploy:verify": "node scripts/deploy.mjs verify",
     "deploy:start": "pnpm run deploy:activate",
     "deploy:stop": "pnpm run pm2:stop",
