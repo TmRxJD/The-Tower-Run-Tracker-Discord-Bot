@@ -14,6 +14,13 @@ permissions:
   contents: write
   packages: read
 
+# The bot runs from a long-lived checkout on the runner host: its .env.prod, .data (sqlite KV,
+# pending runs) and node_modules live there, and pm2 starts it with that folder as its cwd.
+# Building in the runner's throwaway _work checkout would leave the bot serving the old code
+# (or, worse, restart it from a folder with none of that state), so every step runs in place.
+env:
+  DEPLOY_DIR: C:/bots/trackerbot/the-tower-run-tracker-discord-bot
+
 jobs:
   deploy:
     runs-on: self-hosted
@@ -21,24 +28,14 @@ jobs:
     environment: production
     env:
       NODE_AUTH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        working-directory: C:/bots/trackerbot/the-tower-run-tracker-discord-bot
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.8.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.20.0
-          cache: pnpm
-          registry-url: https://npm.pkg.github.com
-          scope: '@tmrxjd'
-          always-auth: true
+      - name: Fast-forward the production checkout
+        # ff-only: a checkout with diverging local commits fails loudly instead of being merged.
+        run: git pull --ff-only origin main
 
       - name: Resolve deployment metadata
         shell: node {0}
@@ -71,34 +68,30 @@ jobs:
         run: |
           const fs = require('fs')
           const path = require('path')
-          let envRoot
-          if (process.env.TRACKERBOT_ENV_DIR) {
-            if (!fs.existsSync(process.env.TRACKERBOT_ENV_DIR)) {
-              console.error(`TRACKERBOT_ENV_DIR does not exist: ${process.env.TRACKERBOT_ENV_DIR}`)
-              process.exit(1)
-            }
-            envRoot = fs.realpathSync(process.env.TRACKERBOT_ENV_DIR)
-          } else {
-            envRoot = process.cwd()
-          }
-
-          const expected = ['.env.prod.local', '.env.prod', '.env.local', '.env'].map(f => path.join(envRoot, f))
+          const expected = ['.env.prod.local', '.env.prod', '.env.local', '.env'].map(f => path.join(process.cwd(), f))
           const found = expected.filter(f => fs.existsSync(f))
           if (found.length > 0) {
-            console.log(`Using existing local env files from the runner: ${found.join(', ')}`)
+            console.log(`Using existing local env files: ${found.join(', ')}`)
             process.exit(0)
           }
-
-          console.error(`No local env file found on the runner. Expected one of: ${expected.join(', ')}`)
+          console.error(`No env file found. Expected one of: ${expected.join(', ')}`)
           process.exit(1)
 
-      - name: Build service
-        run: pnpm run deploy:build
+      # A broken build must never reach the running bot; these run before anything is restarted.
+      - name: Type-check
+        run: pnpm run type-check
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Test
+        run: pnpm run test:run
 
       - name: Register slash commands
         run: pnpm run deploy:commands
 
       - name: Activate bot service
+        # activate compiles dist/ in place, then start-or-restarts pm2 from ecosystem.config.cjs.
         run: pnpm run deploy:activate
 
       - name: Commit platform dependency bump
@@ -113,4 +106,7 @@ jobs:
           run('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"')
           run('git add package.json pnpm-lock.yaml')
           run(`git commit -m "chore: bump @tmrxjd/platform to ${process.env.PLATFORM_VERSION}"`)
-          run('git push')
+          // No checkout step ran, so there are no persisted credentials: authenticate this one push
+          // with the job token the same way actions/checkout does.
+          const basic = Buffer.from(`x-access-token:${process.env.NODE_AUTH_TOKEN}`).toString('base64')
+          run(`git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${basic}" push origin HEAD:main`)
