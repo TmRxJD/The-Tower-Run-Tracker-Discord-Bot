@@ -21,6 +21,22 @@ import type { TrackerRunPartDocument } from '@tmrxjd/platform/tools';
  */
 export const RXDB_UPSERT_CHUNK_SIZE = 25;
 
+type RunWriteListener = (scopeUserId: string) => void;
+let runWriteListener: RunWriteListener | null = null;
+
+/** Notified after a user's runs are written or removed (used to back up local-only users). */
+export function setBotRunWriteListener(listener: RunWriteListener | null): void {
+  runWriteListener = listener;
+}
+
+function notifyRunWrite(scopeUserId: string): void {
+  try {
+    runWriteListener?.(scopeUserId);
+  } catch {
+    // A listener must never fail the write it observes.
+  }
+}
+
 function normalizeScopeUserId(scopeUserId: string): string {
   const normalized = scopeUserId.trim();
   if (!normalized) {
@@ -69,6 +85,7 @@ export async function batchUpsertRunPartsToBotRxDB(
       db.run_part_2.bulkUpsert(stampedPart2.slice(first, end)),
     ]);
   });
+  notifyRunWrite(scopeUserId);
 }
 
 export async function upsertMergedRunsToBotRxDB(
@@ -227,5 +244,6 @@ export async function removeRunFromBotRxDB(
     db.run_part_2.findOne({ selector }).remove().catch(() => null),
   ]);
 
+  notifyRunWrite(scopeUserId);
   return true;
 }

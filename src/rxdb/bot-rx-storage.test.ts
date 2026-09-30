@@ -48,6 +48,14 @@ describe('bot RxDB storage quarantine', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('defaults to the memory engine and keeps localstorage opt-in', async () => {
+    delete process.env.TRACKER_BOT_RXDB_STORAGE;
+    expect((await loadModule()).botRxStorageNeedsQuarantine()).toBe(false);
+
+    process.env.TRACKER_BOT_RXDB_STORAGE = 'localstorage';
+    expect((await loadModule()).botRxStorageNeedsQuarantine()).toBe(true);
+  });
+
   it('only applies to the localstorage engine', async () => {
     process.env.TRACKER_BOT_RXDB_STORAGE = 'memory';
     const storage = await loadModule();

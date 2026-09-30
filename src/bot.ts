@@ -15,6 +15,7 @@ import { createPersistence } from './persistence';
 import { assertTrackerKvPersistentStorage, getTrackerKvStorageStatus } from './services/idb';
 import { registerBotRunInboundChangeHandler } from './rxdb/reactive-sync';
 import { purgeQuarantinedBotRxStorage } from './rxdb/bot-rx-storage';
+import { flushLocalOnlyRunBackups, registerLocalOnlyRunBackup, restoreLocalOnlyRuns } from './rxdb/local-only-backup';
 import { cleanupStalePendingRuns } from './features/track/pending-run-store';
 import { stopTrackerRunBackgroundSyncScheduler } from './features/track/run-background-sync-scheduler';
 
@@ -48,6 +49,7 @@ function registerProcessHandlers(context: ShutdownContext): void {
 
     stopEventLoopLagMonitor();
     stopTrackerRunBackgroundSyncScheduler();
+    await flushLocalOnlyRunBackups().catch(() => null);
     await Promise.resolve(context.getClient()?.destroy()).catch(() => null);
     await context.releaseLocks().catch(() => null);
     process.exit(exitCode);
@@ -90,6 +92,9 @@ async function bootstrap() {
     const kvStatus = await getTrackerKvStorageStatus();
     logger.info('Tracker KV storage initialized', kvStatus);
     await cleanupStalePendingRuns();
+    // The memory cache starts empty; cloud-sync-off users have no cloud copy to rebuild from.
+    registerLocalOnlyRunBackup();
+    await restoreLocalOnlyRuns();
 
     client = new TrackerBotClient(
       {

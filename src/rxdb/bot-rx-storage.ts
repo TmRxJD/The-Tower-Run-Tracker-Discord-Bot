@@ -21,7 +21,13 @@ function resolveBotRxStorageMode(): BotRxStorageMode {
   if (fromEnv === 'memory') {
     return 'memory';
   }
-  return 'localstorage';
+  if (fromEnv === 'localstorage') {
+    return 'localstorage';
+  }
+  // The cache mirrors Appwrite, so it is rebuilt after a restart. The localstorage engine
+  // blocks the event loop for seconds per bulk write (7.2s for 1,359 runs, versus 134ms in
+  // memory) and is opt-in for that reason. Cloud-sync-off users are backed up separately.
+  return 'memory';
 }
 
 function resolveBotRxStorageDirectory(): string {

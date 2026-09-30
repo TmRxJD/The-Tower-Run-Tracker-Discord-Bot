@@ -205,6 +205,22 @@ export async function setTrackerKv(key: string, value: unknown): Promise<void> {
   }
 }
 
+/** Keys starting with `prefix`. Used to find per-user records without a user list. */
+export async function listTrackerKvKeys(prefix: string): Promise<string[]> {
+  const db = await getTrackerBotDb();
+  if (!db) {
+    return [...inMemoryKv.keys()].filter((key) => key.startsWith(prefix));
+  }
+
+  // substr() rather than LIKE so '_' and '%' inside the prefix are matched literally.
+  const rows = await allSqlRows<{ key: string }>(
+    db,
+    'SELECT key FROM kv WHERE substr(key, 1, ?) = ?',
+    [prefix.length, prefix],
+  );
+  return rows.map((row) => row.key);
+}
+
 export async function getTrackerKvStorageStatus(): Promise<TrackerKvStorageStatus> {
   const db = await getTrackerBotDb();
   return {
