@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { awaitOwnedModalSubmit, createOwnedModalFilter } from './interaction-session';
+import { awaitOwnedModalSubmit, createOwnedModalFilter, isModalSubmitTimeout } from './interaction-session';
 
 describe('interaction session helpers', () => {
   it('creates an owned modal filter bound to custom id and user id', () => {
@@ -24,4 +24,11 @@ describe('interaction session helpers', () => {
     expect(awaitModalSubmit).toHaveBeenCalledOnce();
     expect(result).toBe(submitted);
   });
+});
+it('recognizes only the normal Discord modal collector timeout', () => {
+  const timeout = Object.assign(new Error('Collector received no interactions before ending with reason: time'), { code: 'InteractionCollectorError' });
+  expect(isModalSubmitTimeout(timeout)).toBe(true);
+  expect(isModalSubmitTimeout(new Error('NETWORK TIMEOUT'))).toBe(false);
+  expect(isModalSubmitTimeout(Object.assign(new Error('Collector received no interactions before ending with reason: messageDelete'), { code: 'InteractionCollectorError' }))).toBe(false);
+  expect(isModalSubmitTimeout(null)).toBe(false);
 });

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01
+
+### Fixed
+- Treat abandoned add-run modals as normal expiry while retaining unexpected errors.
+- Add a read-only cloud connectivity probe and one startup/recovery reconciliation receipt for operational verification.
+
 ## 2026-09-29
 
 ### Fixed

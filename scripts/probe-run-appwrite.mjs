@@ -31,6 +31,19 @@ if (!ENDPOINT || !PROJECT_ID || !API_KEY) {
   process.exit(1);
 }
 
+// Reusable read-only connectivity check; emits no documents or credentials.
+if (process.argv.includes('--health-only')) {
+  const healthClient = new Client().setEndpoint(ENDPOINT).setProject(PROJECT_ID).setKey(API_KEY);
+  const started = Date.now();
+  const deadline = setTimeout(() => { console.error('Cloud read timed out after 20s'); process.exit(1); }, 20_000);
+  try {
+    await new Databases(healthClient).listDocuments(RUNS_DB, RUNS_COL, [Query.limit(1), Query.select(['$id'])]);
+    console.log(JSON.stringify({ cloudReadSucceeded: true, elapsedMs: Date.now() - started, at: new Date().toISOString() }));
+  } catch { console.error('Cloud read failed'); process.exitCode = 1; }
+  clearTimeout(deadline);
+  process.exit(process.exitCode ?? 0);
+}
+
 const TARGET_RUN_ID  = '6a107f63000053f12bed';
 const DISCORD_USER_ID = '371914184822095873';
 

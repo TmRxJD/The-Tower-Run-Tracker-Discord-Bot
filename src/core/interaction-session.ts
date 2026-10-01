@@ -19,3 +19,8 @@ export async function awaitOwnedModalSubmit(
     time,
   });
 }
+export function isModalSubmitTimeout(error: unknown): boolean {
+  return error instanceof Error
+    && 'code' in error && error.code === 'InteractionCollectorError'
+    && error.message === 'Collector received no interactions before ending with reason: time';
+}

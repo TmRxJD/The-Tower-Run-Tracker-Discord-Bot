@@ -33,6 +33,7 @@ import { getAppConfig } from '../../config';
 const RUNS_DATABASE_ID = 'run-tracker-data';
 const RUN_DOCUMENTS_PAGE_SIZE = 500;
 const IMPORT_BATCH = 100;
+let needsReconciliationHealthReport = true;
 
 type RunRecord = Record<string, unknown>;
 
@@ -272,6 +273,7 @@ export async function runBackgroundAuthoritySync(userId: string): Promise<Backgr
     paginationIncomplete: manifest.paginationIncomplete,
   });
 
+  if (!manifest.requestSucceeded) needsReconciliationHealthReport = true;
   if (!authority.isAuthoritative) {
     logger.warn('[authority-sync] cloud authority false — skipping local deletes', {
       userId,
@@ -315,6 +317,11 @@ export async function runBackgroundAuthoritySync(userId: string): Promise<Backgr
     invalidateBotLocalRunsCache(userId);
   }
 
+  if (needsReconciliationHealthReport) {
+    // One startup/recovery receipt; no user identifiers or run data.
+    logger.warn('[authority-sync] verified reconciliation health check', { cloudCount: manifest.cloudIds.length, deleted, imported });
+    needsReconciliationHealthReport = false;
+  }
   logger.info('[authority-sync] verified reconcile complete', {
     userId,
     deleted,

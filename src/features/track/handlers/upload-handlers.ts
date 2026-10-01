@@ -14,7 +14,7 @@ import {
   TextInputBuilder,
   TextInputStyle
 } from 'discord.js';
-import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
+import { awaitOwnedModalSubmit, isModalSubmitTimeout } from '../../../core/interaction-session';
 import { handleError, logError } from './error-handlers';
 import { logger } from '../../../core/logger';
 import {
@@ -1439,7 +1439,7 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
     await submitted.editReply({ content: uploadUi.providePasteOrScreenshot, embeds: [], components: [] }).catch(() => {});
     return;
   } catch (err: unknown) {
-    if (String(err || '').includes('TIME')) {
+    if (isModalSubmitTimeout(err)) {
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferUpdate().catch(() => {});
       }
