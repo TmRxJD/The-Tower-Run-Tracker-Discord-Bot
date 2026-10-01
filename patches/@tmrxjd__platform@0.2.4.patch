@@ -1,0 +1,131 @@
+diff --git a/dist/tools/tracker-run-delta.d.ts b/dist/tools/tracker-run-delta.d.ts
+index c66e5e4d93ba03935bb4de02e489412d638e5d10..0a5d7ce72f7a3611b76b4d241959f2cc64bf8d26 100644
+--- a/dist/tools/tracker-run-delta.d.ts
++++ b/dist/tools/tracker-run-delta.d.ts
+@@ -37,7 +37,7 @@ export type TrackerRunDeltaResult = {
+  * For 'last' mode: the most recent run before the current one.
+  * The `currentRunId` is excluded from the reference pool.
+  */
+-export declare function computeTrackerRunDeltaBaseline(runs: Record<string, unknown>[], runType: string, mode: RunDeltaMode, currentRunId?: string): TrackerRunDeltaResult;
++export declare function computeTrackerRunDeltaBaseline(runs: Record<string, unknown>[], runType: string, mode: RunDeltaMode, currentRunId?: string, orbsCurrentRun?: Record<string, unknown>): TrackerRunDeltaResult;
+ export type TrackerRunDeltaCellEntry = {
+     sign: DeltaSign;
+     annotation: string;
+diff --git a/dist/tools/tracker-run-delta.js b/dist/tools/tracker-run-delta.js
+index 542df7d7a8bae224ea656a64fa38fcf2e212091c..437e9124d2effd28e2292626b708f92e76831d00 100644
+--- a/dist/tools/tracker-run-delta.js
++++ b/dist/tools/tracker-run-delta.js
+@@ -192,7 +192,16 @@ const COVERAGE_DELTA_BASIS_SOURCES = {
+  * Which battle-report row a run's coverage percentage came from, or null for stats that
+  * have only ever had one source.
+  */
++function correctedOrbsCount(run) {
++    return parseNumericStat(run.killsWithOrbs, true) ?? parseNumericStat(run.rawParseFields?.killsWithOrbs, true);
++}
++function correctedOrbsPercentage(run) {
++    const count = correctedOrbsCount(run);
++    const total = parseNumericStat(run.totalEnemies) ?? parseNumericStat(run.rawParseFields?.totalEnemies);
++    return count !== null && count >= 0 && total !== null && total > 0 ? count / total * 100 : null;
++}
+ function resolveCoverageDeltaBasis(run, key) {
++    if (key === 'hitByOrbsPercentage' && correctedOrbsPercentage(run) !== null) return 'kills';
+     const sources = COVERAGE_DELTA_BASIS_SOURCES[key];
+     if (!sources)
+         return null;
+@@ -222,16 +231,16 @@ function parseDurationToHours(run) {
+         return (parts[0] * 60 + parts[1]) / 3600;
+     return null;
+ }
+-function parseNumericStat(value) {
++function parseNumericStat(value, allowZero = false) {
+     const raw = String(value ?? '').trim();
+-    if (!raw || raw === 'N/A' || raw === '0')
++    if (!raw || raw === 'N/A' || (!allowZero && raw === '0'))
+         return null;
+     const normalized = (0, formatting_1.normalizeNumericValue)(raw);
+     if (!normalized)
+         return null;
+     const { value: parsed, unit } = (0, formatting_1.parseValueWithUnit)(normalized);
+     const num = (0, formatting_1.convertToNumericValue)(parsed, unit);
+-    return Number.isFinite(num) && num > 0 ? num : null;
++    return Number.isFinite(num) && (num > 0 || (allowZero && num === 0)) ? num : null;
+ }
+ function resolveRunTimestamp(run) {
+     const dateStr = String(run.date ?? run.runDate ?? '').trim();
+@@ -499,6 +508,8 @@ function readStatFromRun(run, key) {
+             return raw !== null ? (raw / tot) * 100 : null;
+         }
+         case 'hitByOrbsPercentage': {
++            const corrected = correctedOrbsPercentage(run);
++            if (corrected !== null) return corrected;
+             const stored = parseNumericStat(run.hitByOrbsPercentage);
+             if (stored !== null)
+                 return stored;
+@@ -547,7 +558,7 @@ function readStatFromRun(run, key) {
+  * For 'last' mode: the most recent run before the current one.
+  * The `currentRunId` is excluded from the reference pool.
+  */
+-function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
++function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId, orbsCurrentRun) {
+     if (mode === 'disabled') {
+         return { mode, baseline: {}, comparisonLabel: '' };
+     }
+@@ -588,7 +599,14 @@ function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
+     if (referenceRuns.length === 0) {
+         return { mode, baseline: {}, comparisonLabel: mode === '7day' ? 'vs 7-Day Avg' : 'vs Last Run' };
+     }
+-    const { baseline, coverageBasis } = buildTrackerRunDeltaBaselineWithBasis(referenceRuns);
++    // The optional selected run changes only Orbs references, preserving all other metric pools.
++    const orbsCandidates = orbsCurrentRun && mode === 'last'
++        ? sorted.filter(r => resolveRunTimestamp(r) < resolveRunTimestamp(orbsCurrentRun)).slice(0, 1)
++        : referenceRuns;
++    const orbsReferences = mode === 'last' ? orbsCandidates : orbsCandidates.filter(r =>
++        (!orbsCurrentRun || !resolveRunId(orbsCurrentRun) || resolveRunId(r) !== resolveRunId(orbsCurrentRun)) &&
++        resolveRunTimestamp(r) >= now - (mode === '1day' ? ONE_DAY_MS : mode === '3day' ? THREE_DAYS_MS : SEVEN_DAYS_MS));
++    const { baseline, coverageBasis } = buildTrackerRunDeltaBaselineWithBasis(referenceRuns, orbsReferences);
+     return {
+         mode,
+         baseline,
+@@ -596,12 +614,13 @@ function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
+         comparisonLabel: mode === '1day' ? 'vs 1-Day Avg' : mode === '3day' ? 'vs 3-Day Avg' : mode === '7day' ? 'vs 7-Day Avg' : 'vs Last Run',
+     };
+ }
+-function buildTrackerRunDeltaBaselineWithBasis(referenceRuns) {
++function buildTrackerRunDeltaBaselineWithBasis(referenceRuns, orbsReferences = referenceRuns) {
+     const baseline = {};
+     const coverageBasis = {};
+     for (const key of exports.TRACKER_DELTA_STAT_KEYS) {
+-        const contributing = referenceRuns
+-            .map(r => ({ run: r, value: readStatFromRun(r, key) }))
++        const selected = key === 'hitByOrbsPercentage' ? orbsReferences : referenceRuns;
++        const contributing = selected
++            .map(r => ({ run: r, value: key === 'hitByOrbsPercentage' ? correctedOrbsPercentage(r) : readStatFromRun(r, key) }))
+             .filter((entry) => entry.value !== null);
+         if (contributing.length === 0)
+             continue;
+@@ -650,7 +669,9 @@ function buildRollingBaselinesByType(runs, mode) {
+         const referenceRuns = resolveRollingReferenceRuns(sorted, mode);
+         if (referenceRuns.length === 0)
+             continue;
+-        baselines.set(typeKey, buildTrackerRunDeltaBaselineWithBasis(referenceRuns));
++        const windowMs = mode === '1day' ? ONE_DAY_MS : mode === '3day' ? THREE_DAYS_MS : SEVEN_DAYS_MS;
++        const orbsReferences = referenceRuns.filter(r => resolveRunTimestamp(r) >= Date.now() - windowMs);
++        baselines.set(typeKey, buildTrackerRunDeltaBaselineWithBasis(referenceRuns, orbsReferences));
+     }
+     return baselines;
+ }
+@@ -750,6 +771,14 @@ function formatDeltaAnnotation(delta) {
+  * Compute and format the delta annotation for a given stat key using a run and a baseline.
+  */
+ function getDeltaAnnotationForStat(run, key, baseline, coverageBasis) {
++    if (key === 'hitByOrbsPercentage') {
++        const current = correctedOrbsPercentage(run);
++        const reference = baseline[key];
++        if (current === null || coverageBasis?.[key] !== 'kills' || !Number.isFinite(reference))
++            return '(comparison unavailable)';
++        if (reference === 0) return '(comparison unavailable: zero baseline)';
++        return formatDeltaAnnotation(computeStatDelta(current, reference));
++    }
+     if (coverageBasis) {
+         const referenceBasis = coverageBasis[key];
+         const currentBasis = resolveCoverageDeltaBasis(run, key);

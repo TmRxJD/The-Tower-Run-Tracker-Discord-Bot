@@ -190,7 +190,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       const runType = String(run.type ?? 'Farming').trim() || 'Farming';
 
       const deltaResult = sharedSettings.runDeltaMode !== 'disabled'
-        ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode)
+        ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode, undefined, run)
         : undefined;
 
       const embedUser = buildEmbedUserFromInteraction(interaction);

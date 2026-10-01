@@ -3,6 +3,7 @@
 ## 2026-10-01
 
 ### Fixed
+- Restore corrected Orbs comparisons using compatible counts within rolling windows; keep Last Run tied to the actual prior run. Show unavailable/zero-baseline labels, reuse explicit raw parsed counts without migration, and preserve zero coverage. Shared logic is pinned with a tracked pnpm patch.
 - Treat abandoned add-run modals as normal expiry while retaining unexpected errors.
 - Add a read-only cloud connectivity probe and one startup/recovery reconciliation receipt for operational verification.
 

@@ -201,6 +201,6 @@ describe('upload-helpers single-line paste parsing', () => {
       killsWithOrbs: '0',
     });
 
-    expect(description).not.toContain('Orbs:');
+    expect(description).toContain('Orbs: 0%');
   });
 });

@@ -887,7 +887,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
     const lastRunType = typeof summary?.lastRun?.type === 'string' && summary.lastRun.type.trim() ? summary.lastRun.type : 'Farming';
     const analyticsRuns = summary.recentRunsForAnalytics ?? [];
     const deltaResult = deltaMode !== 'disabled' && analyticsRuns.length > 0
-      ? computeTrackerRunDeltaBaseline(analyticsRuns, lastRunType, deltaMode) ?? undefined
+      ? computeTrackerRunDeltaBaseline(analyticsRuns, lastRunType, deltaMode, undefined, summary?.lastRun ?? undefined) ?? undefined
       : undefined;
     const embed = createInitialEmbed({
       mode: resolvedMode,

@@ -634,7 +634,7 @@ export async function handleTrackMenuShareRunsConfirm(interaction: TrackMenuInte
       const runTypeForDelta = String(run.type ?? 'Farming').trim() || 'Farming';
       const deltaMode = sharedSettings?.runDeltaMode ?? '7day';
       const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 1
-        ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode) ?? undefined
+        ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode, undefined, run) ?? undefined
         : undefined;
       embed = buildShareEmbed({
         user: buildEmbedUserFromInteraction(interaction),

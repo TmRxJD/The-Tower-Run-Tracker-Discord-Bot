@@ -65,7 +65,7 @@ export async function buildExpandedSharePayload(
 
   const sharedSettings = await getEffectiveUserSharedSettings(userId).catch(() => ({ runDeltaMode: 'disabled' as const }));
   const deltaResult = sharedSettings.runDeltaMode !== 'disabled' && allRuns.length > 1
-    ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode) ?? undefined
+    ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode, undefined, context.run) ?? undefined
     : undefined;
 
   const embed = buildShareEmbed({

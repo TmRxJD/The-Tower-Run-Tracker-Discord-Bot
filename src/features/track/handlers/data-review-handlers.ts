@@ -287,7 +287,7 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
     const runTypeForDelta = String(canonicalRunData.type ?? 'Farming').trim() || 'Farming';
     const allRunsArr = (allRunsSummary?.allRuns ?? []) as Record<string, unknown>[];
     const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 1
-      ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode) ?? undefined
+      ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode, undefined, { ...coverageSource, runId: resolvedRunId }) ?? undefined
       : undefined;
 
     const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts, hasScreenshot, screenshotUrl, deltaResult });

@@ -455,7 +455,9 @@ export function generateCoverageDescription(
   },
 ): string {
   if (!runData) return '';
-  const totalEnemies = parseNumberInput(String(runData['Total Enemies'] ?? runData.totalEnemies ?? 0));
+  const rawFields = runData.rawParseFields && typeof runData.rawParseFields === 'object'
+    ? runData.rawParseFields as Record<string, unknown> : {};
+  const totalEnemies = parseNumberInput(String(runData['Total Enemies'] ?? runData.totalEnemies ?? rawFields.totalEnemies ?? 0));
   const hasValidTotalEnemies = Number.isFinite(totalEnemies) && totalEnemies > 0;
   if (!hasValidTotalEnemies) return '';
 
@@ -478,7 +480,8 @@ export function generateCoverageDescription(
     const parsed = parseNumberInput(String(raw));
     return Number.isFinite(parsed) ? parsed : null;
   };
-  const orbsCoverage = getOptionalVal(runData.killsWithOrbs) ?? enemiesHitByOrbs;
+  const correctedOrbs = getOptionalVal(runData.killsWithOrbs) ?? getOptionalVal(rawFields.killsWithOrbs);
+  const orbsCoverage = correctedOrbs ?? enemiesHitByOrbs;
   const blackHoleCoverage = getOptionalVal(runData.killsWithBlackHole) ?? enemiesHitByBlackHole;
   const taggedByDeathWave = getVal(runData['Tagged by Death Wave'] ?? runData.taggedByDeathWave);
   const destroyedInSpotlight = getVal(runData['Destroyed in Spotlight'] ?? runData.destroyedInSpotlight);
@@ -507,7 +510,7 @@ export function generateCoverageDescription(
     { label: 'Black Hole',   value: toPct(blackHoleCoverage), block: '🟪', deltaKey: 'destroyedByBlackHolePercentage', metricKey: 'blackHole' },
     { label: 'Spotlight',    value: toPct(destroyedInSpotlight), block: '⬜', deltaKey: 'destroyedInSpotlightPercentage', metricKey: 'spotlight' },
     { label: 'Death Wave',   value: toPct(taggedByDeathWave), block: '🟥', deltaKey: 'taggedByDeathWavePercentage', metricKey: 'deathWave' },
-    { label: 'Orbs',         value: toPct(orbsCoverage), block: '🟪', deltaKey: 'hitByOrbsPercentage', metricKey: 'orbs' },
+    { label: 'Orbs',         value: correctedOrbs === 0 ? 0 : toPct(orbsCoverage), block: '🟪', deltaKey: 'hitByOrbsPercentage', metricKey: 'orbs' },
     { label: 'Golden Bot',   value: toPct(destroyedInGoldenBot), block: '🟨', deltaKey: 'destroyedInGoldenBotPercentage', metricKey: 'goldenBot' },
     { label: 'Amp Bot',      value: toPct(killsWithAmplifyBot), block: '🟦', deltaKey: 'killsWithAmplifyBotPercentage', metricKey: 'ampBot' },
     { label: 'Summoned',     value: toPct(summonedEnemies), block: '🟪', deltaKey: 'summonedEnemiesPercentage', metricKey: 'summoned' },
