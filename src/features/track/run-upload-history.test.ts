@@ -93,6 +93,83 @@ describe('upload history coordination', () => {
 });
 
 describe('bounded history waits', () => {
+  it('shares one cloud lookup between concurrent read-only callers and clears a rejected lookup for retry', async () => {
+    let finish!: (rows: Row[]) => void;
+    mocks.cloud.mockImplementation(() => new Promise<Row[]>(resolve => { finish = resolve; }));
+    const first = prepareBotRunUploadHistory('concurrent-read-owner', { readOnly: true });
+    const second = prepareBotRunUploadHistory('concurrent-read-owner', { readOnly: true });
+    await new Promise(resolve => setTimeout(resolve, 0)); expect(mocks.cloud).toHaveBeenCalledOnce();
+    finish(cloud(2)); const histories = await Promise.all([first, second]);
+    expect(await histories[0].getRuns()).toHaveLength(2); expect(await histories[1].getRuns()).toHaveLength(2);
+    mocks.cloud.mockRejectedValueOnce(new Error('fixture rejected'));
+    await expect(prepareBotRunUploadHistory('concurrent-read-owner', { readOnly: true })).rejects.toThrow('fixture rejected');
+    mocks.cloud.mockResolvedValue(cloud(3));
+    expect(await (await prepareBotRunUploadHistory('concurrent-read-owner', { readOnly: true })).getRuns()).toHaveLength(3);
+    expect(mocks.cloud).toHaveBeenCalledTimes(3); expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+  it('reads fresh upload/edit/delete data and queued edits without reusing completed cloud results', async () => {
+    const owner = 'fresh-share-owner';
+    mocks.cloud.mockResolvedValue(cloud(2));
+    expect(await (await prepareBotRunUploadHistory(owner, { readOnly: true })).getRuns()).toHaveLength(2);
+    mocks.cloud.mockResolvedValue(cloud(3));
+    local = [{ runId: 'run-0', localId: 'edited-local', totalCoins: '250', type: 'Milestone' }];
+    mocks.queue.mockResolvedValue([{ op: 'upsert', runId: 'run-0', localId: 'edited-local' }]);
+    const edited = await (await prepareBotRunUploadHistory(owner, { readOnly: true })).getRuns();
+    expect(edited).toHaveLength(3); expect(edited.find(row => row.runId === 'run-0')?.totalCoins).toBe('250');
+    expect(await getLocalRunSummary(owner, edited)).toEqual({ totalRuns: 3, runTypeCounts: { Farming: 2, Milestone: 1 } });
+    mocks.tombstones.mockResolvedValue(new Set(['run-1']));
+    const deleted = await (await prepareBotRunUploadHistory(owner, { readOnly: true })).getRuns();
+    expect(deleted).toHaveLength(2); expect(deleted.some(row => row.runId === 'run-1')).toBe(false);
+    expect(mocks.cloud).toHaveBeenCalledTimes(3); expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+  it('bounds unresolved users and retains no completed lookup after callers time out', async () => {
+    vi.useFakeTimers(); const finish: Array<(rows: Row[]) => void> = [];
+    mocks.cloud.mockImplementation(() => new Promise<Row[]>(resolve => finish.push(resolve)));
+    try {
+      const pending = Array.from({ length: 128 }, (_, i) => prepareBotRunUploadHistory(`capacity-${i}`, { readOnly: true }).catch(error => error));
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(prepareBotRunUploadHistory('capacity-overflow', { readOnly: true })).rejects.toThrow('busy');
+      expect(mocks.cloud).toHaveBeenCalledTimes(128);
+      await vi.advanceTimersByTimeAsync(45_001); await Promise.all(pending);
+      await expect(prepareBotRunUploadHistory('capacity-overflow', { readOnly: true })).rejects.toThrow('busy');
+      finish.forEach(resolve => resolve([])); await vi.advanceTimersByTimeAsync(0);
+      mocks.cloud.mockResolvedValue([]);
+      expect(await (await prepareBotRunUploadHistory('capacity-overflow', { readOnly: true })).getRuns()).toHaveLength(0);
+    } finally { finish.forEach(resolve => resolve([])); vi.useRealTimers(); }
+  });
+  it('coalesces retry reads while a timed-out cloud request remains active', async () => {
+    vi.useFakeTimers();
+    const finish: Array<(rows: Row[]) => void> = [];
+    mocks.cloud.mockImplementation(() => new Promise<Row[]>(resolve => finish.push(resolve)));
+    try {
+      const first = expect(withBotRunSubmissionLock('retry-regression', () => prepareBotRunUploadHistory('retry-regression'))).rejects.toThrow('timed out');
+      await vi.advanceTimersByTimeAsync(45_001); await first;
+      expect(finish).toHaveLength(1);
+      const second = expect(withBotRunSubmissionLock('retry-regression', () => prepareBotRunUploadHistory('retry-regression'))).rejects.toThrow('timed out');
+      await vi.advanceTimersByTimeAsync(45_001); await second;
+      expect(finish).toHaveLength(1); // Retrying joins the outstanding cloud operation.
+      finish.forEach(resolve => resolve(cloud(1359)));
+      await Promise.resolve(); await Promise.resolve();
+      expect(mocks.upsert).not.toHaveBeenCalled();
+    } finally { finish.forEach(resolve => resolve([])); vi.useRealTimers(); }
+  });
+  it('assembles 1359 authoritative share rows in memory without hydrating or writing the local cache', async () => {
+    mocks.cloud.mockResolvedValue(cloud(1359));
+    local = [{ runId: 'run-0', localId: 'selected-local', totalCoins: 'stale' }, { runId: 'stale', localId: 'stale' }, { localId: 'offline', type: 'Tournament' }];
+    const runs = await (await prepareBotRunUploadHistory('read-only-owner', { readOnly: true })).getRuns();
+    expect(runs).toHaveLength(1360); expect(runs.find(run => run.runId === 'run-0')?.localId).toBe('selected-local');
+    expect(runs.find(run => run.runId === 'run-0')?.totalCoins).toBe('100');
+    expect(runs.some(run => run.runId === 'stale')).toBe(false); expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(local).toHaveLength(3);
+  });
+  it('does not claim nothing was saved for a read-only share timeout', async () => {
+    vi.useFakeTimers(); let finish!: (rows: Row[]) => void;
+    mocks.cloud.mockImplementation(() => new Promise<Row[]>(resolve => { finish = resolve; }));
+    try {
+      const rejected = expect(prepareBotRunUploadHistory('share-timeout-owner', { readOnly: true })).rejects.toThrow('Run history lookup timed out. Please retry sharing.');
+      await vi.advanceTimersByTimeAsync(45_001); await rejected;
+    } finally { finish([]); await Promise.resolve(); vi.useRealTimers(); }
+  });
   it('timeout and rate-limit failures cannot ingest late/partial cloud history', async () => {
     vi.useFakeTimers();
     let resolveCloud!: (rows: Row[]) => void;

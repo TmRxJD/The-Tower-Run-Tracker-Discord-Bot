@@ -70,3 +70,11 @@
 ## 2026-10-02 — Private-safe share diagnostics
 - Preserve original share delivery exception codes; local diagnostics retain allowlisted exception type/code, repository-only stack locations, operation/stage and incident correlation. Public alerts retain category/reference only; share failure replies no longer echo arbitrary exception messages.
 - Historical 21:46:59 share root cause remains unknown; no real-share replay or historical data changes.
+
+## 2026-10-02 — Share history latency and retry amplification
+- Complete history loads query extended records in validated ID batches instead of one GET per run. Outstanding reads are coalesced across timeouts/retries with a bounded128-user pending map.
+- Share Last assembles authoritative complete rows/counts in memory instead of writing every historical run to the local cache. Read-only timeout text no longer claims nothing was saved. Minimal process-scoped failure timing metadata avoids raw user IDs/content.
+- Historical reported share failures are consistent with this recent path change; exact affected users and network/rate-limit causes remain unproved.
+
+- Cooperative45-second deadline checks stop further SDK pages after timeout; unresolved SDK calls remain coalesced until settled because the SDK has no per-request abort hook. Extended rows are checked against authoritative main owner/profile; tests cover fresh mutation counts and capacity cleanup.
+

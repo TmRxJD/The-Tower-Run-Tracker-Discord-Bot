@@ -3,6 +3,9 @@ import { loadLocalRunsFromBotRxDB, upsertMergedRunsIntoBotRxDB } from '../../rxd
 import { getLocalSettings, getQueueItems } from './local-run-store';
 import { getPermanentlyDeletedRunIds } from './run-deletion-tombstones';
 import { loadBotCompleteRunCloudDocuments } from './run-cloud-pair-client';
+import { createHmac, randomBytes } from 'node:crypto';
+import { logger } from '../../core/logger';
+const diagnosticSalt = randomBytes(32);
 
 // Bot interaction coordination only; parsing, hydration and reference semantics remain shared.
 const tails = new Map<string, Promise<void>>();
@@ -33,23 +36,69 @@ export async function withBotHistoryDeadline<T>(read: () => Promise<T>, timeoutM
   } finally { if (timer) clearTimeout(timer); }
 }
 
+// Keep unresolved reads coalesced even when an interaction's bounded wait ends.
+// Retrying must not amplify outstanding cloud work; completed results are not cached.
+const cloudReads = new Map<string, Promise<Record<string, unknown>[]>>();
+function readCompleteHistory(userId: string) {
+  const existing = cloudReads.get(userId);
+  if (existing) return existing;
+  if (cloudReads.size >= 128) return Promise.reject(new Error('Run history service is busy. Please retry.'));
+  const read = loadBotCompleteRunCloudDocuments(userId);
+  cloudReads.set(userId, read);
+  void read.then(() => { if (cloudReads.get(userId) === read) cloudReads.delete(userId); },
+    () => { if (cloudReads.get(userId) === read) cloudReads.delete(userId); });
+  return read;
+}
+
 function reference(run: Record<string, unknown>) {
   return buildTrackerResolvedRunReference({ runId: run.runId, fallbackRunId: run.id ?? run.$id, localId: run.localId });
 }
 
-export async function prepareBotRunUploadHistory(userId: string) {
+export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean } = {}) {
   const settings = await getLocalSettings(userId);
   if (settings.cloudSyncEnabled === false) {
     return { getRuns: () => loadLocalRunsFromBotRxDB(userId) };
   }
   // Never ingest partial results or normalize/write remote records on this read path.
-  const cloudRuns = await withBotHistoryDeadline(() => loadBotCompleteRunCloudDocuments(userId));
+  const started = Date.now();
+  const cloudRuns = await withBotHistoryDeadline(() => readCompleteHistory(userId), 45_000,
+    options.readOnly ? 'Run history lookup timed out. Please retry sharing.' : undefined).catch(error => {
+      logger.warn('Run history read failed', { operation: options.readOnly ? 'share-history' : 'upload-history',
+        scope: createHmac('sha256', diagnosticSalt).update(userId).digest('hex').slice(0, 16),
+        elapsedMs: Date.now() - started, pendingRead: cloudReads.has(userId) });
+      throw error;
+    });
   const tombstones = await getPermanentlyDeletedRunIds(userId);
   const active = cloudRuns.filter(run => !run.deletedAt && !tombstones.has(reference(run).runId ?? ''));
   const cloudIds = new Set(active.map(run => reference(run).runId).filter(Boolean));
   const queue = await getQueueItems(userId);
   const pendingRunIds = new Set(queue.filter(item => item.op === 'upsert').map(item => item.runId).filter(Boolean));
   const pendingLocalIds = new Set(queue.filter(item => item.op === 'upsert').map(item => item.localId).filter(Boolean));
+  if (options.readOnly) {
+    const local = await loadLocalRunsFromBotRxDB(userId);
+    const localByCloudId = new Map(local.map(run => [reference(run).runId, run]));
+    const rows: Record<string, unknown>[] = active.filter(run => !pendingRunIds.has(reference(run).runId ?? ''))
+      .map(run => {
+        const hydrated = hydrateTrackerCloudRun(run, userId, String(run.username ?? 'unknown'));
+        const existing = localByCloudId.get(reference(run).runId);
+        return { ...hydrated, ...(existing?.localId ? { localId: existing.localId } : {}) };
+      });
+    for (const run of local) {
+      const ref = reference(run);
+      if (run.deletedAt || (ref.runId && tombstones.has(ref.runId))) continue;
+      if (!ref.runId || pendingRunIds.has(ref.runId) || pendingLocalIds.has(run.localId)) {
+        const index = rows.findIndex(existing => reference(existing).runId && reference(existing).runId === ref.runId
+          || Boolean(existing.localId && existing.localId === run.localId));
+        if (index >= 0) rows[index] = run;
+        else rows.push(run);
+      }
+    }
+    const visibleIds = new Set(rows.map(row => reference(row).runId));
+    if (active.some(run => !visibleIds.has(reference(run).runId))) {
+      throw new Error('Run history could not be loaded completely. Please retry.');
+    }
+    return { getRuns: async () => rows };
+  }
   // Preserve queued local edits. Hydrate in small chunks to keep gateway acknowledgments responsive.
   const toHydrate = active.filter(run => !pendingRunIds.has(reference(run).runId ?? ''));
   for (let offset = 0; offset < toHydrate.length; offset += 25) {
