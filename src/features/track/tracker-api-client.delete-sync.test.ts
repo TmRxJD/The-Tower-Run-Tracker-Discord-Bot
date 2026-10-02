@@ -62,6 +62,7 @@ vi.mock('../../services/discord-identity-resolver', () => ({
 }));
 
 vi.mock('@tmrxjd/platform/node', () => ({
+  isAppwriteNotFoundError: (error: { code?: number }) => error?.code === 404,
   readTrackerImageText: vi.fn(),
   preprocessTrackerImageForOcr: vi.fn(),
   getDocumentOrNull: vi.fn(async () => null),
@@ -108,6 +109,7 @@ async function clearQueue(userId: string): Promise<void> {
 
 beforeEach(async () => {
   getDocumentMock.mockReset();
+  getDocumentMock.mockRejectedValue({ code: 404, type: 'document_not_found' });
   updateDocumentMock.mockReset();
   createDocumentMock.mockReset();
   deleteDocumentMock.mockReset();
@@ -129,6 +131,49 @@ beforeEach(async () => {
 });
 
 describe('tracker-api-client delete sync', () => {
+  it('retains the delete on an ownership-read failure without calling the delete writer', async () => {
+    const userId = 'fixture.delete-read-failure';
+    await clearQueue(userId);
+    await queueCloudDelete({ userId, username: 'fixture', runId: 'fixture-read-failure' });
+    getDocumentMock.mockRejectedValue({ code: 503 });
+    deleteTrackerRunCloudDocumentsMock.mockResolvedValue(undefined);
+    await forceSyncQueuedRuns(userId);
+    expect(deleteTrackerRunCloudDocumentsMock).not.toHaveBeenCalled();
+    expect(await getQueueItems(userId)).toHaveLength(1);
+  });
+  it('allows an owned legacy pair and settles only after the delete writer succeeds', async () => {
+    const userId = 'fixture.delete-owned-legacy';
+    await clearQueue(userId);
+    await queueCloudDelete({ userId, username: 'fixture', runId: 'fixture-owned-legacy' });
+    getDocumentMock.mockResolvedValue({ userId });
+    deleteTrackerRunCloudDocumentsMock.mockResolvedValue(undefined);
+    await forceSyncQueuedRuns(userId);
+    expect(deleteTrackerRunCloudDocumentsMock).toHaveBeenCalledOnce();
+    expect(await getQueueItems(userId)).toHaveLength(0);
+  });
+  it('refuses an unrelated main owner before any administrative delete', async () => {
+    const userId = 'fixture.delete-other-owner';
+    await clearQueue(userId);
+    await queueCloudDelete({ userId, username: 'fixture', runId: 'fixture-other-run' });
+    getDocumentMock.mockResolvedValue({ userId: 'unrelated-account' });
+    deleteTrackerRunCloudDocumentsMock.mockResolvedValue(undefined);
+    await forceSyncQueuedRuns(userId);
+    expect(deleteTrackerRunCloudDocumentsMock).not.toHaveBeenCalled();
+    expect(await getQueueItems(userId)).toHaveLength(1);
+  });
+  it('refuses an unrelated extended owner even when the main record is absent', async () => {
+    const userId = 'fixture.delete-orphan-other-owner';
+    await clearQueue(userId);
+    await queueCloudDelete({ userId, username: 'fixture', runId: 'fixture-orphan-run' });
+    getDocumentMock.mockImplementation(async (_database, collection) => {
+      if (collection === 'runs') throw { code: 404, type: 'document_not_found' };
+      return { userId: 'unrelated-account' };
+    });
+    deleteTrackerRunCloudDocumentsMock.mockResolvedValue(undefined);
+    await forceSyncQueuedRuns(userId);
+    expect(deleteTrackerRunCloudDocumentsMock).not.toHaveBeenCalled();
+    expect(await getQueueItems(userId)).toHaveLength(1);
+  });
   it('retains exhausted deletes for explicit retry instead of forgetting cloud deletion', async () => {
     const userId = 'audit-exhausted-delete';
     await clearQueue(userId);

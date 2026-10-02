@@ -3,6 +3,7 @@
 ## 2026-10-02
 
 ### Fixed
+- Verify both main and extended run ownership before administrative cloud deletion; retain pending deletes on ownership-read failures. Honor TRACKER_BOT_DATA_DIR at first SQLite open so isolated tests cannot silently use cwd storage; preserve the default production path.
 - Preserve exhausted cloud queue entries and screenshots; allow explicit retry, retain pending edits in queue counts, restore queued payloads after cache misses, and serialize queue replacement/replay/deletion receipts.
 - Capture upload profile once across save/import/retry paths, distinguish explicit Main from unknown legacy targets, preserve verified cloud ownership/profile, and reject non-404 creation assumptions. Preserve and block legacy new-run queue targets needing an explicit choice.
 - Reuse the selected document ID after partial cloud pair writes, including duplicate updates and simultaneous retries, to avoid a second main document.

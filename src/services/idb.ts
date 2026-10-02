@@ -1,6 +1,6 @@
 import { logger } from '../core/logger';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import sqlite3 from 'sqlite3';
 import { type AnalyticsEventDocument, type GuildDocument, type UserSettingsDocument, userSettingsDocumentSchema } from '../persistence/types';
 
@@ -23,7 +23,7 @@ let dbReady: Promise<sqlite3.Database> | null = null;
 let storageUnavailable = false;
 const inMemoryKv = new Map<string, KvRecord>();
 const allowMemoryFallback = String(process.env.TRACKER_BOT_ALLOW_MEMORY_KV_FALLBACK || '').toLowerCase() === 'true';
-const trackerKvDbPath = join(process.cwd(), '.data', 'indexeddb', 'tracker-bot-idb.sqlite');
+let trackerKvDbPath = join(process.cwd(), '.data', 'indexeddb', 'tracker-bot-idb.sqlite');
 
 function formatStorageError(error: unknown): string {
   if (error instanceof Error) {
@@ -92,7 +92,10 @@ async function getTrackerBotDb(): Promise<sqlite3.Database | null> {
 
   dbReady = (async () => {
     try {
-      const dataDir = join(process.cwd(), '.data', 'indexeddb');
+      // Resolve at first open, after configuration/test setup has populated env.
+      const configuredRoot = process.env.TRACKER_BOT_DATA_DIR?.trim();
+      trackerKvDbPath = join(configuredRoot ? resolve(configuredRoot) : join(process.cwd(), '.data'), 'indexeddb', 'tracker-bot-idb.sqlite');
+      const dataDir = dirname(trackerKvDbPath);
       mkdirSync(dataDir, { recursive: true });
 
       const db = await new Promise<sqlite3.Database>((resolve, reject) => {

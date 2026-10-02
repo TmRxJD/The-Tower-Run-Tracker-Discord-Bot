@@ -53,7 +53,7 @@ import {
 import { getAppConfig } from '../../config';
 import { logger } from '../../core/logger';
 import { createAppwriteClient } from '../../persistence/appwrite-client';
-import { isUnauthorizedAppwriteError } from '../../persistence/appwrite-error-utils';
+import { isUnauthorizedAppwriteError, isNotFoundAppwriteError } from '../../persistence/appwrite-error-utils';
 import { formatDateToISO, formatTimeTo24h, normalizeDecimalSeparators } from './tracker-helpers';
 import {
   readTrackerImageText,
@@ -2039,6 +2039,20 @@ async function cloudDeleteRun(userId: string, runId: string) {
     extendedCollectionId: RUNS_EXTENDED_COLLECTION_ID,
     runId: targetId,
   });
+  const { databases } = createAppwriteClient();
+  const { lookupUserIds } = await getRunCloudIdentity(userId);
+  // Admin credentials bypass document permissions. Check both records before
+  // deleting either; an orphaned extended record still requires ownership.
+  for (const collectionId of [deleteTarget.mainCollectionId, deleteTarget.extendedCollectionId]) {
+    try {
+      const document = await databases.getDocument(deleteTarget.databaseId, collectionId, deleteTarget.runId);
+      if (!lookupUserIds.includes(String(document.userId ?? ''))) {
+        throw new Error('Run owner does not match this Discord account.');
+      }
+    } catch (error) {
+      if (!isNotFoundAppwriteError(error)) throw error;
+    }
+  }
   logger.info('Permanently deleting tracker run document', {
     userId,
     runId: deleteTarget.runId,
@@ -2047,7 +2061,7 @@ async function cloudDeleteRun(userId: string, runId: string) {
     extendedCollectionId: deleteTarget.extendedCollectionId,
   });
   await deleteTrackerRunCloudDocuments({
-    databases: createAppwriteClient().databases,
+    databases,
     databaseId: deleteTarget.databaseId,
     mainCollectionId: deleteTarget.mainCollectionId,
     extendedCollectionId: deleteTarget.extendedCollectionId,
