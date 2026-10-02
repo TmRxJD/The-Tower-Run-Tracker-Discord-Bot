@@ -51,6 +51,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 export function createDiscordSaveImportPort(
   interaction: TrackMenuInteraction,
+  uploadProfileId: string | null,
 ): SaveImportPersistencePort {
   const userId = interaction.user.id;
   const username = interaction.user.username;
@@ -92,11 +93,12 @@ export function createDiscordSaveImportPort(
             localId: savedLocalId,
             runData: savedLocalId ? { ...item.runData, localId: savedLocalId } : item.runData,
             canonicalRunData: item.runData,
+            uploadProfileId,
           }];
         });
 
         if (cloudBatch.length > 0) {
-          await queueCloudUpsertsBatch(cloudBatch).catch(() => {});
+          await queueCloudUpsertsBatch(cloudBatch);
           forceSyncQueuedRuns(userId).catch(() => {});
         }
       }

@@ -26,6 +26,10 @@ export function setPendingUploadProfile(discordUserId: string, profileId: string
   pendingTargetByDiscordUser.set(discordUserId.trim(), profileId ?? null);
 }
 
+export function hasPendingUploadProfile(discordUserId: string): boolean {
+  return pendingTargetByDiscordUser.has(discordUserId.trim());
+}
+
 export function peekPendingUploadProfile(discordUserId: string): string | null {
   return pendingTargetByDiscordUser.get(discordUserId.trim()) ?? null;
 }

@@ -39,6 +39,7 @@ export async function fetchTrackerBuildShareForDiscordUser(userId: string): Prom
   for (const candidateId of candidateIds) {
     try {
       const response = await fetch(`${endpoint}/functions/${encodeURIComponent(functionId)}/executions`, {
+        signal: AbortSignal.timeout(30_000),
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

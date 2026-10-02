@@ -7,6 +7,7 @@ module.exports = {
       interpreter: 'node',
       exec_mode: 'fork',
       watch: false,
+      kill_timeout: 10_000,
       env: {
         // dns.lookup, sqlite3 and async fs share libuv's 4 default threads; a busy sqlite
         // queue can otherwise delay the DNS lookup behind a fresh Discord connection.

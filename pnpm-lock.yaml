@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@tmrxjd/platform@0.2.4':
-    hash: 1314f2ebdd26c0196a429925ee7f3f11b29b763c1085f422e81f65117875afb7
+    hash: e0c2920ce742187fa7e050df18d3a7d80ffea6072adbe6c3c25910c1bd76777a
     path: patches/@tmrxjd__platform@0.2.4.patch
 
 importers:
@@ -24,7 +24,7 @@ importers:
         version: 0.1.97
       '@tmrxjd/platform':
         specifier: 0.2.4
-        version: 0.2.4(patch_hash=1314f2ebdd26c0196a429925ee7f3f11b29b763c1085f422e81f65117875afb7)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)
+        version: 0.2.4(patch_hash=e0c2920ce742187fa7e050df18d3a7d80ffea6072adbe6c3c25910c1bd76777a)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)
       dexie:
         specifier: ^4.4.4
         version: 4.4.4
@@ -3342,7 +3342,7 @@ snapshots:
 
   '@techstark/opencv-js@4.9.0-release.3': {}
 
-  '@tmrxjd/platform@0.2.4(patch_hash=1314f2ebdd26c0196a429925ee7f3f11b29b763c1085f422e81f65117875afb7)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)':
+  '@tmrxjd/platform@0.2.4(patch_hash=e0c2920ce742187fa7e050df18d3a7d80ffea6072adbe6c3c25910c1bd76777a)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)':
     dependencies:
       '@tmrxjd/tracker-languages': 0.1.23
       thetowersdk: 0.11.0

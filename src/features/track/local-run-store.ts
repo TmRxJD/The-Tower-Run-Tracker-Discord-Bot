@@ -26,6 +26,9 @@ export interface CloudQueueItem {
   runId?: string;
   localId?: string;
   runData?: Record<string, unknown>;
+  /** Undefined identifies a legacy queue entry with an unknown target; null means Main. */
+  uploadProfileId?: string | null;
+  blockedReason?: 'target-profile-required';
   canonicalRunData?: Record<string, unknown>;
   settingsData?: TrackerSettings & { updatedAt?: number };
   settingsUpdatedAt?: number;
@@ -197,6 +200,7 @@ function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
   const runDataRecord = asRecord(record.runData);
   const canonicalRunDataRecord = asRecord(record.canonicalRunData);
   const screenshotRecord = asRecord(record.screenshot);
+  const uploadProfileId = record.uploadProfileId === null ? null : typeof record.uploadProfileId === 'string' && record.uploadProfileId.trim() ? record.uploadProfileId.trim() : undefined;
 
   const runData = runDataRecord ? canonicalizeRunData(runDataRecord) : undefined;
   const canonicalRunData = canonicalRunDataRecord ? canonicalizeRunData(canonicalRunDataRecord) : undefined;
@@ -209,6 +213,8 @@ function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
     runId: typeof record.runId === 'string' && record.runId.trim().length > 0 ? record.runId : undefined,
     localId: typeof record.localId === 'string' && record.localId.trim().length > 0 ? record.localId : undefined,
     runData,
+    uploadProfileId,
+    blockedReason: record.blockedReason === 'target-profile-required' ? 'target-profile-required' : undefined,
     canonicalRunData,
     screenshot: screenshotRecord
       ? {
@@ -224,7 +230,13 @@ function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
   };
 }
 
-async function ensureLoaded() {
+let loadingStore: Promise<void> | null = null;
+async function ensureLoaded(): Promise<void> {
+  if (cache) return;
+  if (!loadingStore) loadingStore = ensureLoadedOnce().finally(() => { loadingStore = null; });
+  await loadingStore;
+}
+async function ensureLoadedOnce() {
   if (cache) return;
   const parsed = await getTrackerKv<LocalStoreState>(STORE_KEY);
   if (parsed) {
@@ -564,6 +576,7 @@ export type QueueCloudUpsertInput = {
   userId: string;
   username: string;
   runData: Record<string, unknown>;
+  uploadProfileId?: string | null;
   canonicalRunData?: Record<string, unknown>;
   screenshot?: { filename: string; contentType?: string | null; tempPath: string } | null;
   localId?: string;
@@ -598,21 +611,26 @@ async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<v
         right: buildTrackerQueuedRunReferenceIdentity(item),
       });
     },
-    buildItem: previousItem => ({
-      id: previousItem?.id ?? randomUUID(),
+    buildItem: previousItem => {
+      const uploadProfileId = input.uploadProfileId !== undefined ? input.uploadProfileId : previousItem?.uploadProfileId;
+      const runId = targetRunId ?? previousItem?.runId ?? (uploadProfileId !== undefined ? randomUUID() : undefined);
+      return ({
+      id: randomUUID(),
       op: 'upsert' as const,
       userId: input.userId,
       username: input.username,
       localId: targetLocalId,
-      runId: targetRunId,
-      runData: normalizedRunData,
+      runId,
+      runData: runId ? { ...normalizedRunData, runId } : normalizedRunData,
+      uploadProfileId,
       canonicalRunData: normalizedCanonicalRunData,
       screenshot: input.screenshot ?? null,
       createdAt: previousItem?.createdAt ?? Date.now(),
       retryCount: retryState.attemptCount,
       nextRetryAt: retryState.nextRetryAt,
       lastError: undefined,
-    }),
+      });
+    },
   });
 
   if (nextQueue.previousItem) {
@@ -622,13 +640,13 @@ async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<v
   cache.queue = nextQueue.items;
 }
 
-export async function queueCloudUpsert(input: QueueCloudUpsertInput) {
+async function queueCloudUpsertUnsafe(input: QueueCloudUpsertInput) {
   await ensureLoaded();
   await applyQueueUpsertInMemory(input);
   await persist();
 }
 
-export async function queueCloudUpsertsBatch(inputs: QueueCloudUpsertInput[]): Promise<void> {
+async function queueCloudUpsertsBatchUnsafe(inputs: QueueCloudUpsertInput[]): Promise<void> {
   if (!inputs.length) return;
   await ensureLoaded();
   for (const input of inputs) {
@@ -637,7 +655,7 @@ export async function queueCloudUpsertsBatch(inputs: QueueCloudUpsertInput[]): P
   await persist();
 }
 
-export async function queueCloudDelete(input: { userId: string; username: string; runId: string }) {
+async function queueCloudDeleteUnsafe(input: { userId: string; username: string; runId: string }) {
   await ensureLoaded();
   const retryState = buildRetryScheduleState();
   const nextQueue = enqueueUniqueItemsByKey({
@@ -663,7 +681,7 @@ export async function queueCloudDelete(input: { userId: string; username: string
   await persist();
 }
 
-export async function queueCloudSettings(input: {
+async function queueCloudSettingsUnsafe(input: {
   userId: string;
   settingsData: TrackerSettings & { cloudSyncEnabled?: boolean; updatedAt?: number };
   settingsUpdatedAt: number;
@@ -708,7 +726,7 @@ export async function getQueueCount(userId?: string) {
   return items.length;
 }
 
-export async function markQueueItemFailed(id: string, error: string) {
+async function markQueueItemFailedUnsafe(id: string, error: string) {
   await ensureLoaded();
   const idx = cache!.queue.findIndex(item => item.id === id);
   if (idx < 0) return;
@@ -725,12 +743,23 @@ export async function markQueueItemFailed(id: string, error: string) {
   await persist();
 }
 
-export async function releaseQueuedItemsForImmediateRetry(userId: string) {
+async function markQueueItemTargetBlockedUnsafe(id: string): Promise<void> {
+  await ensureLoaded();
+  const item = cache!.queue.find(entry => entry.id === id);
+  if (!item || item.blockedReason === 'target-profile-required') return;
+  item.blockedReason = 'target-profile-required';
+  item.lastError = 'Target profile selection required; queued payload preserved.';
+  await persist();
+}
+
+async function releaseQueuedItemsForImmediateRetryUnsafe(userId: string) {
   await ensureLoaded();
   let changed = false;
   for (const item of cache!.queue) {
     if (item.userId !== userId) continue;
+    if (item.blockedReason) continue;
     item.nextRetryAt = Date.now() - 1;
+    item.retryCount = 0;
     changed = true;
   }
   if (changed) {
@@ -738,7 +767,7 @@ export async function releaseQueuedItemsForImmediateRetry(userId: string) {
   }
 }
 
-export async function removeQueueItem(id: string) {
+async function removeQueueItemUnsafe(id: string) {
   await ensureLoaded();
   cache!.queue = cache!.queue.filter(item => item.id !== id);
   await persist();
@@ -788,3 +817,18 @@ export async function removeLocalRun(userId: string, input: { runId?: string | n
   });
   if (bucket.runs.length !== before) await persist();
 }
+
+let queueMutationTail: Promise<void> = Promise.resolve();
+function mutateQueue(action: () => Promise<void>): Promise<void> {
+  const task = queueMutationTail.catch(() => {}).then(action);
+  queueMutationTail = task;
+  return task;
+}
+export async function queueCloudUpsert(input: QueueCloudUpsertInput): Promise<void> { await mutateQueue(() => queueCloudUpsertUnsafe(input)); }
+export async function queueCloudUpsertsBatch(inputs: QueueCloudUpsertInput[]): Promise<void> { await mutateQueue(() => queueCloudUpsertsBatchUnsafe(inputs)); }
+export async function queueCloudDelete(input: { userId: string; username: string; runId: string }): Promise<void> { await mutateQueue(() => queueCloudDeleteUnsafe(input)); }
+export async function queueCloudSettings(input: { userId: string; settingsData: TrackerSettings & { cloudSyncEnabled?: boolean; updatedAt?: number }; settingsUpdatedAt: number }): Promise<void> { await mutateQueue(() => queueCloudSettingsUnsafe(input)); }
+export async function markQueueItemFailed(id: string, error: string): Promise<void> { await mutateQueue(() => markQueueItemFailedUnsafe(id, error)); }
+export async function markQueueItemTargetBlocked(id: string): Promise<void> { await mutateQueue(() => markQueueItemTargetBlockedUnsafe(id)); }
+export async function releaseQueuedItemsForImmediateRetry(userId: string): Promise<void> { await mutateQueue(() => releaseQueuedItemsForImmediateRetryUnsafe(userId)); }
+export async function removeQueueItem(id: string): Promise<void> { await mutateQueue(() => removeQueueItemUnsafe(id)); }

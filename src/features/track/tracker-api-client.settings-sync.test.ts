@@ -57,6 +57,7 @@ vi.mock('../../core/logger', () => ({
 }));
 
 vi.mock('@tmrxjd/platform/node', () => ({
+  isAppwriteNotFoundError: (error: {code?: number}) => error?.code === 404,
   readTrackerImageText: vi.fn(),
   preprocessTrackerImageForOcr: vi.fn(),
   getDocumentOrNull: (...args: unknown[]) => getDocumentOrNullMock(...args),
@@ -91,6 +92,7 @@ import {
   getLocalSettingsRecord,
   getQueueItems,
   queueCloudSettings,
+  queueCloudUpsert,
   removeQueueItem,
   updateLocalSettings,
 } from './local-run-store';
@@ -111,6 +113,7 @@ async function clearQueue(userId: string): Promise<void> {
 
 beforeEach(async () => {
   getDocumentMock.mockReset();
+  getDocumentMock.mockRejectedValue({code:404,type:'document_not_found'});
   getDocumentOrNullMock.mockReset();
   updateDocumentMock.mockReset();
   createDocumentMock.mockReset();
@@ -125,9 +128,71 @@ beforeEach(async () => {
 
   await clearQueue('tracker.sync.queue-local-newer');
   await clearQueue('tracker.sync.cloud-newer');
+  await clearQueue('371914184822095873');
 });
 
 describe('tracker-api-client settings sync', () => {
+  it.each([false, true])('reuses the attempted ID after partial write and concurrent retries (existing duplicate: %s)', async hasExistingRun => {
+    const userId = `fixture.partial-write-retry-${hasExistingRun}`;
+    await clearQueue(userId);
+    await updateLocalSettings(userId, { cloudSyncEnabled: true });
+    const main = new Map<string, Record<string, unknown>>();
+    if (hasExistingRun) {
+      main.set('fixture-existing-duplicate', { $id: 'fixture-existing-duplicate', userId, profileId: 'fixture-alt-a',
+        tier: '5', wave: '321', totalCoins: '2B', roundDuration: '1h', spotlightDamage: '0' });
+      listDocumentsMock.mockImplementation(async (_db, collection) => ({
+        documents: collection === 'runs' ? [...main.values()] : [], total: collection === 'runs' ? main.size : 0,
+      }));
+    }
+    let failExtended = true;
+    getDocumentMock.mockImplementation(async (_db, collection, id) => {
+      const doc = collection === 'runs' ? main.get(id) : undefined;
+      if (!doc) throw { code: 404, type: 'document_not_found' };
+      return { ...doc, $id: id };
+    });
+    updateDocumentMock.mockImplementation(async (_db, collection, id, data) => {
+      if (collection === 'runs' && main.has(id)) { main.set(id, data); return {}; }
+      throw { code: 404, type: 'document_not_found' };
+    });
+    createDocumentMock.mockImplementation(async (_db, collection, id, data) => {
+      if (collection === 'runs') { main.set(id, data); return {}; }
+      if (collection === 'runs_extended_data' && failExtended) throw { code: 503 };
+      return {};
+    });
+    const result = await logRun({ userId, username: 'fixture', uploadProfileId: 'fixture-alt-a',
+      skipLeaderboardRefresh: true, runData: { localId: 'fixture-partial', tier: '5', wave: '321',
+        spotlightDamage: '1Q', totalCoins: '2B', roundDuration: '1h', runDate: '2026-10-01', runTime: '12:00:00' } });
+    expect(result.queuedForCloud).toBe(true);
+    const attemptedId = [...main.keys()][0];
+    const queued = (await getQueueItems(userId))[0];
+    expect(queued.runId).toBe(attemptedId);
+    expect(queued.uploadProfileId).toBe('fixture-alt-a');
+    failExtended = false;
+    await Promise.all([forceSyncQueuedRuns(userId), forceSyncQueuedRuns(userId)]);
+    expect(await getQueueItems(userId)).toHaveLength(0);
+    expect([...main.keys()]).toEqual([attemptedId]);
+    expect(main.get(attemptedId)?.profileId).toBe('fixture-alt-a');
+  });
+  it('blocks unknown legacy new targets without retry storms or payload deletion',async()=>{
+    const userId='fixture.blocked-target';await clearQueue(userId);
+    await queueCloudUpsert({userId,username:'fixture',localId:'fixture-blocked',runData:{localId:'fixture-blocked',wave:'123'}});
+    await forceSyncQueuedRuns(userId);await forceSyncQueuedRuns(userId);
+    const q=await getQueueItems(userId);
+    expect(q).toHaveLength(1);expect(q[0].blockedReason).toBe('target-profile-required');
+    expect(q[0].retryCount).toBe(0);expect(q[0].runData?.wave).toBe('123');
+    expect(createDocumentMock).not.toHaveBeenCalled();
+  });
+  it('recovers a queued payload after a memory cache miss and uses its captured profile',async()=>{
+    const userId='fixture.recover-queue';await clearQueue(userId);
+    createDocumentMock.mockResolvedValue({});
+    await queueCloudUpsert({userId,username:'fixture',localId:'fixture-recover-local',uploadProfileId:'fixture-alt-a',runData:{localId:'fixture-recover-local',wave:'123',tier:'5',type:'Farming'}});
+    const queued=(await getQueueItems(userId))[0];
+    await forceSyncQueuedRuns(userId);
+    expect(await getQueueItems(userId)).toHaveLength(0);
+    expect(createDocumentMock.mock.calls.find(x=>x[1]==='runs')?.[3]).toMatchObject({profileId:'fixture-alt-a'});
+    const local=await getLastRun(userId,{cloudSyncMode:'none'});
+    expect(local?.allRuns?.some(x=>x.runId===queued.runId)).toBe(true);
+  });
   it('replays queued settings with the newer local state', async () => {
     const userId = 'tracker.sync.queue-local-newer';
     await updateLocalSettings(userId, {
@@ -360,7 +425,7 @@ describe('tracker-api-client settings sync', () => {
     expect(result.screenshotUrl).toBe('https://appwrite.example/v1/storage/buckets/runs/files/file-async-1/view?project=project-1');
   });
 
-  it('uses the dev Appwrite JWT user id for permissions when the upload user id is discord-only', async () => {
+  it('does not borrow a shared JWT account for Discord-only uploads', async () => {
     const userId = '371914184822095873';
     process.env.APPWRITE_JWT = [
       'header',
@@ -388,23 +453,9 @@ describe('tracker-api-client settings sync', () => {
       },
     });
 
-    expect(result.queuedForCloud).toBe(false);
-    const mainRunCall = createDocumentMock.mock.calls.find(call => call[1] === 'runs');
-    const extendedRunCall = createDocumentMock.mock.calls.find(call => call[1] === 'runs_extended_data');
-    expect(mainRunCall?.[4]).toEqual([
-      'read("user:681ab667ce6096096b3b")',
-      'update("user:681ab667ce6096096b3b")',
-      'delete("user:681ab667ce6096096b3b")',
-    ]);
-    expect(extendedRunCall?.[3]).toEqual(expect.objectContaining({
-      userId: '681ab667ce6096096b3b',
-      coinsPerKill: '68.96B',
-    }));
-    expect(extendedRunCall?.[4]).toEqual([
-      'read("user:681ab667ce6096096b3b")',
-      'update("user:681ab667ce6096096b3b")',
-      'delete("user:681ab667ce6096096b3b")',
-    ]);
+    expect(result.queuedForCloud).toBe(true);
+    expect(await getQueueItems(userId)).toHaveLength(1);
+    expect(createDocumentMock).not.toHaveBeenCalled();
   });
 
   it('defers cloud run sync without blocking the local save result', async () => {

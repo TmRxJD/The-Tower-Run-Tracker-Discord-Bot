@@ -129,3 +129,17 @@ index 542df7d7a8bae224ea656a64fa38fcf2e212091c..437e9124d2effd28e2292626b708f92e
      if (coverageBasis) {
          const referenceBasis = coverageBasis[key];
          const currentBasis = resolveCoverageDeltaBasis(run, key);
+diff --git a/dist/tools/tracker-run-cloud-pair.js b/dist/tools/tracker-run-cloud-pair.js
+index f9a20c1..8ff8d3c 100644
+--- a/dist/tools/tracker-run-cloud-pair.js
++++ b/dist/tools/tracker-run-cloud-pair.js
+@@ -201,7 +201,8 @@ async function writeTrackerRunCloudDocumentPair(input) {
+             ? existingProfileId.trim()
+             : null;
+     }
+-    catch {
++    catch (error) {
++        if (!(0, cloud_save_pipeline_1.isDocumentNotFoundError)(error)) throw error;
+         // Not found → this is a new run → it takes the requested profileId.
+     }
+     const mainPayload = {

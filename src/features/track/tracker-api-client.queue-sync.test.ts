@@ -24,7 +24,7 @@ beforeEach(async () => {
 });
 
 describe('tracker-api-client queue sync', () => {
-  it('drops max-retry queue items and cleans queued screenshot temp files', async () => {
+  it('retains max-retry queue items and queued screenshot evidence', async () => {
     const screenshotPath = join(tmpdir(), `trackerbot-queued-screenshot-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
     await fs.writeFile(screenshotPath, Buffer.from([1, 2, 3, 4]));
 
@@ -53,8 +53,10 @@ describe('tracker-api-client queue sync', () => {
     await forceSyncQueuedRuns(TEST_USER_ID);
 
     const afterSync = await getQueueItems(TEST_USER_ID);
-    expect(afterSync).toHaveLength(0);
-    expect(await fileExists(screenshotPath)).toBe(false);
+    expect(afterSync).toHaveLength(1);
+    expect(await fileExists(screenshotPath)).toBe(true);
+    await removeQueueItem(afterSync[0].id);
+    await fs.unlink(screenshotPath);
   });
 
   it('drops queued upserts shadowed by a queued delete before replaying', async () => {
@@ -88,7 +90,7 @@ describe('tracker-api-client queue sync', () => {
 
     await forceSyncQueuedRuns(TEST_USER_ID);
 
-    expect(await getQueueItems(TEST_USER_ID)).toHaveLength(0);
+    expect(await getQueueItems(TEST_USER_ID)).toEqual([expect.objectContaining({op:'delete'})]);
     expect(await fileExists(screenshotPath)).toBe(false);
   });
 });

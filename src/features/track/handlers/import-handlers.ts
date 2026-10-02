@@ -1,3 +1,4 @@
+import { downloadBoundedBuffer } from '../../../core/bounded-download';
 import * as Discord from 'discord.js';
 import {
   ActionRowBuilder,
@@ -46,6 +47,7 @@ import type { TrackReplyInteractionLike } from '../interaction-types';
 import {
   listBotUserProfiles,
   peekPendingUploadProfile,
+  hasPendingUploadProfile,
   resolveDefaultUploadProfileId,
   setPendingUploadProfile,
 } from '../upload-target-profile';
@@ -174,12 +176,7 @@ async function extractModalUploadedFile(
 }
 
 async function downloadFileBuffer(file: NormalizedFile): Promise<Buffer> {
-  const response = await fetch(file.url);
-  if (!response.ok) {
-    throw new Error(`Failed to download save file: ${response.status}`);
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  return downloadBoundedBuffer(file.url);
 }
 
 async function buildImportPreviewImage(userId: string, runs: Record<string, unknown>[]): Promise<Buffer> {
@@ -307,7 +304,7 @@ async function importSelectedTrackers(
     session.discoveries.some(tracker => tracker.key === key && tracker.count > 0),
   ) as SaveImportTargetKey[];
 
-  const port = createDiscordSaveImportPort(interaction);
+  const port = createDiscordSaveImportPort(interaction, session.selectedProfileId ?? null);
   const ui = getTrackUiConfig();
   invalidateBotLocalRunsCache(interaction.user.id);
   const existingRuns = await getLocalRuns(interaction.user.id);
@@ -399,7 +396,7 @@ async function renderImportReview(
   try {
     profileOptions = await listBotUserProfiles(userId);
     if (profileOptions.length > 1) {
-      selectedProfileId = peekPendingUploadProfile(userId) ?? (await resolveDefaultUploadProfileId(userId));
+      selectedProfileId = hasPendingUploadProfile(userId) ? peekPendingUploadProfile(userId) : await resolveDefaultUploadProfileId(userId);
     }
   } catch {
     profileOptions = [];
@@ -683,6 +680,11 @@ export async function handleTrackMenuImportAccept(interaction: TrackMenuInteract
 export async function handleTrackMenuImportCancel(interaction: TrackMenuInteraction) {
   const ui = getTrackUiConfig();
   const token = interaction.customId.split(':').slice(1).join(':');
+  const session = getImportPendingSession(token);
+  if (!session || session.userId !== interaction.user.id) {
+    await interaction.reply({content: ui.import.sessionExpired, ephemeral: true}).catch(() => {});
+    return;
+  }
   deleteImportPendingSession(token);
   if ('update' in interaction && typeof interaction.update === 'function') {
     await interaction.update({ content: ui.import.cancelled, embeds: [], components: [], files: [] }).catch(() => {});

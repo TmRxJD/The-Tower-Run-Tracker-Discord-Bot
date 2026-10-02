@@ -39,6 +39,30 @@ beforeEach(async () => {
 });
 
 describe('local-run-store queue retry behavior', () => {
+  it('captures a stable cloud id before a new run can be partially written',async()=>{
+    const input={userId:TEST_USER_ID,username:'fixture',localId:'audit-stable',runData:{localId:'audit-stable',wave:'100'},uploadProfileId:null};
+    await queueCloudUpsert(input);
+    const first=(await getQueueItems(TEST_USER_ID))[0];
+    expect(first.runId).toBeTruthy();
+    expect(first.runData?.runId).toBe(first.runId);
+    await markQueueItemFailed(first.id,'extended half failed');
+    await releaseQueuedItemsForImmediateRetry(TEST_USER_ID);
+    expect((await getQueueItems(TEST_USER_ID))[0].runId).toBe(first.runId);
+    await queueCloudUpsert({...input,runData:{...input.runData,wave:'200'}});
+    expect((await getQueueItems(TEST_USER_ID))[0].runId).toBe(first.runId);
+  });
+  it('old replay settlement cannot remove or fail a replacement payload', async () => {
+    await queueCloudUpsert({userId:TEST_USER_ID,username:'fixture',localId:'audit-replace',runData:{localId:'audit-replace',wave:'100'},uploadProfileId:'alt-a'});
+    const first=(await getQueueItems(TEST_USER_ID))[0];
+    await queueCloudUpsert({userId:TEST_USER_ID,username:'fixture',localId:'audit-replace',runData:{localId:'audit-replace',wave:'200'}});
+    await removeQueueItem(first.id);
+    await markQueueItemFailed(first.id,'old failed write');
+    const next=(await getQueueItems(TEST_USER_ID))[0];
+    expect(next.id).not.toBe(first.id);
+    expect(next.runData?.wave).toBe('200');
+    expect(next.uploadProfileId).toBe('alt-a');
+    expect(next.retryCount).toBe(0);
+  });
   it('increments retry count and schedules next retry after failure', async () => {
     await queueCloudUpsert({
       userId: TEST_USER_ID,

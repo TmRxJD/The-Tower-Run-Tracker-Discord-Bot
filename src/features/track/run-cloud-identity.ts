@@ -1,6 +1,5 @@
 import {
   buildTrackerRunIdentityContext,
-  readTrackerAppwriteUserIdFromJwt,
   type TrackerRunIdentityContext,
 } from '@tmrxjd/platform/tools';
 import { resolveAppwriteIdForDiscordUser } from '../../services/discord-identity-resolver';
@@ -14,6 +13,8 @@ export type BotRunCloudIdentity = TrackerRunIdentityContext & {
 const identityPromiseByDiscordUser = new Map<string, Promise<BotRunCloudIdentity>>();
 /** Diagnostics only: when each cache entry was created, to age a poisoned entry. */
 const cachedAtByDiscordUser = new Map<string, number>();
+const IDENTITY_CACHE_TTL_MS = 60_000;
+const MAX_IDENTITY_CACHE_ENTRIES = 1_024;
 
 /**
  * Canonical bot run identity resolution.
@@ -24,11 +25,12 @@ const cachedAtByDiscordUser = new Map<string, number>();
  */
 export async function resolveBotRunCloudIdentity(discordUserId: string): Promise<BotRunCloudIdentity> {
   const normalized = discordUserId.trim();
+  if (Date.now() - (cachedAtByDiscordUser.get(normalized) ?? 0) >= IDENTITY_CACHE_TTL_MS) {
+    invalidateBotRunCloudIdentityCache(normalized);
+  }
   const existing = identityPromiseByDiscordUser.get(normalized);
   if (existing) {
-    // This cache has no TTL and is never invalidated in production, so an entry that
-    // resolved to no cloud user during a transient Appwrite failure keeps failing for
-    // the life of the process. Flag served-from-cache misses to size that.
+    // Keep misses observable while the bounded cache entry is valid.
     return existing.then((identity) => {
       if (!identity.cloudWriteUserId) {
         recordDiagnostic('identity.unusable', {
@@ -42,14 +44,8 @@ export async function resolveBotRunCloudIdentity(discordUserId: string): Promise
   }
 
   const pending = (async () => {
-    // The identity link is the primary source. When it yields nothing — a user
-    // whose Discord account is not linked yet, or a dev run against a single
-    // account — fall back to the Appwrite id carried by the session JWT.
-    // Without this the run is written with an empty permission set, leaving it
-    // unreadable by the very user who created it.
-    const jwtAppwriteUserId = readTrackerAppwriteUserIdFromJwt(process.env.APPWRITE_JWT);
-    const linkedAppwriteUserId = await resolveAppwriteIdForDiscordUser(normalized, { failOnLookupError: !jwtAppwriteUserId });
-    const appwriteUserId = linkedAppwriteUserId ?? jwtAppwriteUserId;
+    // A process-wide JWT does not prove which Discord caller owns that account.
+    const appwriteUserId = await resolveAppwriteIdForDiscordUser(normalized, { failOnLookupError: true });
 
     const identity = buildTrackerRunIdentityContext({
       appwriteUserId,
@@ -60,13 +56,11 @@ export async function resolveBotRunCloudIdentity(discordUserId: string): Promise
 
     const cloudWriteUserId = identity.activeUserId ?? appwriteUserId;
     if (!cloudWriteUserId) {
-      // About to be cached for the process lifetime — record whether the link lookup
-      // came back empty or the JWT fallback was simply absent.
+      // Preserve an observable miss without retaining it for the process lifetime.
       recordDiagnostic('identity.unusable', {
         discordUserId: normalized,
         source: 'fresh',
-        hadLinkedAppwriteUserId: Boolean(linkedAppwriteUserId),
-        hadJwtFallback: Boolean(process.env.APPWRITE_JWT),
+        hadLinkedAppwriteUserId: Boolean(appwriteUserId),
       });
     }
 
@@ -78,6 +72,11 @@ export async function resolveBotRunCloudIdentity(discordUserId: string): Promise
 
   identityPromiseByDiscordUser.set(normalized, pending);
   cachedAtByDiscordUser.set(normalized, Date.now());
+  while (identityPromiseByDiscordUser.size > MAX_IDENTITY_CACHE_ENTRIES) {
+    const oldest = identityPromiseByDiscordUser.keys().next().value;
+    if (oldest) invalidateBotRunCloudIdentityCache(oldest);
+    else break;
+  }
   try { return await pending; }
   catch (error) {
     // A transient lookup failure must neither look like an unlinked account nor poison retries.

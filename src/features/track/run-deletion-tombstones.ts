@@ -1,13 +1,14 @@
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
 
 const TOMBSTONE_KV_PREFIX = 'tracker:permanent-deleted-run-ids:v1:';
+const pendingWrites = new Map<string, Promise<void>>();
 
 function buildKey(userId: string): string {
   return `${TOMBSTONE_KV_PREFIX}${userId.trim()}`;
 }
 
 export async function getPermanentlyDeletedRunIds(userId: string): Promise<Set<string>> {
-  const stored = await getTrackerKv<string[]>(buildKey(userId)).catch(() => null);
+  const stored = await getTrackerKv<string[]>(buildKey(userId));
   if (!Array.isArray(stored)) {
     return new Set();
   }
@@ -19,12 +20,16 @@ export async function markRunPermanentlyDeleted(userId: string, runId: string): 
   if (!normalized) {
     return;
   }
-  const existing = await getPermanentlyDeletedRunIds(userId);
-  if (existing.has(normalized)) {
-    return;
-  }
-  existing.add(normalized);
-  await setTrackerKv(buildKey(userId), Array.from(existing)).catch(() => {});
+  const scope = userId.trim();
+  const previous = pendingWrites.get(scope) ?? Promise.resolve();
+  const task = previous.catch(() => {}).then(async () => {
+    const existing = await getPermanentlyDeletedRunIds(scope);
+    existing.add(normalized);
+    await setTrackerKv(buildKey(scope), Array.from(existing));
+  });
+  pendingWrites.set(scope, task);
+  try { await task; }
+  finally { if (pendingWrites.get(scope) === task) pendingWrites.delete(scope); }
 }
 
 export function filterOutTombstonedRunIds(runIds: string[], tombstones: Set<string>): string[] {

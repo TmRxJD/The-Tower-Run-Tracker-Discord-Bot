@@ -88,8 +88,8 @@ vi.mock('@tmrxjd/platform/tools', async () => {
   };
 });
 
-import { forceSyncQueuedRuns, getLastRun, removeLastRun } from './tracker-api-client';
-import { getQueueItems, queueCloudDelete, queueCloudUpsert, removeQueueItem, upsertLocalRun } from './local-run-store';
+import { forceSyncQueuedRuns, getEffectiveQueueCount, getLastRun, removeLastRun } from './tracker-api-client';
+import { getQueueItems, markQueueItemFailed, queueCloudDelete, queueCloudUpsert, removeQueueItem, upsertLocalRun } from './local-run-store';
 import { ingestMergedRunsIntoBotStore } from './run-sync-ingest';
 
 beforeAll(() => {
@@ -129,6 +129,25 @@ beforeEach(async () => {
 });
 
 describe('tracker-api-client delete sync', () => {
+  it('retains exhausted deletes for explicit retry instead of forgetting cloud deletion', async () => {
+    const userId = 'audit-exhausted-delete';
+    await clearQueue(userId);
+    await queueCloudDelete({userId, username:'fixture', runId:'audit-delete'});
+    const item = (await getQueueItems(userId))[0];
+    for (let i=0;i<8;i++) await markQueueItemFailed(item.id, 'fixture outage');
+    deleteTrackerRunCloudDocumentsMock.mockRejectedValue(new Error('fixture outage'));
+    await forceSyncQueuedRuns(userId);
+    expect(await getQueueItems(userId)).toHaveLength(1);
+  });
+
+  it('does not discard a queued edit merely because its local run has a cloud id', async () => {
+    const userId = 'audit-queued-edit';
+    await clearQueue(userId);
+    await upsertLocalRun(userId, 'fixture', {localId:'audit-edit-local',runId:'audit-edit-cloud',type:'Farming',totalCoins:'2B'});
+    await queueCloudUpsert({userId,username:'fixture',localId:'audit-edit-local',runData:{localId:'audit-edit-local',runId:'audit-edit-cloud',type:'Farming',totalCoins:'2B'}});
+    expect(await getEffectiveQueueCount(userId)).toBe(1);
+    expect((await getQueueItems(userId))[0]?.runData?.totalCoins).toBe('2B');
+  });
   it('still deletes the cloud run when identity resolution is unavailable', async () => {
     const userId = 'discord-delete-no-identity';
     await upsertLocalRun(userId, 'tester', {

@@ -88,6 +88,7 @@ export async function fetchTrackerRunDeltasFromFunction(input: {
   };
 
   const response = await fetch(`${endpoint}/functions/${encodeURIComponent(functionId)}/executions`, {
+    signal: AbortSignal.timeout(30_000),
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -113,15 +114,11 @@ export async function fetchTrackerRunDeltasFromFunction(input: {
 
   const parsed = parseExecutionResponseBody(execution?.responseBody);
   if (!parsed) {
-    let responsePreview = '';
-    if (typeof execution?.responseBody === 'string') {
-      responsePreview = execution.responseBody.slice(0, 500);
-    }
     logger.warn('[delta-function] unexpected execution response', {
       functionId,
       status: execution?.status,
       responseStatus: execution?.responseStatusCode,
-      responsePreview,
+      responseBodyBytes: typeof execution?.responseBody === 'string' ? Buffer.byteLength(execution.responseBody) : 0,
     });
     throw new Error('tracker-run-delta-patch returned an invalid response payload');
   }

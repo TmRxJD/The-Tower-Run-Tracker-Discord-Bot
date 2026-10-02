@@ -1,3 +1,4 @@
+import { downloadBoundedBuffer } from '../../core/bounded-download';
 import { ID, Permission, Query, Role } from 'node-appwrite';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -85,6 +86,7 @@ import {
   getLocalSettingsRecord,
   getQueueItems,
   markQueueItemFailed,
+  markQueueItemTargetBlocked,
   mergeCloudRuns,
   queueCloudDelete,
   queueCloudSettings,
@@ -101,6 +103,7 @@ import {
 import { getPermanentlyDeletedRunIds, markRunPermanentlyDeleted } from './run-deletion-tombstones';
 import { awaitBackgroundAuthoritySync, beginBackgroundAuthoritySync } from './run-background-authority-sync';
 import { resolveBotRunCloudIdentity } from './run-cloud-identity';
+import { peekPendingUploadProfile } from './upload-target-profile';
 import { syncUserRunDeltas } from './run-delta-sync';
 import { getLocalRunCount as countBotLocalRunsInRxDB } from '../../rxdb/run-rxdb-store';
 import { loadBotMenuRunSummary } from '../../rxdb/run-menu-local-summary';
@@ -171,7 +174,7 @@ type CloudLeaderboardEntry = {
 const MAX_QUEUE_RETRY_COUNT = 8;
 const RUN_CLOUD_UPSERT_CONCURRENCY = 5;
 
-let duplicateLookupDocsByUser: Map<string, RunRecord[]> | null = null;
+const duplicateLookupDocsByUser = new Map<string, RunRecord[]>();
 
 type GetLastRunOptions = {
   cloudSyncMode?: 'full' | 'latest' | 'none';
@@ -645,13 +648,11 @@ async function listRunDocumentsForUser(userId: string): Promise<RunRecord[]> {
 
 async function findExistingRunDocumentForCandidate(userId: string, candidate: RunRecord): Promise<RunRecord | null> {
   let docs: RunRecord[];
-  if (duplicateLookupDocsByUser?.has(userId)) {
+  if (duplicateLookupDocsByUser.has(userId)) {
     docs = duplicateLookupDocsByUser.get(userId)!;
   } else {
     docs = await listRunDocumentsForUser(userId);
-    if (duplicateLookupDocsByUser) {
-      duplicateLookupDocsByUser.set(userId, docs);
-    }
+    if (queueReplayByUser.has(userId)) duplicateLookupDocsByUser.set(userId, docs);
   }
   for (const doc of docs) {
     if (trackerRunsShareDuplicateIdentity(doc, candidate)) {
@@ -846,6 +847,7 @@ async function writeRunDocument(params: {
   userId: string;
   username: string;
   run: RunRecord;
+  uploadProfileId?: string | null;
   existingDoc?: RunRecord | null;
 }): Promise<{ runId: string; screenshotUrl: string | null }> {
   const resolvedRunId = pickString(params.run.runId)
@@ -874,6 +876,7 @@ async function writeRunDocument(params: {
     username: params.username,
     runId: documentId,
     run: params.run,
+    uploadProfileId: params.uploadProfileId,
   });
 
   return { runId: documentId, screenshotUrl: pickString(payload.screenshotUrl) ?? null };
@@ -905,6 +908,7 @@ function buildCloudRunEntry(params: {
   userId: string;
   username: string;
   runData: RunRecord;
+  uploadProfileId?: string | null;
   canonicalRunData?: RunRecord | null;
   screenshotUrl?: string | null;
   existingEntry?: RunRecord | null;
@@ -1026,15 +1030,10 @@ async function loadDeferredScreenshotPayload(source: {
   if (!screenshotUrl) return null;
 
   try {
-    const response = await fetch(screenshotUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch deferred screenshot: ${response.status}`);
-    }
-
     return {
-      data: Buffer.from(await response.arrayBuffer()),
+      data: await downloadBoundedBuffer(screenshotUrl),
       filename: source?.filename ?? 'screenshot.png',
-      contentType: source?.contentType ?? response.headers.get('content-type') ?? 'application/octet-stream',
+      contentType: source?.contentType ?? 'application/octet-stream',
     };
   } catch (error) {
     logger.warn('deferred tracker screenshot fetch failed; continuing without binary attachment', error);
@@ -1046,6 +1045,7 @@ async function startDeferredRunCloudSync(params: {
   userId: string;
   username: string;
   runData: RunRecord;
+  uploadProfileId?: string | null;
   canonicalRunData?: RunRecord | null;
   screenshot?: AttachmentPayload | null;
   deferredScreenshotSource?: { url: string; filename?: string | null; contentType?: string | null } | null;
@@ -1062,6 +1062,7 @@ async function startDeferredRunCloudSync(params: {
       username: params.username,
       runData: params.runData,
       canonicalRunData: params.canonicalRunData ?? undefined,
+        uploadProfileId: params.uploadProfileId,
       screenshot: queuedScreenshot,
       localId: targetLocalId ?? undefined,
     });
@@ -1476,6 +1477,7 @@ async function cloudSubmitRunSummary(params: { userId: string; username: string;
     userId: params.userId,
     username: params.username,
     runData: runRecord,
+    uploadProfileId: peekPendingUploadProfile(params.userId),
     screenshot: params.screenshot ?? null,
   });
 
@@ -1489,10 +1491,12 @@ async function cloudLogRun(params: {
   userId: string;
   username: string;
   runData: RunRecord;
+  uploadProfileId?: string | null;
   canonicalRunData?: RunRecord | null;
   settings?: Record<string, unknown>;
   screenshot?: AttachmentPayload | null;
   disableDuplicateLookup?: boolean;
+  onRunIdentity?: (runId: string) => void;
 }) {
   const normalizedInput = normalizeDecimalSeparators(params.runData as Record<string, unknown>) as RunRecord;
   const targetRunId = pickString(normalizedInput.runId) ?? pickString(normalizedInput.id) ?? null;
@@ -1511,6 +1515,11 @@ async function cloudLogRun(params: {
     screenshotUrl: undefined,
     existingEntry: existing,
   });
+
+  // Publish the selected identity after duplicate lookup, before either pair write.
+  // A partial pair failure must retry the same document, including an existing duplicate.
+  const attemptedRunId = pickString(nextEntryWithoutScreenshot.runId);
+  if (attemptedRunId) params.onRunIdentity?.(attemptedRunId);
 
   if (!params.screenshot && existing && !hasMaterialTrackerRunEntryChange(existing, nextEntryWithoutScreenshot)) {
     return {
@@ -1531,6 +1540,7 @@ async function cloudLogRun(params: {
         username: params.username,
         run: nextEntryWithoutScreenshot,
         existingDoc,
+      uploadProfileId: params.uploadProfileId,
       })
     : {
         runId: pickString(existing?.id) ?? pickString(existing?.runId) ?? pickString(existingDoc?.$id) ?? ID.unique(),
@@ -1556,6 +1566,7 @@ async function cloudLogRun(params: {
           userId: params.userId,
           username: params.username,
           run: screenshotEntry,
+          uploadProfileId: params.uploadProfileId,
           existingDoc: { $id: saved.runId },
         });
       }
@@ -1568,7 +1579,7 @@ async function cloudLogRun(params: {
   return { ok: true, runId: saved.runId, screenshotUrl: finalScreenshotUrl };
 }
 
-async function cloudEditRun(params: { userId: string; username: string; runData: RunRecord; settings?: Record<string, unknown> }) {
+async function cloudEditRun(params: { userId: string; username: string; runData: RunRecord; uploadProfileId?: string | null; settings?: Record<string, unknown> }) {
   const targetRunId = buildTrackerResolvedRunReference({ runData: params.runData }).runId;
   const existingDoc = targetRunId ? ({ $id: targetRunId } as RunRecord) : null;
   const existing = existingDoc
@@ -1589,6 +1600,7 @@ async function cloudEditRun(params: { userId: string; username: string; runData:
     userId: params.userId,
     username: params.username,
     run: nextEntry,
+    uploadProfileId: params.uploadProfileId,
     existingDoc,
   });
 
@@ -2099,42 +2111,6 @@ async function pruneQueuedUpsertsShadowedByDeletes(userId: string): Promise<void
   }
 }
 
-async function pruneStaleQueuedUpserts(userId: string): Promise<void> {
-  const queueItems = await getQueueItems(userId);
-  if (!queueItems.length) return;
-
-  const localRuns = await getLocalRuns(userId);
-  if (!localRuns.length) return;
-
-  const runIds = new Set(
-    localRuns
-      .map((run) => pickString(run.runId))
-      .filter((value): value is string => Boolean(value)),
-  );
-
-  const localIdsWithRunId = new Set(
-    localRuns
-      .filter((run) => Boolean(pickString(run.runId)))
-      .map((run) => pickString(run.localId))
-      .filter((value): value is string => Boolean(value)),
-  );
-
-  for (const item of queueItems) {
-    if (item.op !== 'upsert') continue;
-
-    const itemReference = buildTrackerQueuedRunReferenceIdentity(item);
-    const itemRunId = itemReference.runId;
-    const itemLocalId = itemReference.localId;
-    const resolvedByRunId = Boolean(itemRunId && runIds.has(itemRunId));
-    const resolvedByLocalId = Boolean(itemLocalId && localIdsWithRunId.has(itemLocalId));
-
-    if (!resolvedByRunId && !resolvedByLocalId) continue;
-
-    await cleanupQueuedScreenshot(item.screenshot ?? null);
-    await removeQueueItem(item.id);
-  }
-}
-
 async function hasLocalRunReference(params: { userId: string; runId?: string | null; localId?: string | null }): Promise<boolean> {
   const targetRunId = pickString(params.runId);
   const targetLocalId = pickString(params.localId);
@@ -2208,9 +2184,14 @@ async function processQueuedUpsertItem(
     localId: queuedReference.localId,
   });
 
-  if (!localRunStillExists) {
-    await cleanupQueuedScreenshot(item.screenshot ?? null);
+  const tombstones = await getPermanentlyDeletedRunIds(item.userId);
+  if ([queuedReference.runId, queuedReference.localId].some(id => id && tombstones.has(id))) {
     return { key: item.id, status: 'succeeded' };
+  }
+  if (!localRunStillExists) {
+    if (!item.runData || !queuedReference.localId) throw new Error('Queued run needs a recoverable local reference; item retained.');
+    // A memory-cache miss after restart is not a deletion receipt.
+    await upsertLocalRun(item.userId, item.username, { ...buildLocalRunUpsertPayload(item.runData, item.canonicalRunData), localId: queuedReference.localId, runId: queuedReference.runId });
   }
 
   syncState.latestUsername = item.username || syncState.latestUsername;
@@ -2220,20 +2201,20 @@ async function processQueuedUpsertItem(
     username: item.username,
     runData: item.runData ?? {},
     canonicalRunData: item.canonicalRunData ?? undefined,
+    uploadProfileId: item.uploadProfileId,
     screenshot: queuedScreenshot,
     disableDuplicateLookup: !queuedReference.runId,
   });
   const cloudRunId = (res as { runId?: unknown }).runId;
   const screenshotUrl = pickString((res as { screenshotUrl?: unknown }).screenshotUrl);
   if (cloudRunId) {
-    const localRunStillExistsAfterCloudWrite = await hasLocalRunReference({
-      userId: item.userId,
-      runId: pickString(cloudRunId) ?? queuedReference.runId,
-      localId: item.localId ?? queuedReference.localId,
-    });
-    if (!localRunStillExistsAfterCloudWrite) {
+    const deletedIds = await getPermanentlyDeletedRunIds(item.userId);
+    if ([queuedReference.runId, queuedReference.localId].some(id => id && deletedIds.has(id))) {
       await cloudDeleteRun(item.userId, String(cloudRunId));
       return { key: item.id, status: 'succeeded' };
+    }
+    if (!(await getQueueItems(item.userId)).some(current => current.id === item.id)) {
+      return { key: item.id, status: 'succeeded' }; // A newer payload replaced this replay.
     }
 
     const localRunPayload = buildLocalRunUpsertPayload(item.runData || {}, item.canonicalRunData ?? null);
@@ -2250,20 +2231,35 @@ async function processQueuedUpsertItem(
   return { key: item.id, status: 'succeeded' };
 }
 
-async function syncQueuedRuns(userId: string) {
+const queueReplayByUser = new Map<string, Promise<void>>();
+async function syncQueuedRuns(userId: string): Promise<void> {
+  const existing = queueReplayByUser.get(userId);
+  if (existing) return existing;
+  const task = syncQueuedRunsOnce(userId).finally(() => {
+    if (queueReplayByUser.get(userId) === task) queueReplayByUser.delete(userId);
+  });
+  queueReplayByUser.set(userId, task);
+  return task;
+}
+async function syncQueuedRunsOnce(userId: string) {
   const settings = await getLocalSettings(userId);
   if (!settings.cloudSyncEnabled) return;
 
   await pruneQueuedUpsertsShadowedByDeletes(userId);
 
   const queue = await getQueueItems(userId);
+  for (const item of queue) {
+    if (item.op === 'upsert' && item.uploadProfileId === undefined && !buildTrackerQueuedRunReferenceIdentity(item).runId) {
+      await markQueueItemTargetBlocked(item.id);
+    }
+  }
   const hasCloudIdentity = await resolveCloudOperationUserId(userId, 'queue replay');
   const replayQueue = hasCloudIdentity
-    ? queue
+    ? queue.filter(item => !item.blockedReason)
     : queue.filter(item => item.op === 'delete' && Boolean(item.runId));
   if (!replayQueue.length) return;
 
-  duplicateLookupDocsByUser = new Map();
+  duplicateLookupDocsByUser.delete(userId);
   try {
     let shouldRefreshLeaderboard = false;
     let latestUsername = 'unknown';
@@ -2336,14 +2332,12 @@ async function syncQueuedRuns(userId: string) {
     });
 
     for (const item of settlement.exhaustedItems) {
-      logger.warn('dropping stale queue item after max retries', {
+      logger.warn('retaining exhausted queue item for explicit retry', {
         userId: item.userId,
         queueItemId: item.id,
         op: item.op,
         retryCount: item.retryCount,
       });
-      await cleanupQueuedScreenshot(item.screenshot ?? null);
-      await removeQueueItem(item.id);
     }
 
     for (const item of settlement.succeededItems) {
@@ -2361,7 +2355,7 @@ async function syncQueuedRuns(userId: string) {
       });
     }
   } finally {
-    duplicateLookupDocsByUser = null;
+    duplicateLookupDocsByUser.delete(userId);
   }
 }
 
@@ -2524,6 +2518,7 @@ export async function logRun(params: {
   userId: string;
   username: string;
   runData: RunRecord;
+  uploadProfileId?: string | null;
   canonicalRunData?: RunRecord | null;
   settings?: Record<string, unknown>;
   screenshot?: AttachmentPayload | null;
@@ -2532,6 +2527,7 @@ export async function logRun(params: {
   skipLeaderboardRefresh?: boolean;
   deferCloudSync?: boolean;
 }) {
+  params = { ...params, uploadProfileId: Object.prototype.hasOwnProperty.call(params, 'uploadProfileId') ? params.uploadProfileId : peekPendingUploadProfile(params.userId) };
   const settings = await getLocalSettings(params.userId);
   let localOnlyScreenshotPatch: Record<string, unknown> = {};
   let localImageCapacityReached = false;
@@ -2607,6 +2603,7 @@ export async function logRun(params: {
         username: params.username,
         runData: deferredRunData,
         canonicalRunData: params.canonicalRunData ?? null,
+        uploadProfileId: params.uploadProfileId,
         screenshot: params.screenshot ?? null,
         deferredScreenshotSource: params.deferredScreenshotSource ?? null,
       }),
@@ -2614,7 +2611,10 @@ export async function logRun(params: {
   }
 
   try {
-    const response = await cloudLogRun(params);
+    const response = await cloudLogRun({
+      ...params,
+      onRunIdentity: runId => { params = { ...params, runData: { ...params.runData, runId } }; },
+    });
     const runId = (response as { runId?: unknown }).runId;
     const resolvedRunId = pickString(runId);
     const screenshotUrl = pickString((response as { screenshotUrl?: unknown }).screenshotUrl);
@@ -2657,6 +2657,7 @@ export async function logRun(params: {
       username: params.username,
       runData: { ...params.runData, localId: local.localId },
       canonicalRunData: params.canonicalRunData ?? undefined,
+      uploadProfileId: params.uploadProfileId,
       screenshot: queuedScreenshot,
       localId: local.localId,
     });
@@ -2880,11 +2881,13 @@ export async function editRun(params: {
   userId: string;
   username: string;
   runData: RunRecord;
+  uploadProfileId?: string | null;
   canonicalRunData?: RunRecord | null;
   settings?: Record<string, unknown>;
   skipLeaderboardRefresh?: boolean;
   deferCloudSync?: boolean;
 }) {
+  params = { ...params, uploadProfileId: Object.prototype.hasOwnProperty.call(params, 'uploadProfileId') ? params.uploadProfileId : peekPendingUploadProfile(params.userId) };
   const localRunPayload = buildLocalRunUpsertPayload(params.runData, params.canonicalRunData ?? null);
   const local = await upsertLocalRun(params.userId, params.username, { ...localRunPayload, updatedAt: Date.now() });
   const localReference = buildTrackerResolvedRunReference({
@@ -2918,6 +2921,7 @@ export async function editRun(params: {
         username: params.username,
         runData: deferredRunData,
         canonicalRunData: params.canonicalRunData ?? null,
+        uploadProfileId: params.uploadProfileId,
       }),
     };
   }
@@ -2950,6 +2954,7 @@ export async function editRun(params: {
       username: params.username,
       runData: { ...params.runData },
       canonicalRunData: params.canonicalRunData ?? undefined,
+      uploadProfileId: params.uploadProfileId,
       localId: buildTrackerResolvedRunReference({ runData: params.runData }).localId ?? undefined,
     });
     logger.warn('cloud edit run unavailable; queued for retry', error);
@@ -2980,7 +2985,6 @@ export async function getLocalRunSummary(userId: string, verifiedRuns?: Record<s
 }
 
 export async function getEffectiveQueueCount(userId: string): Promise<number> {
-  await pruneStaleQueuedUpserts(userId);
   return getQueueItems(userId).then((items) => items.length);
 }
 
@@ -3047,9 +3051,7 @@ export async function removeLastRun(params: { userId: string; runId?: string | n
 
   await awaitBackgroundAuthoritySync(params.userId);
 
-  if (runId) {
-    await markRunPermanentlyDeleted(params.userId, runId);
-  }
+  await markRunPermanentlyDeleted(params.userId, runId ?? localId!);
 
   await removeLocalRun(params.userId, { runId, localId });
   await pruneQueuedUpsertsForDeletedRun(params);

@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, rmdirSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
+import sqlite3 from 'sqlite3'
 
 const action = process.argv[2]
 const serviceName = 'trackerbot'
@@ -183,8 +184,26 @@ async function verifyService() {
   }
 
   const finalState = readPm2Service()
+  const ready = await readRuntimeReadyReceipt()
+  if (ready?.pid !== finalState.pid || ready.readyAt < finalState.pm2_env.pm_uptime) {
+    throw new Error(`${serviceName} is online but has no current Discord ClientReady receipt`)
+  }
   const uptimeSeconds = Math.round((Date.now() - finalState.pm2_env.pm_uptime) / 1000)
-  process.stdout.write(`${serviceName} healthy: online for ${uptimeSeconds}s with no restarts over a ${seconds}s check\n`)
+  process.stdout.write(`${serviceName} healthy: Discord ready, online for ${uptimeSeconds}s with no restarts over a ${seconds}s check\n`)
+}
+
+function readRuntimeReadyReceipt() {
+  return new Promise((resolveReceipt, reject) => {
+    const db = new sqlite3.Database(resolve('.data/indexeddb/tracker-bot-idb.sqlite'), sqlite3.OPEN_READONLY, (error) => {
+      if (error) { reject(new Error('Tracker readiness storage could not be read')); return }
+      db.get('SELECT value FROM kv WHERE key = ?', ['tracker-runtime-ready:v1'], (queryError, row) => {
+        db.close()
+        if (queryError) { reject(new Error('Tracker readiness receipt could not be read')); return }
+        try { resolveReceipt(row ? JSON.parse(row.value) : null) }
+        catch { reject(new Error('Tracker readiness receipt is invalid')) }
+      })
+    })
+  })
 }
 
 function updatePlatformDependency() {

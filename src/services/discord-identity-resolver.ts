@@ -11,8 +11,9 @@ import { logger } from '../core/logger';
 export { TrackerIdentityNotFoundError, TRACKER_IDENTITY_NOT_FOUND_CODE };
 
 const KV_PREFIX = 'tracker:discord-appwrite-id:v1:';
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CACHE_TTL_MS = 60_000;
 const runtimeCache = new Map<string, string | null>();
+const runtimeCachedAt = new Map<string, number>();
 
 type CachedEntry = {
   appwriteId: string | null;
@@ -23,6 +24,11 @@ export async function resolveAppwriteIdForDiscordUser(
   discordId: string,
   options: { requireLinked?: boolean; failOnLookupError?: boolean } = {},
 ): Promise<string | null> {
+  const normalized = discordId.trim();
+  if (Date.now() - (runtimeCachedAt.get(normalized) ?? 0) >= CACHE_TTL_MS) {
+    runtimeCache.delete(normalized);
+    runtimeCachedAt.delete(normalized);
+  }
   const { client } = createAppwriteClient();
   return resolveTrackerDiscordAppwriteUserId({
     discordUserId: discordId,
@@ -48,6 +54,13 @@ export async function resolveAppwriteIdForDiscordUser(
       },
     },
     onResolved: ({ discordUserId, appwriteUserId }) => {
+      runtimeCachedAt.set(discordUserId, Date.now());
+      while (runtimeCache.size > 1_024) {
+        const oldest = runtimeCache.keys().next().value;
+        if (!oldest) break;
+        runtimeCache.delete(oldest);
+        runtimeCachedAt.delete(oldest);
+      }
       if (appwriteUserId) {
         logger.info('[identity] Discord → Appwrite resolved', { discordUserId, appwriteUserId });
       } else {
@@ -63,6 +76,7 @@ export async function resolveAppwriteIdForDiscordUser(
 
 export async function refreshAppwriteIdForDiscordUser(discordId: string): Promise<string | null> {
   runtimeCache.delete(discordId.trim());
+  runtimeCachedAt.delete(discordId.trim());
   await setTrackerKv(`${KV_PREFIX}${discordId.trim()}`, { appwriteId: null, cachedAt: 0 } satisfies CachedEntry).catch(() => {});
   return resolveAppwriteIdForDiscordUser(discordId);
 }

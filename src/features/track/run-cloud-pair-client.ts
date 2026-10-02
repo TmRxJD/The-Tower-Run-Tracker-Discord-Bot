@@ -15,7 +15,7 @@ import {
 } from '@tmrxjd/platform/tools';
 import { createAppwriteClient } from '../../persistence/appwrite-client';
 import { resolveBotRunCloudIdentity } from './run-cloud-identity';
-import { peekPendingUploadProfile } from './upload-target-profile';
+import { isNotFoundAppwriteError } from '../../persistence/appwrite-error-utils';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
 
@@ -175,10 +175,22 @@ export async function writeBotRunCloudDocumentPair(params: {
   username: string;
   runId: string;
   run: Record<string, unknown>;
+  uploadProfileId?: string | null;
 }): Promise<{ mainWritten: boolean; extendedWritten: boolean }> {
   const { databases } = createAppwriteClient();
   const identity = await resolveBotRunCloudIdentity(params.userId);
   const ownerUserId = identity.cloudWriteUserId ?? identity.activeUserId ?? params.userId;
+  let uploadProfileId = params.uploadProfileId;
+  // Authorization belongs at the bot boundary. A missing target on an old queued
+  // entry never authorizes guessing Main; only a verified existing run may update.
+  try {
+    const existing = await databases.getDocument(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, params.runId);
+    if (!identity.lookupUserIds.includes(String(existing.userId ?? ''))) throw new Error('Run owner does not match this Discord account.');
+    uploadProfileId = typeof existing.profileId === 'string' && existing.profileId.trim() ? existing.profileId.trim() : null;
+  } catch (error) {
+    if (!isNotFoundAppwriteError(error)) throw error;
+    if (uploadProfileId === undefined) throw new Error('Queued new run needs an explicit target profile; entry retained.');
+  }
   const permissions = buildTrackerRunDocumentPermissions({
     userIds: identity.permissionUserIds,
     permissionFactory: Permission,
@@ -197,6 +209,6 @@ export async function writeBotRunCloudDocumentPair(params: {
     permissions,
     // Target profile for this /track upload (null = Main). NEW runs take it; the
     // pair-writer never re-stamps an existing run, so a Main run is never moved.
-    profileId: peekPendingUploadProfile(params.userId),
+    profileId: uploadProfileId,
   });
 }

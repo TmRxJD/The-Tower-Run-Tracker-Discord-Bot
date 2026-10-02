@@ -7,14 +7,19 @@ vi.mock('./logger', () => ({ logger }));
 
 import { registerGatewayHealthLogging } from './gateway-health';
 
-function makeClient() {
+function makeClient(onInvalidated?: () => void) {
   const emitter = new EventEmitter();
   const client = Object.assign(emitter, { ws: { ping: 87 } }) as unknown as Client;
-  registerGatewayHealthLogging(client);
+  registerGatewayHealthLogging(client, onInvalidated);
   return emitter;
 }
 
 describe('gateway health logging', () => {
+  it('requests graceful shutdown when the Discord session becomes invalidated',()=>{
+    const shutdown=vi.fn();const client=makeClient(shutdown);
+    client.emit('invalidated');
+    expect(shutdown).toHaveBeenCalledOnce();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });

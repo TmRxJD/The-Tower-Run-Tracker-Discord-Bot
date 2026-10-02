@@ -1,3 +1,4 @@
+import { downloadBoundedBuffer } from '../../../core/bounded-download';
 import * as Discord from 'discord.js';
 import { beginPasteDiagnostic, updatePasteDiagnostic } from '../paste-diagnostics';
 import { reportPasteFailure } from './paste-failure-response';
@@ -454,13 +455,7 @@ async function verifyScreenshotMatchesPastedRun(
   attachment: AttachmentLike,
   pastedRunData: RunDataLike,
 ): Promise<void> {
-  const response = await fetch(attachment.url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch screenshot for verification: ${response.status}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const fileData = Buffer.from(arrayBuffer);
+  const fileData = await downloadBoundedBuffer(attachment.url);
   const ocrResult = await runOCR({
     data: fileData,
     filename: attachment.name ?? attachment.id ?? 'screenshot.png',
@@ -614,10 +609,7 @@ export async function handleDirectAttachment(
   await interaction.editReply({ embeds: [createLoadingEmbed(uploadUi.processingScreenshot)], components: [] }).catch(() => {});
 
   try {
-    const response = await fetch(attachment.url);
-    if (!response.ok) throw new Error(`Failed to fetch attachment: ${response.status}`);
-    const arrayBuffer = await response.arrayBuffer();
-    const imageBuffer = Buffer.from(arrayBuffer);
+    const imageBuffer = await downloadBoundedBuffer(attachment.url);
     const attachmentName = attachment.name ?? attachment.id ?? 'screenshot.png';
     const attachmentContentType = attachment.contentType ?? 'application/octet-stream';
 

@@ -3,6 +3,13 @@
 ## 2026-10-02
 
 ### Fixed
+- Preserve exhausted cloud queue entries and screenshots; allow explicit retry, retain pending edits in queue counts, restore queued payloads after cache misses, and serialize queue replacement/replay/deletion receipts.
+- Capture upload profile once across save/import/retry paths, distinguish explicit Main from unknown legacy targets, preserve verified cloud ownership/profile, and reject non-404 creation assumptions. Preserve and block legacy new-run queue targets needing an explicit choice.
+- Reuse the selected document ID after partial cloud pair writes, including duplicate updates and simultaneous retries, to avoid a second main document.
+- Remove shared JWT identity inheritance and bound both identity cache layers; verify import cancellation ownership.
+- Replace startup locks with immutable owner markers and ownership-safe release; shut down on gateway invalidation, allow ten seconds for PM2 shutdown, and require a fresh Discord-ready receipt during deployment verification.
+- Bound delta/share requests and screenshot/import downloads, and remove raw delta-response previews from diagnostics.
+
 - Preserve the delta sync cursor when a menu refresh stops before the final page. Fail incomplete bulk imports without checkpointing skipped pages, so retries can recover missing history and edits.
 - Refresh selected run data before sharing and bind new share buttons to a captured data/count version. Keep report headline values aligned with the summary; missing snapshots do not silently select another run. Existing posts and cloud records remain unchanged.
 - Add bounded, redacted local paste diagnostics with seven-day default retention, private storage, safe references and failure responses; storage errors cannot interrupt run handling.

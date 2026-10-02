@@ -16,7 +16,7 @@ const GATEWAY_CAUSE_PATTERN = /Destroying shard|unexpected code|unknown error|In
  * ("command did nothing, had to run it again"). discord.js reconnects on its own, so none
  * of these are fatal.
  */
-export function registerGatewayHealthLogging(client: Client): void {
+export function registerGatewayHealthLogging(client: Client, onInvalidated?: () => void): void {
   client.on(Events.ShardDisconnect, (event, shardId) => {
     logger.warn('[gateway] shard disconnected', {
       shardId,
@@ -40,6 +40,7 @@ export function registerGatewayHealthLogging(client: Client): void {
 
   client.on(Events.Invalidated, () => {
     logger.error('[gateway] session invalidated; a restart is required to reconnect');
+    onInvalidated?.();
   });
 
   client.on(Events.Debug, (message) => {
