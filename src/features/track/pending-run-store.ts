@@ -16,6 +16,7 @@ interface PendingRunRecord {
   defaultRunType?: string;
   profileOptions?: BotProfileOption[];
   uploadProfileId?: string | null;
+  pasteDiagnosticId?: string;
   runSource?: 'paste' | 'ocr' | 'manual' | 'unknown';
   createdAt: number;
   lastActivity: number;

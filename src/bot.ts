@@ -6,6 +6,7 @@ import { createBotBootstrapContext } from './core/bootstrap-contract';
 import { acquireSharedDiscordTokenLock, acquireSingleInstanceLock } from './core/single-instance-lock';
 import { TrackerBotClient } from './core/tracker-bot-client';
 import { logger } from './core/logger';
+import { startPasteDiagnosticMaintenance, stopPasteDiagnosticMaintenance } from './features/track/paste-diagnostics';
 import { registerInteractionRouter } from './core/interaction-router';
 import { startEventLoopLagMonitor, stopEventLoopLagMonitor } from './core/diagnostics';
 import { registerEvents } from './events';
@@ -48,6 +49,7 @@ function registerProcessHandlers(context: ShutdownContext): void {
     forceExit.unref();
 
     stopEventLoopLagMonitor();
+    stopPasteDiagnosticMaintenance();
     stopTrackerRunBackgroundSyncScheduler();
     await flushLocalOnlyRunBackups().catch(() => null);
     await Promise.resolve(context.getClient()?.destroy()).catch(() => null);
@@ -111,6 +113,7 @@ async function bootstrap() {
     registerEvents(startup.client);
     registerComponentHandlers(startup.client);
     registerInteractionRouter(startup.client);
+    startPasteDiagnosticMaintenance();
 
     await startup.client.login(startup.runtime.loginToken);
   } catch (error) {

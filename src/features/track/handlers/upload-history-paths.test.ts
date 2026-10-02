@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ prepare: vi.fn(), runs: vi.fn(), create: vi.fn(), review: vi.fn(), ocr: vi.fn(), settings: vi.fn() }));
+vi.mock('../paste-diagnostics', () => ({ beginPasteDiagnostic: async () => 'P-test-fixture', updatePasteDiagnostic: async () => true }));
 vi.mock('../run-upload-history', () => ({ prepareBotRunUploadHistory: mocks.prepare, withBotRunSubmissionLock: async (_user: string, action: () => Promise<unknown>) => action() }));
 vi.mock('../tracker-api-client', async importOriginal => ({ ...await importOriginal<object>(), runOCR: mocks.ocr }));
 vi.mock('../local-run-store', async importOriginal => ({ ...await importOriginal<object>(), getLocalSettings: mocks.settings }));

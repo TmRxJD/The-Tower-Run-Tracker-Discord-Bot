@@ -2,6 +2,7 @@ import type { Interaction} from 'discord.js';
 import { MessageFlagsBitField } from 'discord.js';
 import { logger } from './logger';
 import { recordDiagnostic } from './diagnostics';
+import { hasOwnedModalWait } from './interaction-session';
 import type { TrackerBotClient } from './tracker-bot-client';
 import { ANALYTICS_EVENT_COMMAND_INVOKED } from '@tmrxjd/platform/tools';
 import { clearMainMenuSession } from '../features/track/handlers/upload-handlers';
@@ -50,8 +51,13 @@ export function registerInteractionRouter(client: TrackerBotClient) {
         // Any component interaction means the user has navigated — clear the main menu
         // background update so it doesn't stomp whatever screen they've moved to.
         clearMainMenuSession(interaction.user.id);
+        // Capture before the async dispatch: the local collector may resolve and
+        // remove its wait while dispatch is pending. It still owned this event.
+        const locallyOwnedModal = interaction.isModalSubmit()
+          && hasOwnedModalWait(interaction.user.id, interaction.customId);
         const handled = await client.components.dispatch(interaction);
         if (!handled) {
+          if (locallyOwnedModal) return;
           // Nothing acknowledged this interaction, so Discord renders "This interaction
           // failed" and the user clicks again. Usually a customId from a message that
           // outlived the process that registered its handler.
@@ -62,8 +68,8 @@ export function registerInteractionRouter(client: TrackerBotClient) {
             type: interaction.type,
             ageOnArrivalMs: Date.now() - interaction.createdTimestamp,
           });
-          // Modal submits are claimed by command-local awaitModalSubmit waits and are
-          // expected to reach no registered handler; stay out of their way.
+          // Unowned modal submits remain diagnostic events. Do not introduce an
+          // automatic ACK here; registered/local handlers retain response ownership.
           if (!interaction.isModalSubmit() && !interaction.replied && !interaction.deferred) {
             await interaction.reply({ content: STALE_COMPONENT_MESSAGE, flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
           }

@@ -1,4 +1,6 @@
 import * as Discord from 'discord.js';
+import { beginPasteDiagnostic, updatePasteDiagnostic } from '../paste-diagnostics';
+import { reportPasteFailure } from './paste-failure-response';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
 import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import {
@@ -316,7 +318,7 @@ function applyAutoTournament(processedData: RunDataLike, rawTierCandidates: unkn
   }
 }
 
-async function createPendingRunWithMetadata(params: { userId: string; username: string; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null; defaultRunType?: string | null }) {
+async function createPendingRunWithMetadata(params: { userId: string; username: string; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null; defaultRunType?: string | null; pasteDiagnosticId?: string }) {
   const { userId, username, runData, screenshot, canonicalRunData } = params;
   // Both paste and OCR converge here, before duplicate detection/review.
   const history = getTrackerFlowMode(userId) === 'lifetime'
@@ -366,6 +368,7 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
     runData: canonicalizeRunData(hydratedRunData),
     canonicalRunData: canonicalRunData ? canonicalizeRunData(canonicalRunData) : null,
     rawParseFields,
+    pasteDiagnosticId: params.pasteDiagnosticId,
     screenshot,
     isDuplicate,
     decimalPreference,
@@ -1101,6 +1104,8 @@ export async function handleDirectTextPaste(
   const uploadUi = getTrackerUiConfig(resolvedMode).uploadFlows;
   const userId = interaction.user.id;
   const username = interaction.user.username;
+  const pasteDiagnosticId = await beginPasteDiagnostic(userId, 'direct', text);
+  let stage: 'parse' | 'history' | 'review' = 'parse';
 
   await interaction.editReply({ embeds: [createLoadingEmbed(uploadUi.processingPaste)], components: [] }).catch(async (err: unknown) => {
     const errorRecord = toRecord(err);
@@ -1113,29 +1118,22 @@ export async function handleDirectTextPaste(
 
   try {
     const runData = toRunDataLike(parseRunDataFromText(text));
+    await updatePasteDiagnostic(pasteDiagnosticId, { result: 'parsed', stage: 'parse' });
+    stage = 'history';
     const processedData = buildProcessedRunDataFromParsed(runData, {
       preNote,
       defaultRunType,
       mode: resolvedMode,
     });
 
-    logger.info('tracker direct paste parsed', {
-      userId,
-      rawTier: runData.tier,
-      rawWave: runData.wave,
-      rawKilledBy: runData.killedBy,
-      rawTaggedByDeathWave: runData.taggedByDeathWave,
-      canonicalTier: processedData.tier,
-      canonicalWave: processedData.wave,
-      canonicalKilledBy: processedData.killedBy,
-      canonicalTaggedByDeathWave: processedData.taggedByDeathWave,
-    });
+    logger.info('[paste] report parsed', { userId, reference: pasteDiagnosticId });
 
     const pending = await createPendingRunWithMetadata({
       userId,
       username,
       runData: processedData,
       canonicalRunData: runData,
+      pasteDiagnosticId,
       screenshot: attachmentOrNull ? { url: attachmentOrNull.url, name: attachmentOrNull.name, contentType: attachmentOrNull.contentType } : null,
       defaultRunType: defaultRunType ?? undefined,
     });
@@ -1149,10 +1147,11 @@ export async function handleDirectTextPaste(
       });
     }
 
+    stage = 'review';
+    await updatePasteDiagnostic(pasteDiagnosticId, { result: 'review_ready', stage });
     await renderDataReview(interaction, pending.token, pending);
   } catch (err: unknown) {
-    await logError(interaction.client as LogClient, interaction.user, err, 'direct_text_paste');
-    await interaction.editReply({ content: uploadUi.unableParsePasted, embeds: [], components: [] }).catch(() => {});
+    await reportPasteFailure(interaction, err, pasteDiagnosticId, stage, 'direct_text_paste');
   }
 }
 
@@ -1200,6 +1199,8 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
     }
 
     const text = submitted.fields.getTextInputValue(TRACKER_IDS.flow.pasteText);
+    const pasteDiagnosticId = await beginPasteDiagnostic(userId, 'modal', text);
+    let stage: 'parse' | 'history' | 'review' = 'parse';
     const preNote = submitted.fields.getTextInputValue(TRACKER_IDS.flow.pasteNote) || null;
 
     // Stamp the chosen profile (null = Main) at the run-write choke point BEFORE creating the
@@ -1213,21 +1214,20 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
 
     try {
       const runData = toRunDataLike(parseRunDataFromText(text));
+      await updatePasteDiagnostic(pasteDiagnosticId, { result: 'parsed', stage: 'parse' });
+      stage = 'history';
       const processedData = buildProcessedRunDataFromParsed(runData, {
         preNote,
         defaultRunType: getTrackerInitialRunType(userId) ?? 'Farming',
         mode,
       });
 
-      const pending = await createPendingRunWithMetadata({ userId, username, runData: processedData, canonicalRunData: runData, screenshot: null, defaultRunType: getTrackerInitialRunType(userId) ?? 'Farming' });
+      const pending = await createPendingRunWithMetadata({ userId, username, runData: processedData, canonicalRunData: runData, pasteDiagnosticId, screenshot: null, defaultRunType: getTrackerInitialRunType(userId) ?? 'Farming' });
+      stage = 'review';
+      await updatePasteDiagnostic(pasteDiagnosticId, { result: 'review_ready', stage });
       await renderDataReview(interaction as unknown as TrackReplyInteractionLike, pending.token, pending);
     } catch (err: unknown) {
-      if (String(err || '').includes('TIME')) {
-        await interaction.editReply({ content: uploadUi.pasteTimeout, embeds: [], components: [] }).catch(() => {});
-      } else {
-        await logError(interaction.client as LogClient, interaction.user, err, 'paste_flow_modal');
-        await interaction.editReply({ content: uploadUi.unableParsePasted, embeds: [], components: [] }).catch(() => {});
-      }
+      await reportPasteFailure(interaction as unknown as TrackReplyInteractionLike, err, pasteDiagnosticId, stage, 'paste_flow_modal');
     }
   } catch (err: unknown) {
     if (String(err || '').includes('TIME')) {

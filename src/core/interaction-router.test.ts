@@ -2,8 +2,11 @@ import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../features/track/handlers/upload-handlers', () => ({ clearMainMenuSession: vi.fn() }));
+vi.mock('./diagnostics', () => ({ recordDiagnostic: vi.fn() }));
 
 import { STALE_COMPONENT_MESSAGE, registerInteractionRouter } from './interaction-router';
+import { recordDiagnostic } from './diagnostics';
+import { awaitOwnedModalSubmit } from './interaction-session';
 import type { TrackerBotClient } from './tracker-bot-client';
 
 type Kind = 'command' | 'button' | 'select' | 'modal';
@@ -77,13 +80,14 @@ describe('interaction router', () => {
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: STALE_COMPONENT_MESSAGE }));
   });
 
-  it('leaves unclaimed modal submits alone: a local awaitModalSubmit owns them', async () => {
+  it('retains a diagnostic for an unowned modal without sending a competing reply', async () => {
     const { fire } = setup();
     const interaction = makeInteraction('modal');
 
     await fire(interaction);
 
     expect(interaction.reply).not.toHaveBeenCalled();
+    expect(recordDiagnostic).toHaveBeenCalledWith('interaction.dropped', expect.objectContaining({ customId: 'tracker:old-menu' }));
   });
 
   it('does not reply on top of a handler that already answered', async () => {
@@ -122,5 +126,44 @@ describe('interaction router', () => {
     await fire(interaction);
 
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: 'There was an error handling this interaction.' }));
+  });
+});
+
+describe('collector-owned modal diagnostics', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('recognizes an exact owner wait even if it completes while component dispatch is pending', async () => {
+    const { fire, dispatch } = setup();
+    const modal = makeInteraction('modal', { customId: 'owned-modal' });
+    let resolveWait!: (value: never) => void;
+    const wait = awaitOwnedModalSubmit({ user: { id: 'user-1' }, awaitModalSubmit: () => new Promise(resolve => { resolveWait = resolve; }) }, 'owned-modal');
+    dispatch.mockImplementationOnce(async () => { resolveWait(modal as never); await wait; return false; });
+    await fire(modal);
+    expect(recordDiagnostic).not.toHaveBeenCalled();
+    expect(modal.reply).not.toHaveBeenCalled();
+    // After completion, a later submission is genuinely unowned and must remain visible.
+    await fire(modal);
+    expect(recordDiagnostic).toHaveBeenCalledWith('interaction.dropped', expect.anything());
+  });
+
+  it('does not treat another user or another custom id as owned', async () => {
+    const { fire } = setup();
+    let resolveWait!: (value: never) => void;
+    const wait = awaitOwnedModalSubmit({ user: { id: 'user-1' }, awaitModalSubmit: () => new Promise(resolve => { resolveWait = resolve; }) }, 'owned-modal');
+    try {
+      await fire(makeInteraction('modal', { customId: 'owned-modal', user: { id: 'other-user' } }));
+      await fire(makeInteraction('modal', { customId: 'different-modal' }));
+      expect(recordDiagnostic).toHaveBeenCalledTimes(2);
+    } finally { resolveWait({} as never); await wait; }
+  });
+
+  it.each(['expired', 'failed'])('keeps later submissions visible after a %s collector', async reason => {
+    const { fire } = setup();
+    const error = reason === 'expired'
+      ? Object.assign(new Error('Collector received no interactions before ending with reason: time'), { code: 'InteractionCollectorError' })
+      : new Error('fixture collector failure');
+    await expect(awaitOwnedModalSubmit({ user: { id: 'user-1' }, awaitModalSubmit: async () => { throw error; } }, 'ended-modal')).rejects.toBe(error);
+    await fire(makeInteraction('modal', { customId: 'ended-modal' }));
+    expect(recordDiagnostic).toHaveBeenCalledWith('interaction.dropped', expect.anything());
   });
 });

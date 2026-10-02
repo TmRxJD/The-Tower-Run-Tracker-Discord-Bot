@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { awaitOwnedModalSubmit, createOwnedModalFilter, isModalSubmitTimeout } from './interaction-session';
+import { awaitOwnedModalSubmit, createOwnedModalFilter, isModalSubmitTimeout, hasOwnedModalWait } from './interaction-session';
 
 describe('interaction session helpers', () => {
   it('creates an owned modal filter bound to custom id and user id', () => {
@@ -31,4 +31,25 @@ it('recognizes only the normal Discord modal collector timeout', () => {
   expect(isModalSubmitTimeout(new Error('NETWORK TIMEOUT'))).toBe(false);
   expect(isModalSubmitTimeout(Object.assign(new Error('Collector received no interactions before ending with reason: messageDelete'), { code: 'InteractionCollectorError' }))).toBe(false);
   expect(isModalSubmitTimeout(null)).toBe(false);
+});
+
+describe('modal wait lifecycle', () => {
+  it('registers before invoking the collector and cleans up synchronous failures', async () => {
+    const error = new Error('fixture synchronous failure');
+    const request = awaitOwnedModalSubmit({ user: { id: 'sync-owner' }, awaitModalSubmit: () => {
+      expect(hasOwnedModalWait('sync-owner', 'sync-modal')).toBe(true); throw error;
+    } }, 'sync-modal');
+    await expect(request).rejects.toBe(error);
+    expect(hasOwnedModalWait('sync-owner', 'sync-modal')).toBe(false);
+  });
+  it('keeps overlapping waits owned until every collector finishes', async () => {
+    let first!: (value: never) => void; let second!: (value: never) => void;
+    const a = awaitOwnedModalSubmit({ user: { id: 'overlap-owner' }, awaitModalSubmit: () => new Promise(resolve => { first = resolve; }) }, 'overlap-modal');
+    const b = awaitOwnedModalSubmit({ user: { id: 'overlap-owner' }, awaitModalSubmit: () => new Promise(resolve => { second = resolve; }) }, 'overlap-modal');
+    expect(hasOwnedModalWait('overlap-owner', 'overlap-modal')).toBe(true);
+    first({} as never); await a;
+    expect(hasOwnedModalWait('overlap-owner', 'overlap-modal')).toBe(true);
+    second({} as never); await b;
+    expect(hasOwnedModalWait('overlap-owner', 'overlap-modal')).toBe(false);
+  });
 });

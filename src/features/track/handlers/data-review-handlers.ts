@@ -1,3 +1,4 @@
+import { updatePasteDiagnostic } from '../paste-diagnostics';
 import type { MessageComponentInteraction} from 'discord.js';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
 import { findPotentialDuplicateRun } from './upload-helpers';
@@ -33,7 +34,7 @@ function reviewUi() {
 }
 
 export async function renderDataReview(interaction: TrackReplyInteractionLike, token: string, pending: PendingRecordLike, label: string = 'Extracted') {
-  logger.info('tracker review render', {
+  logger.info('tracker review render', pending.pasteDiagnosticId ? { userId: pending.userId, reference: pending.pasteDiagnosticId } : {
     token,
     userId: pending.userId,
     tier: pending.runData?.tier,
@@ -154,7 +155,11 @@ async function handleNoteModal(interaction: ReviewInteraction, returnMode: 'revi
 export async function handleCancel(interaction: ReviewInteraction) {
   const component = interaction as MessageComponentInteraction;
   const token = parseTrackerToken(interaction.customId);
-  if (token) await deletePendingRun(token);
+  if (token) {
+    const pending = await getPendingRun(token);
+    await updatePasteDiagnostic(pending?.pasteDiagnosticId, { result: 'cancelled', stage: 'review' });
+    await deletePendingRun(token);
+  }
   await component.deferUpdate().catch(() => {});
   const { renderTrackMenu } = await import('./upload-handlers.js');
   await renderTrackMenu(asTrackReplyInteraction(component));
@@ -202,6 +207,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
   // guard, so this only ever corrects NEW writes. `undefined` (single-profile user, or a
   // flow that never showed a picker) resolves to null = Main.
   // Target is reasserted at dispatch after the complete-history read.
+  let runSaved = false;
 
   try {
     const mergedSourceData = {
@@ -285,6 +291,10 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
       });
     }
 
+    runSaved = true;
+    await updatePasteDiagnostic(pending.pasteDiagnosticId, { result: 'saved', stage: 'submit',
+      ...(syncResult?.runId ? { runId: syncResult.runId } : {}), ...(syncResult?.localId ? { localId: syncResult.localId } : {}),
+    });
     const localSummaryAfter = await getLocalRunSummary(userId, await history.getRuns({ runId: syncResult?.runId, localId: syncResult?.localId }));
     const presentationState = buildSubmissionPresentationState({
       localSummaryBefore,
@@ -374,10 +384,16 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
 
     await deletePendingRun(token);
   } catch (error) {
-    await handleError({ client: interaction.client, user: interaction.user, error, context: 'dataSubmission' });
+    await updatePasteDiagnostic(pending.pasteDiagnosticId, { result: runSaved ? 'saved' : 'failed', stage: 'submit', errorCode: runSaved ? 'presentation_error' : 'internal_error' });
+    const safeError = pending.pasteDiagnosticId ? new Error(`Paste submission failed (reference ${pending.pasteDiagnosticId}).`) : error;
+    await handleError({ client: interaction.client, user: interaction.user, error: safeError, context: 'dataSubmission' });
     await deletePendingRun(token);
-    const errMsg = error instanceof Error ? error.message : 'Unknown error';
-    await interaction.editReply({ content: `${ui.messages.submissionFailedPrefix} (${errMsg})`, embeds: [], components: [] }).catch(() => {});
+    const errMsg = pending.pasteDiagnosticId ? `Reference: ${pending.pasteDiagnosticId}` : error instanceof Error ? error.message : 'Unknown error';
+    const content = pending.pasteDiagnosticId
+      ? runSaved ? `Your run was saved, but the response could not be displayed. Please retry sharing. ${errMsg}`
+        : `The submission could not be completed. Check your latest run before retrying. ${errMsg}`
+      : `${ui.messages.submissionFailedPrefix} (${errMsg})`;
+    await interaction.editReply({ content, embeds: [], components: [] }).catch(() => {});
   }
 }
 

@@ -40,6 +40,7 @@ export type PendingRecordLike = {
   screenshot?: PendingRecordScreenshot
   decimalPreference?: string
   isDuplicate?: boolean
+  pasteDiagnosticId?: string
   defaultRunType?: string
   /** Profiles the user can retarget this run to (Main + alts). Empty/1-entry = no selector. */
   profileOptions?: BotProfileOption[]
@@ -75,6 +76,7 @@ export function toPendingRecord(value: unknown): PendingRecordLike | null {
     screenshot,
     decimalPreference: typeof record.decimalPreference === 'string' ? record.decimalPreference : undefined,
     isDuplicate: typeof record.isDuplicate === 'boolean' ? record.isDuplicate : undefined,
+    pasteDiagnosticId: typeof record.pasteDiagnosticId === 'string' ? record.pasteDiagnosticId : undefined,
     defaultRunType: typeof record.defaultRunType === 'string' ? record.defaultRunType : undefined,
     profileOptions: Array.isArray(record.profileOptions) ? (record.profileOptions as PendingRecordLike['profileOptions']) : undefined,
     uploadProfileId: typeof record.uploadProfileId === 'string' ? record.uploadProfileId : (record.uploadProfileId === null ? null : undefined),

@@ -1,3 +1,4 @@
+import { IncompleteRunReportError } from './paste-input-error';
 import { parseNumberInput } from '../../../utils/tracker-math';
 import { parseBattleReportRunData } from '@tmrxjd/platform/parity';
 import {
@@ -901,7 +902,7 @@ export function parseRunDataFromText(rawText: string) {
     if (canonical) break;
   }
   if (!canonical) {
-    throw new Error('Parsed run data is incomplete.');
+    throw new IncompleteRunReportError('unrecognized_report');
   }
 
   const tierInfo = parseTierString(canonical.tier);
@@ -914,14 +915,14 @@ export function parseRunDataFromText(rawText: string) {
   const killedBy = (canonical.killedBy || '').trim() || 'Apathy';
 
   if (
-    tier === 'Unknown'
-    || wave === 'Unknown'
+    tier === 'Unknown' || !Number.isFinite(Number(tier)) || Number(tier) < 1
+    || wave === 'Unknown' || !Number.isFinite(Number(wave)) || Number(wave) < 1
     || !roundDuration
     || !totalCoins
     || !totalCells
     || !totalDice
   ) {
-    throw new Error('Parsed run data is incomplete.');
+    throw new IncompleteRunReportError('missing_fields');
   }
 
   const resolvedTimestamp = canonical.dateIso && canonical.time24h
@@ -929,7 +930,7 @@ export function parseRunDataFromText(rawText: string) {
     : null;
 
   if (!resolvedTimestamp || Number.isNaN(resolvedTimestamp.getTime())) {
-    throw new Error('Parsed run data is incomplete.');
+    throw new IncompleteRunReportError('invalid_date');
   }
 
   return {

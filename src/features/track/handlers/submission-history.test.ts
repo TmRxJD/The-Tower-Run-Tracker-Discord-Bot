@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), pending: vi.fn(), remove: vi.fn(), log: vi.fn(), edit: vi.fn(), render: vi.fn() }));
+const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), pending: vi.fn(), remove: vi.fn(), log: vi.fn(), edit: vi.fn(), render: vi.fn(), diagnostic: vi.fn() }));
+vi.mock('../paste-diagnostics', () => ({ updatePasteDiagnostic: mocks.diagnostic }));
 vi.mock('../run-upload-history', async importOriginal => ({ ...await importOriginal<object>(), prepareBotRunUploadHistory: mocks.history }));
 vi.mock('../tracker-api-client', async importOriginal => ({ ...await importOriginal<object>(),
   getUserSettings: async () => ({ autoDetectDuplicates: true, shareChart: false }),
@@ -32,6 +33,7 @@ beforeEach(() => {
   mocks.pending.mockImplementation(async token => pending.get(token) ?? null);
   mocks.remove.mockImplementation(async token => { pending.delete(token); });
   mocks.runs.mockImplementation(async () => [...runs]); mocks.history.mockResolvedValue({ getRuns: mocks.runs });
+  mocks.diagnostic.mockResolvedValue(true);
   mocks.render.mockReturnValue({ setImage: vi.fn() });
   mocks.log.mockImplementation(async input => { const index = runs.findIndex(row => row.localId === input.runData.localId); const record = { ...input.runData, localId: 'new-local' }; if (index < 0) runs.push(record); else runs[index] = record; return { localId: 'new-local', backgroundSync: Promise.resolve({}) }; });
   mocks.edit.mockResolvedValue({ localId: 'new-local' });
@@ -61,4 +63,18 @@ describe('actual submission history integration', () => {
     await handleDataSubmission(interaction('b') as never);
     expect(mocks.log).toHaveBeenCalledOnce();
   });
+});
+
+it('paste diagnostic storage failure does not prevent a real save or invent success before the save', async () => {
+  pending.get('a')!.pasteDiagnosticId = 'fixture-reference'; mocks.diagnostic.mockResolvedValue(false);
+  await handleDataSubmission(interaction('a') as never);
+  expect(mocks.log).toHaveBeenCalledOnce(); expect(mocks.render).toHaveBeenCalledOnce();
+  expect(mocks.diagnostic).toHaveBeenCalledWith('fixture-reference', expect.objectContaining({ result: 'saved', stage: 'submit', localId: 'new-local' }));
+});
+it('a failed save remains failure-visible without forwarding paste text', async () => {
+  pending.get('a')!.pasteDiagnosticId = 'fixture-reference'; mocks.log.mockRejectedValue(new Error('synthetic-private-paste'));
+  const owner = interaction('a'); await handleDataSubmission(owner as never);
+  expect(mocks.render).not.toHaveBeenCalled();
+  expect(mocks.diagnostic).toHaveBeenCalledWith('fixture-reference', expect.objectContaining({ result: 'failed', stage: 'submit' }));
+  expect(JSON.stringify(owner.editReply.mock.calls)).not.toContain('synthetic-private-paste');
 });
