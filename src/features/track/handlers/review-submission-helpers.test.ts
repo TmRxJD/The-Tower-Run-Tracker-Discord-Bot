@@ -120,7 +120,7 @@ describe('review-submission-helpers', () => {
     });
   });
 
-  it('repairs run type counts for new runs when local summary totals lag behind', () => {
+  it('does not invent an increment when a write updated an existing run', () => {
     const runTypeCounts = buildRunTypeCounts({
       localSummaryBefore: { totalRuns: 4, runTypeCounts: { Farming: 4 } },
       localSummaryAfter: { totalRuns: 4, runTypeCounts: { Farming: 4 } },
@@ -129,7 +129,7 @@ describe('review-submission-helpers', () => {
       shouldUpdateExistingRun: false,
     });
 
-    expect(runTypeCounts).toMatchObject({ Farming: 5 });
+    expect(runTypeCounts).toMatchObject({ Farming: 4 });
   });
 
   it('builds coverage and share payloads with resolved ids and optional screenshot', () => {
@@ -150,7 +150,7 @@ describe('review-submission-helpers', () => {
       duplicateRunId: null,
       duplicateLocalId: null,
     })).toMatchObject({
-      runTypeCounts: { Farming: 3 },
+      runTypeCounts: { Farming: 2 },
       screenshotUrl: 'image-url',
       resolvedRunId: 'server-run',
       resolvedLocalId: 'server-local',

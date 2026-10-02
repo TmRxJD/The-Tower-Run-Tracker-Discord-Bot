@@ -1,4 +1,4 @@
-import { Permission, Query, Role } from 'node-appwrite';
+import { Permission, Query, Role, type Models } from 'node-appwrite';
 import {
   buildTrackerRunDocumentPermissions,
   fetchTrackerRunCloudDocumentsByIds,
@@ -18,6 +18,53 @@ import { resolveBotRunCloudIdentity } from './run-cloud-identity';
 import { peekPendingUploadProfile } from './upload-target-profile';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
+
+/** Read-only, all-or-nothing history for upload numbering and duplicate checks.
+ * Unlike a menu prime, a short page is not evidence of a complete history.
+ * Validate before ingestion; an error never becomes an empty account.
+ */
+export async function loadBotCompleteRunCloudDocuments(userId: string): Promise<Record<string, unknown>[]> {
+  const { databases } = createAppwriteClient();
+  const identity = await resolveBotRunCloudIdentity(userId);
+  if (!identity.lookupUserIds.length) throw new Error('Run history identity is unavailable. Please retry.');
+  const documents = new Map<string, Record<string, unknown>>();
+  for (const ownerId of new Set(identity.lookupUserIds)) {
+    let cursor: string | null = null;
+    let expectedTotal: number | null = null;
+    const ownerIds = new Set<string>();
+    for (;;) {
+      const page: Models.DocumentList<Models.Document & { userId?: unknown }> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
+        ...buildBotRunCloudUserIdQueries(ownerId, cursor, TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE),
+        Query.orderAsc('$id'),
+      ]);
+      if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0
+        || (expectedTotal !== null && expectedTotal !== page.total)) {
+        throw new Error('Run history changed or could not be verified. Please retry.');
+      }
+      expectedTotal = page.total;
+      for (const raw of page.documents) {
+        const parsed = trackerRunCloudDocumentReadSchema.safeParse(raw);
+        if (!parsed.success || raw.userId !== ownerId || !raw.$id || ownerIds.has(raw.$id)) {
+          throw new Error('Run history contains an unreadable or repeated record. Please retry.');
+        }
+        ownerIds.add(raw.$id);
+        documents.set(raw.$id, parsed.data);
+      }
+      if (ownerIds.size === expectedTotal) break;
+      if (!page.documents.length || ownerIds.size > expectedTotal) {
+        throw new Error('Run history is incomplete. Please retry.');
+      }
+      cursor = page.documents[page.documents.length - 1].$id;
+    }
+    // Detect concurrent additions/deletions after the last page, before trusting counts.
+    const check = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
+      Query.equal('userId', ownerId), Query.limit(1), Query.select(['$id']),
+    ]);
+    if (check.total !== expectedTotal) throw new Error('Run history changed. Please retry.');
+  }
+  return stitchBotCloudRunsWithExtendedFallback([...documents.values()], []);
+}
+
 
 export function buildBotRunCloudUserIdQueries(
   userId: string,

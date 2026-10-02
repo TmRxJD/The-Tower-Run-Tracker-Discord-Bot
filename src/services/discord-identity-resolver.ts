@@ -21,7 +21,7 @@ type CachedEntry = {
 
 export async function resolveAppwriteIdForDiscordUser(
   discordId: string,
-  options: { requireLinked?: boolean } = {},
+  options: { requireLinked?: boolean; failOnLookupError?: boolean } = {},
 ): Promise<string | null> {
   const { client } = createAppwriteClient();
   return resolveTrackerDiscordAppwriteUserId({
@@ -56,6 +56,7 @@ export async function resolveAppwriteIdForDiscordUser(
     },
     onResolveFailed: ({ discordUserId, error }) => {
       logger.warn('[identity] failed to resolve Appwrite account for Discord user', { discordUserId, error });
+      if (options.failOnLookupError) throw new Error('Run history identity lookup failed. Please retry.');
     },
   });
 }

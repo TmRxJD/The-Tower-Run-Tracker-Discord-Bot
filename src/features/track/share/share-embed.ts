@@ -202,7 +202,8 @@ export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options
   const runType = runTypeRaw;
   const formattedType = runType.charAt(0).toUpperCase() + runType.slice(1);
   const rawTypeCount = runTypeCounts[runType] ?? runTypeCounts[formattedType] ?? 0;
-  const typeCount = Math.max(1, Number(rawTypeCount) || 0);
+  const typeCount = Number(rawTypeCount);
+  const hasVerifiedCount = Number.isSafeInteger(typeCount) && typeCount > 0;
 
   const durationRaw = firstAvailable(run, ['roundDuration', 'duration']);
   const coinsPerHour = computeHourlyRate(firstAvailable(run, ['totalCoins', 'coins']), durationRaw) || '0';
@@ -217,7 +218,9 @@ export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options
       name: replaceTokens(config.authorTemplate, { username: user.displayName ?? user.username }),
       iconURL: user.displayAvatarURL?.() || undefined,
     })
-    .setTitle(replaceTokens(config.titleTemplate, { runType: formattedType, typeCount: String(typeCount) }))
+    .setTitle(hasVerifiedCount
+      ? replaceTokens(config.titleTemplate, { runType: formattedType, typeCount: String(typeCount) })
+      : `${formattedType} Run (count unavailable)`)
     .setURL(config.url)
     .setColor(Colors.Gold)
     .setThumbnail(config.thumbnail)

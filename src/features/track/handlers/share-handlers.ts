@@ -1,5 +1,6 @@
 import { logError } from './error-handlers';
-import { getLastRun, getLocalLifetimeData, getUserSettings } from '../tracker-api-client';
+import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
+import { getLocalLifetimeData, getUserSettings, getLocalRunSummary } from '../tracker-api-client';
 import { buildShareEmbed } from '../share/share-embed';
 import { resolveShareEmbedChannelPayload, type ShareEmbedChannelPayload } from '../share/share-embed-delivery';
 import { buildEmbedUserFromInteraction, resolveInteractionDisplayName } from '../discord-display-name';
@@ -13,7 +14,7 @@ import { buildShareRunRef } from '../share/share-run-ref';
 import { shouldCompactShare } from '../share/share-compaction';
 import { saveShareSnapshot } from '../share/share-snapshot-store';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
-import { computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { computeTrackerRunDeltaBaseline, estimateTrackerRunTimestamp, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
 
 export function recordShareableRun(userId: string, run: Record<string, unknown>, runTypeCounts: Record<string, number>, screenshotUrl?: string | null) {
   const hydratedRun = { ...run };
@@ -164,14 +165,18 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       }
       await disableShareButtonOnOriginalMessage(interaction);
     } else {
+      const history = await withBotRunSubmissionLock(userId, () => prepareBotRunUploadHistory(userId));
+      const verifiedRuns = await history.getRuns();
       const cached = getShareableRun(userId);
       let run = cached?.run ?? null;
-      let runTypeCounts = cached?.runTypeCounts ?? {};
+      const { runTypeCounts } = await getLocalRunSummary(userId, verifiedRuns);
 
+      if (run && !verifiedRuns.some(existing => trackerRunReferencesSameEntry({ left: { localId: existing.localId, runId: existing.runId, fallbackRunId: existing.id }, right: { localId: run!.localId, runId: run!.runId, fallbackRunId: run!.id } }))) {
+        await sendNotice('This run is no longer in your current history. Please choose another run.');
+        return;
+      }
       if (!run) {
-        const summary = await getLastRun(userId, { cloudSyncMode: 'none' });
-        run = summary?.lastRun ?? null;
-        runTypeCounts = summary?.runTypeCounts ?? {};
+        run = [...verifiedRuns].sort((a, b) => estimateTrackerRunTimestamp(b) - estimateTrackerRunTimestamp(a))[0] ?? null;
       }
 
       if (!run) {
@@ -185,8 +190,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       const compact = shouldCompactShare({ guildId: interaction.guildId, shareCompact: settings?.shareCompact });
 
       // Fetch all runs for the delta baseline
-      const allRunsSummary = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
-      const allRuns = (allRunsSummary?.allRuns ?? []) as Record<string, unknown>[];
+      const allRuns = verifiedRuns;
       const runType = String(run.type ?? 'Farming').trim() || 'Farming';
 
       const deltaResult = sharedSettings.runDeltaMode !== 'disabled'

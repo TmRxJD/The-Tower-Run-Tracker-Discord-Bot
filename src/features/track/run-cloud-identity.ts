@@ -47,7 +47,7 @@ export async function resolveBotRunCloudIdentity(discordUserId: string): Promise
     // account — fall back to the Appwrite id carried by the session JWT.
     // Without this the run is written with an empty permission set, leaving it
     // unreadable by the very user who created it.
-    const linkedAppwriteUserId = await resolveAppwriteIdForDiscordUser(normalized);
+    const linkedAppwriteUserId = await resolveAppwriteIdForDiscordUser(normalized, { failOnLookupError: true });
     const appwriteUserId = linkedAppwriteUserId
       ?? readTrackerAppwriteUserIdFromJwt(process.env.APPWRITE_JWT);
 
@@ -78,7 +78,15 @@ export async function resolveBotRunCloudIdentity(discordUserId: string): Promise
 
   identityPromiseByDiscordUser.set(normalized, pending);
   cachedAtByDiscordUser.set(normalized, Date.now());
-  return pending;
+  try { return await pending; }
+  catch (error) {
+    // A transient lookup failure must neither look like an unlinked account nor poison retries.
+    if (identityPromiseByDiscordUser.get(normalized) === pending) {
+      identityPromiseByDiscordUser.delete(normalized);
+      cachedAtByDiscordUser.delete(normalized);
+    }
+    throw error;
+  }
 }
 
 export function invalidateBotRunCloudIdentityCache(discordUserId?: string): void {

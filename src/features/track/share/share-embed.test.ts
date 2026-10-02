@@ -67,3 +67,11 @@ describe('share embed', () => {
     expect(embed.data.fields ?? []).toHaveLength(0);
   });
 });
+describe('unavailable share count', () => {
+  it('never turns missing or invalid counts into #1', () => {
+    for (const counts of [{}, { Farming: 0 }, { Farming: Number.NaN }, { Farming: -1 }] as Record<string, number>[]) {
+      const embed = buildShareEmbed({ user: { username: 'fixture' }, run: { type: 'Farming' }, runTypeCounts: counts, options: {} });
+      expect(embed.data.title).toBe('Farming Run (count unavailable)');
+    }
+  });
+});

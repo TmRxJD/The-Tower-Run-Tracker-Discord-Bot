@@ -96,22 +96,16 @@ export function buildRunTypeCounts(params: {
   submitRunData: Record<string, unknown>;
   shouldUpdateExistingRun: boolean;
 }) {
-  const runType = String((params.canonicalRunData.type ?? params.submitRunData.type ?? 'Farming') || 'Farming');
-  const formattedRunType = runType.charAt(0).toUpperCase() + runType.slice(1);
-  const runTypeCounts = { ...(params.localSummaryAfter.runTypeCounts ?? {}) };
-
-  if (!params.shouldUpdateExistingRun) {
-    const minimumTotalRuns = params.localSummaryBefore.totalRuns + 1;
-    const currentTotalRuns = Object.values(runTypeCounts).reduce((sum, count) => sum + (Number(count) || 0), 0);
-    if (currentTotalRuns < minimumTotalRuns) {
-      const typeKey = runTypeCounts[runType] !== undefined
-        ? runType
-        : (runTypeCounts[formattedRunType] !== undefined ? formattedRunType : formattedRunType);
-      runTypeCounts[typeKey] = (runTypeCounts[typeKey] ?? 0) + (minimumTotalRuns - currentTotalRuns);
-    }
+  const counts = { ...params.localSummaryAfter.runTypeCounts };
+  const values = Object.values(counts);
+  if (values.some(value => !Number.isSafeInteger(value) || value < 0)
+    || values.reduce((sum, value) => sum + value, 0) !== params.localSummaryAfter.totalRuns
+    || params.localSummaryAfter.totalRuns < 1) {
+    throw new Error('Saved run count could not be verified. Please retry sharing.');
   }
-
-  return runTypeCounts;
+  // Never manufacture a number from a pre-save total. The verified retained-history
+  // view already includes the inserted/updated run, including deduplicated writes.
+  return counts;
 }
 
 export function resolveSubmissionIds(params: {

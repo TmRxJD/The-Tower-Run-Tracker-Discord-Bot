@@ -2966,8 +2966,8 @@ export async function getLocalRunCount(userId: string): Promise<number> {
   return countBotLocalRunsInRxDB(userId);
 }
 
-export async function getLocalRunSummary(userId: string): Promise<{ totalRuns: number; runTypeCounts: Record<string, number> }> {
-  const runs = await getLocalRuns(userId);
+export async function getLocalRunSummary(userId: string, verifiedRuns?: Record<string, unknown>[]): Promise<{ totalRuns: number; runTypeCounts: Record<string, number> }> {
+  const runs = verifiedRuns ?? await getLocalRuns(userId);
   const runTypeCounts: Record<string, number> = {};
   for (const run of runs) {
     const type = run.type ? toCloudType(run.type) : 'Farming';

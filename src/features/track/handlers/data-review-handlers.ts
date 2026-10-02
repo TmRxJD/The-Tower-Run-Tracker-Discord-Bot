@@ -1,4 +1,6 @@
 import type { MessageComponentInteraction} from 'discord.js';
+import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
+import { findPotentialDuplicateRun } from './upload-helpers';
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { editRun, getLastRun, getLocalRunSummary, getUserSettings, logRun } from '../tracker-api-client';
 import { createSuccessButtons, createLoadingEmbed } from '../ui/tracker-ui';
@@ -11,8 +13,8 @@ import { asTrackReplyInteraction, ensureType, isTrackReviewFlowEnabled, resolveO
 import { applySubmittedReviewEditValues, buildCurrentReviewReplyPayload, buildReviewEditFieldModal, buildTypeSelectionReviewReplyPayload, getSelectedReviewFields, getSelectedReviewValue, renderDataReviewOrSubmit, resolveUpdatedPendingOrReplyExpired, resolveUpdatedPendingOrUpdateReviewMessage } from './review-edit-modal-helpers';
 import { openNoteModal } from './note-panel-handlers';
 import { submitLifetimePendingRun } from './review-lifetime-submission';
-import { buildCanonicalRunData, buildSubmissionDispatchPlan, buildSubmissionPresentationState, buildSubmitRunData, resolveDuplicateRunInfo, type LocalRunSummary, type SubmissionSyncResult } from './review-submission-helpers';
-import { updatePendingRun, deletePendingRun } from '../pending-run-store';
+import { buildCanonicalRunData, buildSubmissionDispatchPlan, buildSubmissionPresentationState, buildSubmitRunData, resolveDuplicateRunInfo, type SubmissionSyncResult } from './review-submission-helpers';
+import { updatePendingRun, deletePendingRun, getPendingRun } from '../pending-run-store';
 import { setPendingUploadProfile } from '../upload-target-profile';
 import { TRACKER_IDS, parsePrefixedTrackerToken, parseTrackerToken, withTokenAndField } from '../track-custom-ids';
 import type { TrackReplyInteractionLike } from '../interaction-types';
@@ -173,6 +175,16 @@ export async function handleDataSubmission(interaction: ReviewInteraction) {
 }
 
 async function submitPendingRun(interaction: ReviewInteraction, token: string, pending: PendingRecordLike) {
+  // Acknowledge before waiting for another submission/cloud history; avoid Discord expiry.
+  if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate().catch(() => {});
+  await withBotRunSubmissionLock(pending.userId, async () => {
+    const current = await getPendingRun(token);
+    if (!current) return; // Same Submit button clicked twice while the first write ran.
+    await submitPendingRunLocked(interaction, token, current);
+  });
+}
+
+async function submitPendingRunLocked(interaction: ReviewInteraction, token: string, pending: PendingRecordLike) {
   const ui = reviewUi();
   const component = interaction as MessageComponentInteraction;
 
@@ -189,7 +201,7 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
   // alt. Existing-run edits are still protected by the platform pair-writer's no-re-stamp
   // guard, so this only ever corrects NEW writes. `undefined` (single-profile user, or a
   // flow that never showed a picker) resolves to null = Main.
-  setPendingUploadProfile(userId, pending.uploadProfileId ?? null);
+  // Target is reasserted at dispatch after the complete-history read.
 
   try {
     const mergedSourceData = {
@@ -198,7 +210,7 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
     };
 
     const payload = await buildSubmitPayload(userId, username, mergedSourceData, includeType, includeNotes);
-    if ('update' in component && typeof component.update === 'function') {
+    if (!interaction.deferred && !interaction.replied && 'update' in component && typeof component.update === 'function') {
       await component.update({ embeds: [createLoadingEmbed(ui.messages.processingSubmission)], components: [] });
     } else {
       await interaction.editReply({ embeds: [createLoadingEmbed(ui.messages.processingSubmission)], components: [] }).catch(() => {});
@@ -216,7 +228,20 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
       return;
     }
 
-    const submitRunData = buildSubmitRunData(pending, payload.runData);
+    const history = await prepareBotRunUploadHistory(userId);
+    const existingRuns = await history.getRuns();
+    let submitRunData = buildSubmitRunData(pending, payload.runData);
+    const settingsForDuplicate = await getUserSettings(userId);
+    if (settingsForDuplicate?.autoDetectDuplicates !== false && !submitRunData.runId && !submitRunData.localId) {
+      // Recheck inside the lock: two reviews may have opened before either was saved.
+      const duplicate = findPotentialDuplicateRun(submitRunData, existingRuns);
+      if (duplicate.isDuplicate) {
+        submitRunData = { ...submitRunData,
+          ...(duplicate.duplicateRunId ? { runId: duplicate.duplicateRunId } : {}),
+          ...(duplicate.duplicateLocalId ? { localId: duplicate.duplicateLocalId } : {}),
+        };
+      }
+    }
     const canonicalRunData = buildCanonicalRunData(pending, submitRunData);
     const deferredScreenshotSource = pending.screenshot?.url
       ? {
@@ -235,8 +260,9 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
       duplicateLocalId,
       shouldUpdateExistingRun,
     });
-    const localSummaryBefore = await getLocalRunSummary(userId).catch(() => ({ totalRuns: 0, runTypeCounts: {} as Record<string, number> })) as LocalRunSummary;
+    const localSummaryBefore = await getLocalRunSummary(userId, existingRuns);
 
+    setPendingUploadProfile(userId, pending.uploadProfileId ?? null);
     if (dispatchPlan.operation === 'edit') {
       syncResult = await editRun({
         userId,
@@ -259,7 +285,7 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
       });
     }
 
-    const localSummaryAfter = await getLocalRunSummary(userId).catch(() => ({ totalRuns: 0, runTypeCounts: {} as Record<string, number> })) as LocalRunSummary;
+    const localSummaryAfter = await getLocalRunSummary(userId, await history.getRuns({ runId: syncResult?.runId, localId: syncResult?.localId }));
     const presentationState = buildSubmissionPresentationState({
       localSummaryBefore,
       localSummaryAfter,

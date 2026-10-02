@@ -105,8 +105,9 @@ export function buildSubmissionResultEmbed(params: {
   const runType = (coverageData?.type || 'Farming').toString()
   const formattedType = runType.charAt(0).toUpperCase() + runType.slice(1)
   const rawTypeCount = runTypeCounts?.[runType] ?? runTypeCounts?.[formattedType] ?? 0
-  const typeCount = Math.max(1, Number(rawTypeCount) || 0)
-  const totalRuns = Math.max(1, Object.values(runTypeCounts || {}).reduce((a, b) => a + b, 0))
+  const typeCount = Number(rawTypeCount)
+  const typeCountLabel = Number.isSafeInteger(typeCount) && typeCount > 0 ? `#${typeCount}` : '(count unavailable)'
+  const totalRuns = Object.values(runTypeCounts || {}).reduce((a, b) => a + b, 0)
 
   const descriptionTemplate = isUpdate ? submissionUi.descriptionUpdated : submissionUi.descriptionLogged
   const descriptionHeader = descriptionTemplate.replace('{totalRuns}', String(totalRuns))
@@ -141,7 +142,7 @@ export function buildSubmissionResultEmbed(params: {
 
   const descLines: string[] = [
     descriptionHeader + comparisonLine,
-    `⚙️ Type: **${formattedType} #${typeCount}**`,
+    `⚙️ Type: **${formattedType} ${typeCountLabel}**`,
     `📅 Date: **${dateStr}**`,
     `🔢 Tier: **${tierDisplay}**`,
     `🌊 Wave: **${waveStr}**${delta('wave')}`,

@@ -1,4 +1,5 @@
 import * as Discord from 'discord.js';
+import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
 import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import {
 } from '@tmrxjd/platform/node';
@@ -29,7 +30,7 @@ import {
   parseRunDataFromText,
   findPotentialDuplicateRun,
 } from './upload-helpers';
-import { getMenuRunSummary, getLocalLifetimeData, getLastRun, runOCR, awaitBackgroundRunHydration } from '../tracker-api-client';
+import { getMenuRunSummary, getLocalLifetimeData, getLastRun, runOCR } from '../tracker-api-client';
 import { peekMenuPrimedSummary } from '../run-menu-cloud-prime';
 import { beginBackgroundAuthoritySync } from '../run-menu-sync';
 import { applyPerHourChartImage, resolveMainMenuPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
@@ -317,6 +318,10 @@ function applyAutoTournament(processedData: RunDataLike, rawTierCandidates: unkn
 
 async function createPendingRunWithMetadata(params: { userId: string; username: string; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null; defaultRunType?: string | null }) {
   const { userId, username, runData, screenshot, canonicalRunData } = params;
+  // Both paste and OCR converge here, before duplicate detection/review.
+  const history = getTrackerFlowMode(userId) === 'lifetime'
+    ? { getRuns: () => getLocalRuns(userId) }
+    : await withBotRunSubmissionLock(userId, () => prepareBotRunUploadHistory(userId));
   let hydratedRunData = { ...runData };
   const rawParseFields = hydratedRunData.rawParseFields && typeof hydratedRunData.rawParseFields === 'object' && !Array.isArray(hydratedRunData.rawParseFields)
     ? { ...(hydratedRunData.rawParseFields as Record<string, unknown>) }
@@ -324,22 +329,16 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
   let isDuplicate = false;
   let decimalPreference = 'Period (.)';
 
-  try {
-    const settings = await getLocalSettings(userId);
-    if (settings?.decimalPreference) decimalPreference = settings.decimalPreference;
-    const shouldCheckDuplicate = (settings?.autoDetectDuplicates ?? true) && !hydratedRunData.runId;
-
-    if (shouldCheckDuplicate) {
-      void awaitBackgroundRunHydration(userId).catch(() => {});
-      const localRuns = await getLocalRuns(userId);
-      const duplicateCheck = findPotentialDuplicateRun(hydratedRunData, localRuns);
-      if (duplicateCheck.isDuplicate) {
-        isDuplicate = true;
-        hydratedRunData = applyDetectedDuplicateReference(hydratedRunData, duplicateCheck);
-      }
+  const settings = await getLocalSettings(userId);
+  if (settings?.decimalPreference) decimalPreference = settings.decimalPreference;
+  const shouldCheckDuplicate = (settings?.autoDetectDuplicates ?? true) && !hydratedRunData.runId;
+  if (shouldCheckDuplicate) {
+    const localRuns = await history.getRuns();
+    const duplicateCheck = findPotentialDuplicateRun(hydratedRunData, localRuns);
+    if (duplicateCheck.isDuplicate) {
+      isDuplicate = true;
+      hydratedRunData = applyDetectedDuplicateReference(hydratedRunData, duplicateCheck);
     }
-  } catch {
-    /* Ignore duplicate detection failures; proceed without flagging */
   }
 
   // Resolve which profiles the user can retarget this run to. The `/track` command
@@ -845,7 +844,7 @@ export function pickLastAppwriteUploadedRun(allRuns: Record<string, unknown>[]):
       runId: run.runId,
       fallbackRunId: run.id,
     }).runId;
-    if (!runId) continue; // local-only runs (not yet uploaded) — skip
+    if (!runId) continue; // local-only runs (not yet uploaded) â€” skip
     const ts = typeof run.createdAt === 'number' ? run.createdAt : 0;
     if (ts > bestTs) {
       bestTs = ts;
