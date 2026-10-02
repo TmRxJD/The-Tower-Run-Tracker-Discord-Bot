@@ -7,6 +7,7 @@ vi.mock('../share/share-embed-delivery', () => ({ resolveShareEmbedChannelPayloa
 vi.mock('../../../services/user-shared-settings-db', () => ({ getEffectiveUserSharedSettings: async () => ({ runDeltaMode: 'disabled' }) }));
 vi.mock('./error-handlers', () => ({ logError: vi.fn() }));
 import { handleTrackMenuShareLast } from './share-handlers';
+import { logError } from './error-handlers';
 import { setShareableRun } from '../share/share-state';
 import { setTrackerFlowMode } from '../flow-mode-store';
 
@@ -45,8 +46,18 @@ describe('verified share history', () => {
     mocks.history.mockRejectedValue(new Error('fixture cloud unavailable'));
     const owner = interaction(); await handleTrackMenuShareLast(owner as never);
     expect(owner.channel.send).not.toHaveBeenCalled();
-    expect(owner.followUp.mock.calls[0][0].content).toContain('unavailable');
+    expect(owner.followUp.mock.calls[0][0].content).not.toContain('fixture cloud unavailable');
   });
+});
+
+it('preserves the original delivery exception and send stage without echoing its private message', async () => {
+  setShareableRun('share-owner', { run: rows[0], runTypeCounts: {} });
+  const owner = interaction();
+  const error = Object.assign(new Error('PRIVATE_PASTE_TOKEN'), { code: 50013 });
+  owner.channel.send.mockRejectedValue(error);
+  await handleTrackMenuShareLast(owner as never);
+  expect(logError).toHaveBeenCalledWith(owner.client, owner.user, error, 'track_menu_sharelast', null, null, 'send');
+  expect(JSON.stringify(owner.followUp.mock.calls)).not.toContain('PRIVATE_PASTE_TOKEN');
 });
 
 it('refreshes cached draft metrics after authoritative history hydration', async () => {

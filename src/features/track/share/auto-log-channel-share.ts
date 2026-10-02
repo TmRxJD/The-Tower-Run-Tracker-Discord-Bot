@@ -102,6 +102,6 @@ export async function autoShareToConfiguredLogChannel(params: {
       updatedAt: Date.now(),
     }).catch(() => {});
   }).catch((error) => {
-    void logError(params.interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, params.interaction.user, error, 'track_menu_log_channel_autoshare');
+    void logError(params.interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, params.interaction.user, error, 'track_menu_log_channel_autoshare', null, null, 'send');
   });
 }

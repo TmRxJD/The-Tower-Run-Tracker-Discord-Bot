@@ -1,3 +1,4 @@
+import type { DiagnosticStage } from './safe-error-diagnostic';
 import type { MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
 import { logError } from './error-handlers';
 import { renderTrackMenu } from './upload-handlers';
@@ -39,16 +40,20 @@ export async function handleShareEmbedExpand(interaction: MessageComponentIntera
   if (!interaction.isMessageComponent()) {
     return;
   }
+  let stage: DiagnosticStage = 'acknowledge';
   try {
     await interaction.deferReply({ ephemeral: true });
 
+    stage = 'lookup';
     const context = await resolveSharedRunForButton(interaction, TRACKER_IDS.share.expandPrefix);
     if (!context) return;
 
+    stage = 'render';
     const { embed, files } = await buildExpandedSharePayload(interaction.client, context.userId, context);
+    stage = 'send';
     await interaction.editReply({ embeds: [embed], files });
   } catch (error) {
-    await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'share_embed_expand');
+    await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'share_embed_expand', null, null, stage);
     await interaction.editReply({ content: 'Unable to expand this run share right now.', embeds: [] }).catch(() => {});
   }
 }
@@ -57,23 +62,27 @@ export async function handleShareEmbedBattleReport(interaction: MessageComponent
   if (!interaction.isMessageComponent()) {
     return;
   }
+  let stage: DiagnosticStage = 'acknowledge';
   try {
     await interaction.deferReply({ ephemeral: true });
 
+    stage = 'lookup';
     const context = await resolveSharedRunForButton(interaction, TRACKER_IDS.share.reportPrefix);
     if (!context) return;
 
+    stage = 'render';
     const markdown = buildBattleReportMarkdown(context.run, { sharerName: context.sharerName });
     if (!markdown) {
       await interaction.editReply({ content: 'No battle report stats were captured for this run.' });
       return;
     }
 
+    stage = 'send';
     await interaction.editReply({
       files: [{ attachment: Buffer.from(markdown, 'utf-8'), name: 'battle-report.md' }],
     });
   } catch (error) {
-    await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'share_embed_battle_report');
+    await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'share_embed_battle_report', null, null, stage);
     await interaction.editReply({ content: 'Unable to build the battle report right now.', files: [] }).catch(() => {});
   }
 }
@@ -82,13 +91,15 @@ export async function handleShareEmbedTrackRun(interaction: MessageComponentInte
   if (!interaction.isMessageComponent()) {
     return;
   }
+  let stage: DiagnosticStage = 'acknowledge';
   try {
     if (!interaction.deferred && !interaction.replied) {
       await interaction.deferReply({ ephemeral: true });
     }
+    stage = 'render';
     await renderTrackMenu(interaction as unknown as TrackReplyInteractionLike);
   } catch (error) {
-    await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'share_embed_track_run');
+    await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'share_embed_track_run', null, null, stage);
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({ content: 'Unable to open the run tracker menu right now.', ephemeral: true }).catch(() => {});
     } else if (interaction.deferred) {

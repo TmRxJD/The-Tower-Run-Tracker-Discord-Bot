@@ -1,3 +1,4 @@
+import type { DiagnosticStage } from './safe-error-diagnostic';
 import { logError } from './error-handlers';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
 import { getLocalLifetimeData, getUserSettings, getLocalRunSummary } from '../tracker-api-client';
@@ -64,6 +65,7 @@ async function disableShareButtonOnOriginalMessage(interaction: MessageComponent
 export async function handleTrackMenuShareLast(interaction: MessageComponentInteraction | ModalSubmitInteraction) {
   const mode = getTrackerFlowMode(interaction.user.id);
   const shareUiConfig = getTrackerUiConfig(mode).share;
+  let stage: DiagnosticStage = 'acknowledge';
   try {
     let acknowledged = false;
     try {
@@ -90,6 +92,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     };
 
     const userId = interaction.user.id;
+    stage = 'settings';
     const settings = await getUserSettings(userId).catch(() => null);
     const includeNotes = settings?.shareNotes !== false;
     const includeCoverage = settings?.shareCoverage !== false;
@@ -120,6 +123,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     let embed: EmbedBuilder | null = null;
 
     if (mode === 'lifetime') {
+      stage = 'history';
       const entries = await getLocalLifetimeData(userId);
       const sorted = [...entries].sort((a, b) => new Date(String(b.date ?? '')).getTime() - new Date(String(a.date ?? '')).getTime());
       const latest = sorted[0];
@@ -128,6 +132,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         return;
       }
 
+      stage = 'render';
       embed = new EmbedBuilder()
         .setAuthor({ name: shareUiConfig.authorTemplate.replace('{username}', resolveInteractionDisplayName(interaction)) })
         .setTitle(shareUiConfig.titleTemplate.replace('{typeCount}', String(Math.max(1, sorted.length))))
@@ -154,17 +159,20 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         throw new Error('Unable to send share embed in this channel.');
       }
       try {
+        stage = 'payload';
         const payload = await resolveShareEmbedChannelPayload({
           userId,
           embed,
         });
+        stage = 'send';
         await channelForLifetime.send(payload);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : 'unknown channel error';
-        throw new Error(`Unable to send share embed in this channel: ${reason}`);
+        throw error;
       }
+      stage = 'finalize';
       await disableShareButtonOnOriginalMessage(interaction);
     } else {
+      stage = 'history';
       const history = await withBotRunSubmissionLock(userId, () => prepareBotRunUploadHistory(userId));
       const verifiedRuns = await history.getRuns();
       const cached = getShareableRun(userId);
@@ -203,6 +211,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         : undefined;
 
       const embedUser = buildEmbedUserFromInteraction(interaction);
+      stage = 'render';
       embed = buildShareEmbed({
         user: embedUser,
         run,
@@ -256,6 +265,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           else embed.setImage('attachment://per-hour-chart.png');
         }
 
+        stage = 'snapshot';
         let shareRunRef = buildShareSnapshotRef(userId, run, runTypeCounts);
         if (shareRunRef) {
           const saved = await saveShareSnapshot({ ref: shareRunRef, userId, run, runTypeCounts, sharerName: embedUser.displayName }).catch(() => false);
@@ -263,6 +273,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         }
 
         try {
+          stage = 'payload';
           const payload = await resolveShareEmbedChannelPayload({
             userId,
             embed,
@@ -270,20 +281,20 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
             shareRunRef,
             collapsed: compact,
           });
+          stage = 'send';
           await channelWithSend.send(payload);
         } catch (error) {
-          const reason = error instanceof Error ? error.message : 'unknown channel error';
-          throw new Error(`Unable to send share embed in this channel: ${reason}`);
+          throw error;
         }
 
-        await disableShareButtonOnOriginalMessage(interaction);
+        stage = 'finalize';
+      await disableShareButtonOnOriginalMessage(interaction);
       }
       return;
     }
   } catch (error) {
-    await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'track_menu_sharelast');
-    const errorDetails = error instanceof Error ? ` ${error.message}` : '';
-    const message = `${shareUiConfig.shareFailed}${errorDetails}`.trim();
+    await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'track_menu_sharelast', null, null, stage);
+    const message = shareUiConfig.shareFailed;
     if (interaction.followUp) {
       await interaction.followUp({ content: message, ephemeral: true }).catch(() => {});
     } else if (interaction.reply) {

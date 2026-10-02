@@ -66,3 +66,7 @@
 ### Deploy
 - `deploy:activate` now rebuilds `dist/` (in place) and runs `pm2 startOrRestart ecosystem.config.cjs` so new code and ecosystem env
   changes take effect; a plain `pm2 restart --update-env` did neither. `DEPLOY_SKIP_BUILD=true` skips the rebuild.
+
+## 2026-10-02 — Private-safe share diagnostics
+- Preserve original share delivery exception codes; local diagnostics retain allowlisted exception type/code, repository-only stack locations, operation/stage and incident correlation. Public alerts retain category/reference only; share failure replies no longer echo arbitrary exception messages.
+- Historical 21:46:59 share root cause remains unknown; no real-share replay or historical data changes.
