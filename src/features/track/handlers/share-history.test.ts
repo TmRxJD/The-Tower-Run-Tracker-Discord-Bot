@@ -15,7 +15,7 @@ function interaction() { return { user: { id: 'share-owner', username: 'fixture'
 beforeEach(() => {
   vi.clearAllMocks(); setTrackerFlowMode('share-owner', 'track');
   mocks.settings.mockResolvedValue({ shareChart: false }); mocks.runs.mockResolvedValue(rows);
-  mocks.history.mockResolvedValue({ getRuns: mocks.runs }); mocks.snapshot.mockResolvedValue(undefined);
+  mocks.history.mockResolvedValue({ getRuns: mocks.runs }); mocks.snapshot.mockResolvedValue(true);
 });
 describe('verified share history', () => {
   it('refreshes stale #1 while preserving an older selected run and repeated share semantics', async () => {
@@ -47,4 +47,21 @@ describe('verified share history', () => {
     expect(owner.channel.send).not.toHaveBeenCalled();
     expect(owner.followUp.mock.calls[0][0].content).toContain('unavailable');
   });
+});
+
+it('refreshes cached draft metrics after authoritative history hydration', async () => {
+  setShareableRun('share-owner', { run: { ...rows[0], totalCoins: '2.97s' }, runTypeCounts: { Farming: 9 } });
+  mocks.runs.mockResolvedValue([{ ...rows[0], totalCoins: '0' }, ...rows.slice(1)]);
+  const owner = interaction(); await handleTrackMenuShareLast(owner as never);
+  const saved = mocks.snapshot.mock.calls.at(-1)?.[0];
+  expect(saved.run.totalCoins).toBe('0'); expect(saved.run.runId).toBe('run-0');
+  expect(saved.ref).toMatch(/^share-owner:S-[a-f0-9]{32}$/);
+  expect(JSON.stringify(owner.channel.send.mock.calls[0][0].embed.data)).not.toContain('2.97s');
+});
+it('does not attach an unavailable version reference when snapshot persistence fails', async () => {
+  mocks.snapshot.mockResolvedValue(false);
+  setShareableRun('share-owner', { run: rows[0], runTypeCounts: {} });
+  const owner = interaction(); await handleTrackMenuShareLast(owner as never);
+  expect(owner.channel.send).toHaveBeenCalledOnce();
+  expect(owner.channel.send.mock.calls[0][0].shareRunRef).toBeNull();
 });

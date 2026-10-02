@@ -11,6 +11,7 @@ import { readShareSnapshot } from './share-snapshot-store';
 export type SharedRunContext = {
   run: Record<string, unknown>;
   sharerName: string;
+  runTypeCounts?: Record<string, number>;
 };
 
 function readTrimmedString(value: unknown): string {
@@ -36,6 +37,12 @@ async function resolveSharerName(client: Client, userId: string, run: Record<str
  * when the run was deleted or this process never had it.
  */
 export async function resolveSharedRunContext(client: Client, userId: string, runRef: string): Promise<SharedRunContext | null> {
+  if (/^S-[a-f0-9]{32}$/.test(runRef)) {
+    const snapshot = await readShareSnapshot(`${userId}:${runRef}`);
+    if (!snapshot || snapshot.userId !== userId || snapshot.ref !== `${userId}:${runRef}`) return null;
+    return { run: { ...snapshot.run }, sharerName: snapshot.sharerName || 'Unknown', runTypeCounts: snapshot.runTypeCounts };
+  }
+  // Legacy posted buttons retain their existing lookup semantics; do not rewrite old posts.
   let run = await findSharedRun(userId, runRef);
   let snapshotName: string | undefined;
 
@@ -75,7 +82,7 @@ export async function buildExpandedSharePayload(
       displayAvatarURL: discordUser ? () => discordUser.displayAvatarURL() : undefined,
     },
     run: context.run,
-    runTypeCounts: summary?.runTypeCounts ?? {},
+    runTypeCounts: context.runTypeCounts ?? summary?.runTypeCounts ?? {},
     deltaResult,
     options: resolveShareEmbedOptions(settings),
   });

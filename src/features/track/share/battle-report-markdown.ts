@@ -11,6 +11,15 @@ export function resolveBattleReportSource(run: Record<string, unknown>): RunData
   const merged = typeof fullRunData === 'object' && fullRunData !== null
     ? { ...(fullRunData as Record<string, unknown>), ...run }
     : { ...run };
+  // Original scanned fields are evidence, but headline metrics must match this share's tracked values.
+  if (merged.rawParseFields && typeof merged.rawParseFields === 'object') {
+    const raw = { ...(merged.rawParseFields as Record<string, unknown>) };
+    for (const [field, aliases] of Object.entries({ totalCoins: ['totalCoins', 'coins'], totalCells: ['totalCells', 'cells'], totalDice: ['totalDice', 'rerollShards'], roundDuration: ['roundDuration', 'duration'], tier: ['tier'], wave: ['wave'] })) {
+      const value = aliases.map(key => run[key]).find(value => value !== undefined && value !== null && value !== '');
+      if (value !== undefined) raw[field] = String(value);
+    }
+    merged.rawParseFields = raw;
+  }
   delete merged.fullRunData;
   return merged as RunDataRecord;
 }

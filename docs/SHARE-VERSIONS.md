@@ -1,0 +1,5 @@
+# Share data consistency
+
+New share posts use the selected entry from verified current history, rather than stale review-cache values. Their Expand and Battle Report buttons bind to a durable local snapshot of that same run data and retained count. Identical versions reuse a reference; changes produce a new one. Snapshots remain in the existing local SQLite KV store so published buttons can survive restarts; no automatic expiry is added. Missing snapshots produce an unavailable notice, never another run. Snapshot write failures omit data buttons while preserving the visible share.
+
+Report headline coin/cell/shard/duration/tier/wave values match the tracked share values even when original scanned fields differ. Other captured statistics remain available. Existing legacy posted references retain their lookup behavior; no old post, cloud record or run history is rewritten. Run title numbering remains the retained count, not the ordinal of an older selected run. Markdown export is for reading and is not a supported paste import format.

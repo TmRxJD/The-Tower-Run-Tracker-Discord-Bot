@@ -40,3 +40,9 @@ describe('battle report markdown', () => {
     expect(buildBattleReportMarkdown({})).toBeNull()
   })
 })
+
+it('keeps report headline metrics consistent with the shared summary, including genuine zero', () => {
+  const report = buildBattleReportMarkdown({ ...run, totalCoins: '0', rawParseFields: { totalCoins: '2.97s', tier: '21', wave: '8041' } });
+  expect(report).toContain('- **Coins Earned:** 0');
+  expect(report).not.toContain('2.97s');
+});

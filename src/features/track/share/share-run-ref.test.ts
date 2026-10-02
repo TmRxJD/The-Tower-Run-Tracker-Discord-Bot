@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildShareRunRef, fitsShareCustomId, parseShareRunRef } from './share-run-ref'
+import { buildShareRunRef, buildShareSnapshotRef, fitsShareCustomId, parseShareRunRef } from './share-run-ref'
 
 describe('share run ref', () => {
   it('prefers localId and round-trips through parse', () => {
@@ -28,3 +28,12 @@ describe('share run ref', () => {
     expect(fitsShareCustomId('tracker_share_expand:', 'a'.repeat(100))).toBe(false)
   })
 })
+
+it('binds a version to owner, data and counts and reuses identical snapshots', () => {
+  const a = buildShareSnapshotRef('4242', { runId: 'run-9', totalCoins: '0' }, { Farming: 9 });
+  expect(a).toBe(buildShareSnapshotRef('4242', { runId: 'run-9', totalCoins: '0' }, { Farming: 9 }));
+  expect(a).not.toBe(buildShareSnapshotRef('4242', { runId: 'run-9', totalCoins: '2.97s' }, { Farming: 9 }));
+  expect(a).not.toBe(buildShareSnapshotRef('other', { runId: 'run-9', totalCoins: '0' }, { Farming: 9 }));
+  expect(a).not.toBe(buildShareSnapshotRef('4242', { runId: 'run-9', totalCoins: '0' }, { Farming: 10 }));
+  expect(fitsShareCustomId('tracker_share_expand:', a!)).toBe(true);
+});

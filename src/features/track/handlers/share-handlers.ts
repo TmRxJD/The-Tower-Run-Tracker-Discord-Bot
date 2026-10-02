@@ -10,7 +10,7 @@ import { getTrackerFlowMode } from '../flow-mode-store';
 import { TRACKER_IDS } from '../track-custom-ids';
 import { EmbedBuilder, Colors, type MessageComponentInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
-import { buildShareRunRef } from '../share/share-run-ref';
+import { buildShareSnapshotRef } from '../share/share-run-ref';
 import { shouldCompactShare } from '../share/share-compaction';
 import { saveShareSnapshot } from '../share/share-snapshot-store';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
@@ -171,9 +171,14 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       let run = cached?.run ?? null;
       const { runTypeCounts } = await getLocalRunSummary(userId, verifiedRuns);
 
-      if (run && !verifiedRuns.some(existing => trackerRunReferencesSameEntry({ left: { localId: existing.localId, runId: existing.runId, fallbackRunId: existing.id }, right: { localId: run!.localId, runId: run!.runId, fallbackRunId: run!.id } }))) {
-        await sendNotice('This run is no longer in your current history. Please choose another run.');
-        return;
+      if (run) {
+        const selected = verifiedRuns.find(existing => trackerRunReferencesSameEntry({ left: { localId: existing.localId, runId: existing.runId, fallbackRunId: existing.id }, right: { localId: run!.localId, runId: run!.runId, fallbackRunId: run!.id } }));
+        if (!selected) {
+          await sendNotice('This run is no longer in your current history. Please choose another run.');
+          return;
+        }
+        // Refresh the selected entry's data as well as its count. Never display stale draft values.
+        run = { ...selected };
       }
       if (!run) {
         run = [...verifiedRuns].sort((a, b) => estimateTrackerRunTimestamp(b) - estimateTrackerRunTimestamp(a))[0] ?? null;
@@ -251,9 +256,10 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           else embed.setImage('attachment://per-hour-chart.png');
         }
 
-        const shareRunRef = buildShareRunRef(userId, run);
+        let shareRunRef = buildShareSnapshotRef(userId, run, runTypeCounts);
         if (shareRunRef) {
-          await saveShareSnapshot({ ref: shareRunRef, userId, run, sharerName: embedUser.displayName }).catch(() => {});
+          const saved = await saveShareSnapshot({ ref: shareRunRef, userId, run, runTypeCounts, sharerName: embedUser.displayName }).catch(() => false);
+          if (!saved) shareRunRef = null;
         }
 
         try {

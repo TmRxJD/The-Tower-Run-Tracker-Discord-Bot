@@ -5,7 +5,7 @@ import { logError } from '../handlers/error-handlers';
 import { buildEmbedUserFromInteraction } from '../discord-display-name';
 import { buildShareEmbed } from './share-embed';
 import { resolveShareEmbedOptions } from './share-embed-options';
-import { buildShareRunRef } from './share-run-ref';
+import { buildShareSnapshotRef } from './share-run-ref';
 import { saveShareSnapshot } from './share-snapshot-store';
 import { resolveShareEmbedChannelPayload, type ShareEmbedChannelPayload } from './share-embed-delivery';
 import { getAutoLogMessageRef, setAutoLogMessageRef } from './log-channel-state';
@@ -43,9 +43,10 @@ export async function autoShareToConfiguredLogChannel(params: {
     deltaResult: params.deltaResult,
     options: resolveShareEmbedOptions(settings),
   });
-  const shareRunRef = buildShareRunRef(params.userId, params.run);
+  let shareRunRef = buildShareSnapshotRef(params.userId, params.run, params.runTypeCounts);
   if (shareRunRef) {
-    await saveShareSnapshot({ ref: shareRunRef, userId: params.userId, run: params.run, sharerName: embedUser.displayName }).catch(() => {});
+    const saved = await saveShareSnapshot({ ref: shareRunRef, userId: params.userId, run: params.run, runTypeCounts: params.runTypeCounts, sharerName: embedUser.displayName }).catch(() => false);
+    if (!saved) shareRunRef = null;
   }
 
   const allRuns = await getLocalRuns(params.userId).catch(() => [] as Awaited<ReturnType<typeof getLocalRuns>>);

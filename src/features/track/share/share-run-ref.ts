@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /**
  * Share buttons must survive bot restarts, so they carry the sharer + run identity in
  * the custom id rather than pointing at an in-memory cache entry.
@@ -31,4 +32,11 @@ export function parseShareRunRef(ref: string): { userId: string; runRef: string 
 /** Discord rejects custom ids over 100 chars; drop the button instead of failing the send. */
 export function fitsShareCustomId(prefix: string, ref: string): boolean {
   return `${prefix}${ref}`.length <= DISCORD_CUSTOM_ID_MAX_LENGTH;
+}
+
+/** Immutable version reference; repeat shares of identical data reuse their snapshot. */
+export function buildShareSnapshotRef(userId: string, run: Record<string, unknown>, runTypeCounts: Record<string, number>): string | null {
+  if (!buildShareRunRef(userId, run)) return null;
+  const version = createHash('sha256').update(JSON.stringify({ userId, run, runTypeCounts })).digest('hex').slice(0, 32);
+  return `${userId}:S-${version}`;
 }
