@@ -161,7 +161,7 @@ async function syncUserRunDeltasViaFunction(
       return { changed };
     }
 
-    const isFinalPage = !remote.nextPage || pagesFetched >= maxPages;
+    const isFinalPage = !remote.nextPage;
     await ingestMergedRunsIntoBotStore(userId, remote.runs, remote.syncedAtMs, {
       persistSyncCursor: isFinalPage,
     });
@@ -175,7 +175,7 @@ async function syncUserRunDeltasViaFunction(
       maxPages: Number.isFinite(maxPages) ? maxPages : 'all',
     });
 
-    if (isFinalPage) {
+    if (isFinalPage || pagesFetched >= maxPages) {
       return { changed };
     }
 
@@ -282,6 +282,10 @@ export async function bulkImportAllRunsFromCloud(
         pageOffset: offset,
         limit,
       })));
+
+      if (remotes.some(remote => remote === null)) {
+        throw new Error('Bulk import page fetch failed; sync cursor preserved for retry');
+      }
 
       let batchImported = 0;
       let batchHadFullPage = false;

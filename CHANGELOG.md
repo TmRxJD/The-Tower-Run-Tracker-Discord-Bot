@@ -3,6 +3,7 @@
 ## 2026-10-02
 
 ### Fixed
+- Preserve the delta sync cursor when a menu refresh stops before the final page. Fail incomplete bulk imports without checkpointing skipped pages, so retries can recover missing history and edits.
 - Refresh selected run data before sharing and bind new share buttons to a captured data/count version. Keep report headline values aligned with the summary; missing snapshots do not silently select another run. Existing posts and cloud records remain unchanged.
 - Add bounded, redacted local paste diagnostics with seven-day default retention, private storage, safe references and failure responses; storage errors cannot interrupt run handling.
 - Stop reporting active owner-bound modal collector submissions as dropped interactions. Retain diagnostics for unowned, expired and failed waits; capture ownership before asynchronous dispatch so successful collectors are not falsely flagged.
