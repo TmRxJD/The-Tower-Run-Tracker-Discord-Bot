@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { buildShareEmbed } from './share-embed';
 
 describe('share embed', () => {
+  it('shows missing/invalid metrics as unavailable and preserves explicit zeros', () => {
+    const input = { user: { username: 'fixture' }, runTypeCounts: {}, options: {} };
+    const absent = buildShareEmbed({ ...input, run: {} }).data.description!;
+    expect(absent).toContain('Coins: **Unavailable**');
+    expect(absent).toContain('Death Defies: **Unavailable**');
+    expect(absent).toContain('Shards: **Unavailable**');
+    const invalid = buildShareEmbed({ ...input, run: {totalCoins: 'Unknown', cannonShardsFetched: 'Unknown'} }).data.description!;
+    expect(invalid).toContain('Coins: **Unavailable**');
+    expect(invalid).toContain('Shards: **Unavailable**');
+    const zeros = buildShareEmbed({ ...input, run: {totalCoins: 0, totalCells: '0', totalDice: 0, deathDefy: 0, cannonShardsFetched: 0, armorShardsFetched: 0, generatorShardsFetched: 0, coreShardsFetched: 0} }).data.description!;
+    expect(zeros).toContain('Coins: **0**');
+    expect(zeros).toContain('Death Defies: **0**');
+    expect(zeros).toContain('Shards: **0**');
+  });
   it('adds the earnings per hour heading before hourly share fields', () => {
     const embed = buildShareEmbed({
       user: { username: 'jd', displayName: 'JD' },

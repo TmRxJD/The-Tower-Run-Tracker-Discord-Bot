@@ -3,14 +3,17 @@
 ## 2026-10-02
 
 ### Fixed
-- Verify both main and extended run ownership before administrative cloud deletion; retain pending deletes on ownership-read failures. Honor TRACKER_BOT_DATA_DIR at first SQLite open so isolated tests cannot silently use cwd storage; preserve the default production path.
+- Await persistent SQLite commits for successful local-only saves/edits/imports/deletes and deferred cloud queue acknowledgements; sync screenshot files before committing references and roll back failed queue/settings/lifetime mutations in memory.
+- Preserve offline currency/duration values in shared RxDB serialization and keep local storage identities distinct from cloud identities. Recover unsynced snapshots across cloud re-enable, enqueue using immutable original targets, retire confirmed cloud entries and exclude durable deletion receipts from restoration.
+- Validate required values before new direct/review/import writes; retain genuine zero, reject missing/invalid/unsupported numeric notation, and display missing optional metrics as unavailable in submission, share and menu summaries.
+- Bound inactive transient UI caches while retaining no-expiry share snapshots on durable storage; preserve unknown targets rather than guessing Main after expiry.
+- Publish controlled incident metadata in error channels without raw exceptions, OCR, filenames, URLs or screenshots; sanitize secondary Vision, screenshot verification and deferred submission diagnostics.
 - Preserve exhausted cloud queue entries and screenshots; allow explicit retry, retain pending edits in queue counts, restore queued payloads after cache misses, and serialize queue replacement/replay/deletion receipts.
 - Capture upload profile once across save/import/retry paths, distinguish explicit Main from unknown legacy targets, preserve verified cloud ownership/profile, and reject non-404 creation assumptions. Preserve and block legacy new-run queue targets needing an explicit choice.
 - Reuse the selected document ID after partial cloud pair writes, including duplicate updates and simultaneous retries, to avoid a second main document.
 - Remove shared JWT identity inheritance and bound both identity cache layers; verify import cancellation ownership.
 - Replace startup locks with immutable owner markers and ownership-safe release; shut down on gateway invalidation, allow ten seconds for PM2 shutdown, and require a fresh Discord-ready receipt during deployment verification.
 - Bound delta/share requests and screenshot/import downloads, and remove raw delta-response previews from diagnostics.
-
 - Preserve the delta sync cursor when a menu refresh stops before the final page. Fail incomplete bulk imports without checkpointing skipped pages, so retries can recover missing history and edits.
 - Refresh selected run data before sharing and bind new share buttons to a captured data/count version. Keep report headline values aligned with the summary; missing snapshots do not silently select another run. Existing posts and cloud records remain unchanged.
 - Add bounded, redacted local paste diagnostics with seven-day default retention, private storage, safe references and failure responses; storage errors cannot interrupt run handling.
@@ -21,6 +24,12 @@
 ## 2026-10-01
 
 ### Fixed
+- Preserve exhausted cloud queue entries and screenshots; allow explicit retry, retain pending edits in queue counts, restore queued payloads after cache misses, and serialize queue replacement/replay/deletion receipts.
+- Capture upload profile once across save/import/retry paths, distinguish explicit Main from unknown legacy targets, preserve verified cloud ownership/profile, and reject non-404 creation assumptions. Preserve and block legacy new-run queue targets needing an explicit choice.
+- Reuse the selected document ID after partial cloud pair writes, including duplicate updates and simultaneous retries, to avoid a second main document.
+- Remove shared JWT identity inheritance and bound both identity cache layers; verify import cancellation ownership.
+- Replace startup locks with immutable owner markers and ownership-safe release; shut down on gateway invalidation, allow ten seconds for PM2 shutdown, and require a fresh Discord-ready receipt during deployment verification.
+- Bound delta/share requests and screenshot/import downloads, and remove raw delta-response previews from diagnostics.
 - Restore corrected Orbs comparisons using compatible counts within rolling windows; keep Last Run tied to the actual prior run. Show unavailable/zero-baseline labels, reuse explicit raw parsed counts without migration, and preserve zero coverage. Shared logic is pinned with a tracked pnpm patch.
 - Treat abandoned add-run modals as normal expiry while retaining unexpected errors.
 - Add a read-only cloud connectivity probe and one startup/recovery reconciliation receipt for operational verification.
@@ -28,6 +37,12 @@
 ## 2026-09-29
 
 ### Fixed
+- Preserve exhausted cloud queue entries and screenshots; allow explicit retry, retain pending edits in queue counts, restore queued payloads after cache misses, and serialize queue replacement/replay/deletion receipts.
+- Capture upload profile once across save/import/retry paths, distinguish explicit Main from unknown legacy targets, preserve verified cloud ownership/profile, and reject non-404 creation assumptions. Preserve and block legacy new-run queue targets needing an explicit choice.
+- Reuse the selected document ID after partial cloud pair writes, including duplicate updates and simultaneous retries, to avoid a second main document.
+- Remove shared JWT identity inheritance and bound both identity cache layers; verify import cancellation ownership.
+- Replace startup locks with immutable owner markers and ownership-safe release; shut down on gateway invalidation, allow ten seconds for PM2 shutdown, and require a fresh Discord-ready receipt during deployment verification.
+- Bound delta/share requests and screenshot/import downloads, and remove raw delta-response previews from diagnostics.
 - **Commands needing several tries.** Writing a heavy user's run history to the local RxDB cache blocked the event
   loop for seconds (7.2s measured for 1,359 runs), so interactions arriving meanwhile expired before the bot
   could acknowledge them. Runs are now written 25 at a time with a yield between slices (worst stall 7.2s -> 0.44s).

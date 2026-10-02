@@ -1,3 +1,4 @@
+import { TransientCache } from '../../../core/transient-cache';
 import { downloadBoundedBuffer } from '../../../core/bounded-download';
 import * as Discord from 'discord.js';
 import { beginPasteDiagnostic, updatePasteDiagnostic } from '../paste-diagnostics';
@@ -183,7 +184,7 @@ type LogClient = { channels: { fetch: (id: string) => Promise<unknown> } };
 // Tracks which render of the main menu is the "active" one for a given user.
 // Any component interaction (button click, select) clears this, so the background
 // hydration update from renderTrackMenu will not stomp a screen the user has navigated to.
-const mainMenuSessionByUser = new Map<string, string>();
+const mainMenuSessionByUser = new TransientCache<string, string>();
 
 export function clearMainMenuSession(userId: string): void {
   mainMenuSessionByUser.delete(userId);
@@ -451,7 +452,7 @@ function normalizeVerificationValue(key: string, value: unknown): string {
   }
 }
 
-async function verifyScreenshotMatchesPastedRun(
+export async function verifyScreenshotMatchesPastedRun(
   attachment: AttachmentLike,
   pastedRunData: RunDataLike,
 ): Promise<void> {
@@ -480,21 +481,16 @@ async function verifyScreenshotMatchesPastedRun(
     const pastedValue = normalizeVerificationValue(String(key), pastedRunData[key]);
     const ocrValue = normalizeVerificationValue(String(key), ocrProcessed[key]);
     if (!pastedValue || !ocrValue || pastedValue === ocrValue) return [];
-    return [`${label}: pasted ${pastedValue}, screenshot ${ocrValue}`];
+    return [label];
   });
 
   if (!mismatches.length) {
-    logger.info('Tracker screenshot verification matched pasted values', {
-      source: ocrResult.source,
-      screenshotName: attachment.name ?? attachment.id ?? 'screenshot.png',
-    });
+    logger.info('Tracker screenshot verification matched pasted values');
     return;
   }
 
   logger.warn('Tracker screenshot verification mismatch detected', {
-    source: ocrResult.source,
-    screenshotName: attachment.name ?? attachment.id ?? 'screenshot.png',
-    mismatches,
+    mismatchCount: mismatches.length,
   });
 }
 
@@ -1131,10 +1127,8 @@ export async function handleDirectTextPaste(
     });
 
     if (resolvedMode === 'track' && attachmentOrNull) {
-      void verifyScreenshotMatchesPastedRun(attachmentOrNull, processedData).catch((verificationError) => {
+      void verifyScreenshotMatchesPastedRun(attachmentOrNull, processedData).catch(() => {
         logger.warn('Tracker screenshot verification failed', {
-          screenshotName: attachmentOrNull.name ?? 'screenshot.png',
-          error: verificationError instanceof Error ? verificationError.message : 'unknown verification failure',
         });
       });
     }
@@ -1398,10 +1392,8 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
       });
 
       if (mode === 'track' && attachmentOrNull) {
-        void verifyScreenshotMatchesPastedRun(attachmentOrNull, processedData).catch((verificationError) => {
+        void verifyScreenshotMatchesPastedRun(attachmentOrNull, processedData).catch(() => {
           logger.warn('Tracker screenshot verification failed', {
-            screenshotName: attachmentOrNull.name ?? 'screenshot.png',
-            error: verificationError instanceof Error ? verificationError.message : 'unknown verification failure',
           });
         });
       }

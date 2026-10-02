@@ -302,6 +302,7 @@ describe('review-data-helpers', () => {
       tierDisplay: '7+',
       wave: '321',
       'Coins earned': '99',
+      totalCells: '0', totalDice: '0',
       duration: '1h2m3s',
       killedBy: 'Boss',
       date: '2026-03-13',
@@ -328,25 +329,18 @@ describe('review-data-helpers', () => {
     });
   });
 
-  it('fills missing submit payload fields with defaults when optional fields are excluded', async () => {
-    const payload = await buildSubmitPayload('user-2', 'name', {}, false, false);
-
-    expect(payload.note).toBe('');
-    expect(payload.runData).toMatchObject({
-      tier: '1',
-      wave: '1',
-      totalCoins: '0',
-      totalCells: '0',
-      totalDice: '0',
-      roundDuration: '0h0m0s',
-      killedBy: 'Apathy',
-    });
-    expect(payload.runData.type).toBeUndefined();
-    expect(payload.runData.notes).toBeUndefined();
+  it('rejects missing required values and preserves genuine zeros', async () => {
+    await expect(buildSubmitPayload('user-2', 'name', {}, false, false)).rejects.toThrow('required fields');
+    const payload = await buildSubmitPayload('user-2', 'name', { tier: '1', wave: '1', totalCoins: 0, totalCells: '0', totalDice: 0, roundDuration: '0h0m0s' }, false, false);
+    expect(Number(payload.runData.totalCoins)).toBe(0);
+    expect(Number(payload.runData.totalCells)).toBe(0);
+    expect(Number(payload.runData.totalDice)).toBe(0);
+    expect(payload.runData.shockwaveDamage).toBeUndefined();
   });
 
   it('builds submit payloads from canonical fields when aliases conflict', async () => {
     const payload = await buildSubmitPayload('user-3', 'name', {
+      tier: '5',
       wave: '7676',
       Wave: '167963',
       totalCoins: '76.37T',

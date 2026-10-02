@@ -2,6 +2,7 @@ import { formatDate, formatTime } from './upload-helpers';
 import {
   canonicalizeRunDataForOutput,
   canonicalizeRunData,
+  assertTrackerRunSubmission,
   TRACK_RUN_BATTLE_REPORT_FIELDS,
   TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS,
 } from '@tmrxjd/platform/tools';
@@ -393,14 +394,9 @@ export async function sendRawParseMessage(interaction: TrackReplyInteractionLike
 
 export async function buildSubmitPayload(userId: string, username: string, data: RunDataRecord, includeType: boolean, includeNotes: boolean) {
   const canonical = canonicalizeRunData(canonicalizeRunDataForOutput(data));
+  assertTrackerRunSubmission(canonical);
   const runData: Record<string, unknown> = {
     ...canonical,
-    tier: canonical.tier ?? '1',
-    wave: canonical.wave ?? '1',
-    totalCoins: canonical.totalCoins ?? '0',
-    totalCells: canonical.totalCells ?? '0',
-    totalDice: canonical.totalDice ?? '0',
-    roundDuration: canonical.roundDuration ?? '0h0m0s',
     killedBy: canonical.killedBy ?? 'Apathy',
     date: canonical.date ?? formatDate(new Date()),
     time: canonical.time ?? formatTime(new Date()),

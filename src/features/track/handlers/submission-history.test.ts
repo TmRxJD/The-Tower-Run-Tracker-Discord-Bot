@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), pending: vi.fn(), remove: vi.fn(), log: vi.fn(), edit: vi.fn(), render: vi.fn(), diagnostic: vi.fn() }));
+const logMocks = vi.hoisted(() => ({warn:vi.fn(),info:vi.fn(),error:vi.fn(),debug:vi.fn()}));
+vi.mock('../../../core/logger',()=>({logger:logMocks}));
 vi.mock('../paste-diagnostics', () => ({ updatePasteDiagnostic: mocks.diagnostic }));
 vi.mock('../run-upload-history', async importOriginal => ({ ...await importOriginal<object>(), prepareBotRunUploadHistory: mocks.history }));
 vi.mock('../tracker-api-client', async importOriginal => ({ ...await importOriginal<object>(),
@@ -29,7 +31,7 @@ function interaction(token: string) {
 beforeEach(() => {
   vi.clearAllMocks(); setTrackerFlowMode('submit-owner', 'track');
   runs = Array.from({ length: 132 }, (_, i) => ({ runId: `run-${i}`, localId: `local-${i}`, type: 'Farming', tier: '22', wave: String(i + 1), totalCoins: '100', roundDuration: '1h0m0s' }));
-  pending = new Map(['a', 'b'].map(token => [token, { token, userId: 'submit-owner', username: 'fixture', runData: { type: 'Farming', tier: '22', wave: '900', totalCoins: '100', roundDuration: '1h0m0s' } }]));
+  pending = new Map(['a', 'b'].map(token => [token, { token, userId: 'submit-owner', username: 'fixture', runData: { type: 'Farming', tier: '22', wave: '900', totalCoins: '100', totalCells: '0', totalDice: '0', roundDuration: '1h0m0s' } }]));
   mocks.pending.mockImplementation(async token => pending.get(token) ?? null);
   mocks.remove.mockImplementation(async token => { pending.delete(token); });
   mocks.runs.mockImplementation(async () => [...runs]); mocks.history.mockResolvedValue({ getRuns: mocks.runs });
@@ -77,4 +79,13 @@ it('a failed save remains failure-visible without forwarding paste text', async 
   expect(mocks.render).not.toHaveBeenCalled();
   expect(mocks.diagnostic).toHaveBeenCalledWith('fixture-reference', expect.objectContaining({ result: 'failed', stage: 'submit' }));
   expect(JSON.stringify(owner.editReply.mock.calls)).not.toContain('synthetic-private-paste');
+});
+it('does not forward private errors from a deferred submission follow-up to diagnostics', async () => {
+  let fail: ((error: Error) => void) | undefined;
+  const backgroundSync = new Promise<never>((_resolve,reject)=>{fail=reject;});
+  mocks.log.mockResolvedValue({localId:'new-local',backgroundSync});
+  await handleDataSubmission(interaction('a') as never);
+  fail!(Error('PRIVATE_DEFERRED_REPORT_SECRET'));
+  await vi.waitFor(()=>expect(logMocks.warn).toHaveBeenCalledWith('deferred tracker submission follow-up failed'));
+  expect(JSON.stringify(logMocks.warn.mock.calls)).not.toContain('PRIVATE_');
 });

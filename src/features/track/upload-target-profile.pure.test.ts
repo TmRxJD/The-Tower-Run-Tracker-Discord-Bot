@@ -10,8 +10,8 @@ const MAIN: BotProfileOption = { id: 'main-id', name: 'Main', isPrimary: true, i
 const ALT1: BotProfileOption = { id: 'alt-1', name: 'Alt One', isPrimary: false, index: 1, isDefault: true };
 
 describe('pending upload-target map', () => {
-  it('defaults to null (Main) for an unseen user', () => {
-    expect(peekPendingUploadProfile('unseen-user')).toBeNull();
+  it('keeps the target unknown for an unseen user', () => {
+    expect(peekPendingUploadProfile('unseen-user')).toBeUndefined();
   });
 
   it('round-trips a set value and treats it as a peek (non-consuming)', () => {

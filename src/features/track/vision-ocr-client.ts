@@ -21,13 +21,6 @@ type ChatCompletionResponse = {
   }>;
 };
 
-type ErrorResponse = {
-  error?: {
-    message?: string;
-    type?: string;
-    code?: string;
-  };
-};
 
 function resolveVisionModel(configured: string | undefined): string {
   const trimmed = String(configured || '').trim();
@@ -59,23 +52,6 @@ function normalizeRunData(value: unknown): Record<string, unknown> {
   );
 }
 
-async function parseErrorDetail(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as ErrorResponse;
-    const detail = [payload.error?.message, payload.error?.type, payload.error?.code]
-      .map(value => String(value || '').trim())
-      .filter(Boolean)
-      .join(' | ');
-    if (detail) {
-      return detail;
-    }
-  } catch {
-    // fall through to text parsing
-  }
-
-  const text = String(await response.text().catch(() => '')).trim();
-  return text || response.statusText || 'Vision API request failed';
-}
 
 export async function runDirectVisionOcr(file: AttachmentPayload): Promise<VisionOcrPayload> {
   const config = getAppConfig().ai;
@@ -134,23 +110,27 @@ export async function runDirectVisionOcr(file: AttachmentPayload): Promise<Visio
   });
 
   if (!response.ok) {
-    throw new Error(`Vision API ${response.status}: ${await parseErrorDetail(response)}`);
+    throw Object.assign(new Error(`Vision API request failed (${response.status})`), { status: response.status });
   }
 
-  const payload = (await response.json()) as ChatCompletionResponse;
+  let payload: ChatCompletionResponse;
+  try { payload = (await response.json()) as ChatCompletionResponse; }
+  catch { throw new Error('Vision API returned invalid response JSON'); }
   const rawContent = readChatCompletionText(payload);
   const jsonText = readJsonObject(rawContent);
   if (!jsonText) {
     throw new Error('Vision API returned non-JSON content');
   }
-  const parsed = JSON.parse(jsonText) as {
+  let parsed: {
     textLines?: unknown;
     runData?: unknown;
   };
+  try { parsed = JSON.parse(jsonText); }
+  catch { throw new Error('Vision API returned invalid JSON'); }
 
   const textLines = readOcrTextLines(parsed.textLines);
   if (textLines.length === 0) {
-    logger.warn('Vision API OCR returned no text lines', { filename: file.filename });
+    logger.warn('Vision API OCR returned no text lines');
     throw new Error('Vision API OCR returned no text lines');
   }
 

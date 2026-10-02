@@ -3,6 +3,7 @@ import {
   buildBattleRunDedupKeysFromStoredRun,
   buildBotsTrackerLocalPersistPayload,
   canonicalizeRunData,
+  assertTrackerRunSubmission,
   normalizeBotsTrackerLocalSnapshot,
   normalizeWorkshopTrackerPayload,
   type SaveImportPersistencePort,
@@ -15,6 +16,8 @@ import { getTrackerKv, setTrackerKv } from '../../../services/idb';
 import { invalidateBotLocalRunsCache } from '../../../rxdb/run-rxdb-store';
 import { bulkUpsertLocalRuns, getLocalRuns, getLocalSettings, queueCloudUpsertsBatch } from '../local-run-store';
 import { forceSyncQueuedRuns, saveLifetimeEntry } from '../tracker-api-client';
+import { rememberOriginalRunTarget } from '../run-local-provenance';
+import { backupLocalOnlyRunsNow } from '../../../rxdb/local-only-backup';
 import type { MessageComponentInteraction, ModalSubmitInteraction } from 'discord.js';
 
 type TrackMenuInteraction = MessageComponentInteraction | ModalSubmitInteraction;
@@ -76,6 +79,7 @@ export function createDiscordSaveImportPort(
         return { added: 0, updated: plan.importable.length };
       }
 
+      for (const run of importable) assertTrackerRunSubmission(run as Record<string, unknown>);
       const payload = importable.map(run => ({
         username,
         runData: canonicalizeRunData(run),
@@ -83,6 +87,12 @@ export function createDiscordSaveImportPort(
       const result = await bulkUpsertLocalRuns(userId, payload);
 
       const settings = await getLocalSettings(userId);
+      if (settings.cloudSyncEnabled === false) {
+        for (const [index, record] of result.records.entries()) {
+          if (!result.wasUpdates[index]) await rememberOriginalRunTarget(userId, record.localId, uploadProfileId);
+        }
+        await backupLocalOnlyRunsNow(userId);
+      }
       if (settings.cloudSyncEnabled !== false) {
         const cloudBatch = payload.flatMap((item, index) => {
           if (result.wasUpdates[index]) return [];
@@ -174,4 +184,3 @@ export function createDiscordSaveImportPort(
     },
   };
 }
-

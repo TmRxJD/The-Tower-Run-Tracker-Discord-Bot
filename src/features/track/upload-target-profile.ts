@@ -1,3 +1,4 @@
+import { TransientCache } from '../../core/transient-cache';
 import { Query } from 'node-appwrite';
 import {
   altIndexForProfileId,
@@ -20,7 +21,7 @@ const PROFILES_COLLECTION_ID = 'account-profiles';
  * were present, because the platform pair-writer never re-stamps an existing run's
  * profileId — so a Main run can never be dragged onto an alt by this carrier.
  */
-const pendingTargetByDiscordUser = new Map<string, string | null>();
+const pendingTargetByDiscordUser = new TransientCache<string, string | null>();
 
 export function setPendingUploadProfile(discordUserId: string, profileId: string | null): void {
   pendingTargetByDiscordUser.set(discordUserId.trim(), profileId ?? null);
@@ -30,8 +31,8 @@ export function hasPendingUploadProfile(discordUserId: string): boolean {
   return pendingTargetByDiscordUser.has(discordUserId.trim());
 }
 
-export function peekPendingUploadProfile(discordUserId: string): string | null {
-  return pendingTargetByDiscordUser.get(discordUserId.trim()) ?? null;
+export function peekPendingUploadProfile(discordUserId: string): string | null | undefined {
+  return pendingTargetByDiscordUser.get(discordUserId.trim());
 }
 
 /** A profile the bot can target, as shown in the interactive UI. index 0 = Main, 1-4 = alt slot. */

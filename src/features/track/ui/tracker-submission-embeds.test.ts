@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { buildLifetimeSubmissionResultEmbed, buildSubmissionResultEmbed } from './tracker-submission-embeds'
 
 describe('tracker submission embeds', () => {
+  it('shows missing metrics as unavailable and preserves explicit zero', () => {
+    const missing = buildSubmissionResultEmbed({data: {}, isUpdate: false, runTypeCounts: {}, hasScreenshot: false}).data.description!;
+    expect(missing).toContain('Coins: **Unavailable**');
+    expect(missing).toContain('Shards: **Unavailable**');
+    const zero = buildSubmissionResultEmbed({data: {totalCoins: 0, totalCells: '0', totalDice: 0}, isUpdate: false, runTypeCounts: {}, hasScreenshot: false}).data.description!;
+    expect(zero).toContain('Coins: **0**');
+    expect(zero).toContain('Cells: **0**');
+    expect(zero).toContain('Dice: **0**');
+  })
   it('builds the run submission embed with normalized coverage fields', () => {
     const embed = buildSubmissionResultEmbed({
       data: {

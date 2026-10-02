@@ -1,9 +1,12 @@
 import { downloadBoundedBuffer } from '../../core/bounded-download';
+import { backupLocalOnlyRunsNow, refreshExistingLocalOnlyBackup } from '../../rxdb/local-only-backup';
+import { getOriginalRunTarget, rememberOriginalRunTarget } from './run-local-provenance';
 import { ID, Permission, Query, Role } from 'node-appwrite';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import {
   buildTrackerRunDocumentPermissions,
+  assertTrackerRunSubmission,
   buildTrackerQueuedRunReferenceIdentity,
   buildTrackerResolvedRunReference,
   collectTrackerStaleCloudBackedLocalRunReferences,
@@ -91,6 +94,7 @@ import {
   queueCloudDelete,
   queueCloudSettings,
   queueCloudUpsert,
+  queueCloudUpsertsBatch,
   releaseQueuedItemsForImmediateRetry,
   removeLocalRun,
   removeQueueItem,
@@ -899,6 +903,8 @@ function buildLocalRunUpsertPayload(runData: RunRecord, canonicalRunData?: RunRe
 
   return {
     ...collectRunScalarFields(normalizedRunData, canonical),
+    ...(pickString(runData.localId) ? { localId: pickString(runData.localId) } : {}),
+    ...(pickString(runData.runId) ? { runId: pickString(runData.runId) } : {}),
     ...coverage,
     ...canonicalCoverage,
   };
@@ -935,6 +941,7 @@ function buildCloudRunEntry(params: {
   return {
     ...(params.existingEntry ?? {}),
     ...scalarRunFields,
+    ...(pickString(params.runData.localId) ? { localId: pickString(params.runData.localId) } : {}),
     id: runId,
     runId,
     userId: params.userId,
@@ -993,7 +1000,8 @@ async function storeQueuedScreenshot(userId: string, screenshot: AttachmentPaylo
   await fs.mkdir(QUEUED_SCREENSHOT_DIR, { recursive: true });
   const safeName = screenshot.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
   const tempPath = join(QUEUED_SCREENSHOT_DIR, `${userId}-${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`);
-  await fs.writeFile(tempPath, screenshot.data);
+  const handle = await fs.open(tempPath, 'wx');
+  try { await handle.writeFile(screenshot.data); await handle.sync(); } finally { await handle.close(); }
 
   return {
     filename: screenshot.filename,
@@ -1046,6 +1054,7 @@ async function startDeferredRunCloudSync(params: {
   username: string;
   runData: RunRecord;
   uploadProfileId?: string | null;
+  alreadyQueued?: boolean;
   canonicalRunData?: RunRecord | null;
   screenshot?: AttachmentPayload | null;
   deferredScreenshotSource?: { url: string; filename?: string | null; contentType?: string | null } | null;
@@ -1054,6 +1063,7 @@ async function startDeferredRunCloudSync(params: {
   const targetReference = buildTrackerQueuedRunReferenceIdentity({ runData: params.runData });
 
   try {
+    if (!params.alreadyQueued) {
     const screenshotPayload = params.screenshot ?? await loadDeferredScreenshotPayload(params.deferredScreenshotSource ?? null);
     const queuedScreenshot = await storeQueuedScreenshot(params.userId, screenshotPayload);
 
@@ -1066,6 +1076,7 @@ async function startDeferredRunCloudSync(params: {
       screenshot: queuedScreenshot,
       localId: targetLocalId ?? undefined,
     });
+    }
 
     await syncQueuedRuns(params.userId);
 
@@ -1121,7 +1132,8 @@ async function storeOfflineScreenshotForUser(userId: string, screenshot: Attachm
 
   const safeName = screenshot.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
   const filePath = join(userDir, `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`);
-  await fs.writeFile(filePath, screenshot.data);
+  const handle = await fs.open(filePath, 'wx');
+  try { await handle.writeFile(screenshot.data); await handle.sync(); } finally { await handle.close(); }
 
   return { localPath: filePath, capacityReached };
 }
@@ -2541,6 +2553,7 @@ export async function logRun(params: {
   skipLeaderboardRefresh?: boolean;
   deferCloudSync?: boolean;
 }) {
+  assertTrackerRunSubmission({ ...params.runData, ...(params.canonicalRunData ?? {}) });
   params = { ...params, uploadProfileId: Object.prototype.hasOwnProperty.call(params, 'uploadProfileId') ? params.uploadProfileId : peekPendingUploadProfile(params.userId) };
   const settings = await getLocalSettings(params.userId);
   let localOnlyScreenshotPatch: Record<string, unknown> = {};
@@ -2564,6 +2577,13 @@ export async function logRun(params: {
     type: toCloudType(params.runData?.type),
     updatedAt: Date.now(),
   });
+  const originalTarget = await getOriginalRunTarget(params.userId, local.localId);
+  if (originalTarget) params = { ...params, uploadProfileId: originalTarget.profileId };
+  if (!settings.cloudSyncEnabled) {
+    await rememberOriginalRunTarget(params.userId, local.localId, params.uploadProfileId);
+    await backupLocalOnlyRunsNow(params.userId);
+  }
+  else await refreshExistingLocalOnlyBackup(params.userId);
   const localReference = buildTrackerResolvedRunReference({
     localId: local.localId,
     runId: local.runId,
@@ -2581,6 +2601,8 @@ export async function logRun(params: {
   }
 
   if (!canUseCloudForUserId(params.userId, 'run log')) {
+    await rememberOriginalRunTarget(params.userId, local.localId, params.uploadProfileId);
+    await backupLocalOnlyRunsNow(params.userId, { force: true });
     return {
       ok: true,
       queuedForCloud: false,
@@ -2603,9 +2625,12 @@ export async function logRun(params: {
       localId: deferredReference.localId ?? undefined,
     });
 
+    const source = params.screenshot ?? await loadDeferredScreenshotPayload(params.deferredScreenshotSource ?? null);
+    const screenshot = await storeQueuedScreenshot(params.userId, source);
+    await queueCloudUpsert({ userId: params.userId, username: params.username, runData: deferredRunData, canonicalRunData: params.canonicalRunData ?? undefined, uploadProfileId: params.uploadProfileId, localId: local.localId, screenshot });
     return {
       ok: true,
-      queuedForCloud: false,
+      queuedForCloud: true,
       cloudUnavailable: false,
       localOnly: false,
       localImageCapacityReached,
@@ -2613,6 +2638,7 @@ export async function logRun(params: {
       runId: deferredReference.runId,
       cloudSyncDeferred: true,
       backgroundSync: startDeferredRunCloudSync({
+        alreadyQueued: true,
         userId: params.userId,
         username: params.username,
         runData: deferredRunData,
@@ -2771,6 +2797,15 @@ export async function getLocalLifetimeData(userId: string) {
 
 export async function editUserSettings(userId: string, settings: Record<string, unknown>) {
   const normalizedSettings = normalizeShareSettingsPatch(forceWebDefaultTrackerPatch(settings));
+  if (normalizedSettings.cloudSyncEnabled === true && !(await getLocalSettings(userId)).cloudSyncEnabled) {
+    const pending = [];
+    for (const run of await getLocalRuns(userId)) {
+      if (run.runId) continue;
+      const original = await getOriginalRunTarget(userId, run.localId);
+      if (original) pending.push({ userId, username: String(run.username ?? 'unknown'), localId: run.localId, runData: run, uploadProfileId: original.profileId });
+    }
+    await queueCloudUpsertsBatch(pending);
+  }
   const local = await updateLocalSettings(userId, normalizedSettings as Partial<TrackerSettings & { cloudSyncEnabled?: boolean }>);
   if (!local.cloudSyncEnabled) return true;
   if (!canUseCloudForUserId(userId, 'settings update')) return true;
@@ -2901,6 +2936,7 @@ export async function editRun(params: {
   skipLeaderboardRefresh?: boolean;
   deferCloudSync?: boolean;
 }) {
+  assertTrackerRunSubmission({ ...params.runData, ...(params.canonicalRunData ?? {}) });
   params = { ...params, uploadProfileId: Object.prototype.hasOwnProperty.call(params, 'uploadProfileId') ? params.uploadProfileId : peekPendingUploadProfile(params.userId) };
   const localRunPayload = buildLocalRunUpsertPayload(params.runData, params.canonicalRunData ?? null);
   const local = await upsertLocalRun(params.userId, params.username, { ...localRunPayload, updatedAt: Date.now() });
@@ -2909,8 +2945,13 @@ export async function editRun(params: {
     runId: local.runId,
   });
   const settings = await getLocalSettings(params.userId);
+  const originalTarget = await getOriginalRunTarget(params.userId, local.localId);
+  if (originalTarget) params = { ...params, uploadProfileId: originalTarget.profileId };
+  else if (!local.runId) params = { ...params, uploadProfileId: undefined };
+  if (!settings.cloudSyncEnabled) await backupLocalOnlyRunsNow(params.userId);
+  else await refreshExistingLocalOnlyBackup(params.userId);
   if (!settings.cloudSyncEnabled) return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: localReference.localId, runId: localReference.runId };
-  if (!canUseCloudForUserId(params.userId, 'run edit')) return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: localReference.localId, runId: localReference.runId };
+  if (!canUseCloudForUserId(params.userId, 'run edit')) { await backupLocalOnlyRunsNow(params.userId, { force: true }); return { ok: true, queuedForCloud: false, cloudUnavailable: false, localOnly: true, localId: localReference.localId, runId: localReference.runId }; }
   if (params.deferCloudSync) {
     const deferredReference = buildTrackerResolvedRunReference({
       localId: local.localId,
@@ -2922,15 +2963,17 @@ export async function editRun(params: {
       localId: deferredReference.localId ?? undefined,
     });
 
+    await queueCloudUpsert({ userId: params.userId, username: params.username, runData: deferredRunData, canonicalRunData: params.canonicalRunData ?? undefined, uploadProfileId: params.uploadProfileId, localId: local.localId });
     return {
       ok: true,
-      queuedForCloud: false,
+      queuedForCloud: true,
       cloudUnavailable: false,
       localOnly: false,
       localId: deferredReference.localId,
       runId: deferredReference.runId,
       cloudSyncDeferred: true,
       backgroundSync: startDeferredRunCloudSync({
+        alreadyQueued: true,
         userId: params.userId,
         username: params.username,
         runData: deferredRunData,
@@ -3070,7 +3113,8 @@ export async function removeLastRun(params: { userId: string; runId?: string | n
   await removeLocalRun(params.userId, { runId, localId });
   await pruneQueuedUpsertsForDeletedRun(params);
   const settings = await getLocalSettings(params.userId);
-  if (!settings.cloudSyncEnabled) return true;
+  if (!settings.cloudSyncEnabled) { await backupLocalOnlyRunsNow(params.userId); return true; }
+  await refreshExistingLocalOnlyBackup(params.userId);
   if (!runId) {
     await removeLocalRun(params.userId, { runId, localId });
     return true;

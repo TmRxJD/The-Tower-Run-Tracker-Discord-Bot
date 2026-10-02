@@ -7,6 +7,7 @@ import {
   TRACK_RUN_INLINE_BATTLE_REPORT_SECTION_LABELS,
   buildTrackerResolvedRunReference,
   trackerRunsShareDuplicateIdentity,
+  assertTrackerRunSubmission,
 } from '@tmrxjd/platform/tools';
 
 const INLINE_BATTLE_REPORT_LABELS = TRACK_RUN_INLINE_BATTLE_REPORT_LABELS;
@@ -904,6 +905,8 @@ export function parseRunDataFromText(rawText: string) {
   if (!canonical) {
     throw new IncompleteRunReportError('unrecognized_report');
   }
+  try { assertTrackerRunSubmission(canonical as unknown as Record<string, unknown>); }
+  catch { throw new IncompleteRunReportError('missing_fields'); }
 
   const tierInfo = parseTierString(canonical.tier);
   const tier = tierInfo.numeric !== null ? tierInfo.numeric : 'Unknown';
@@ -918,9 +921,9 @@ export function parseRunDataFromText(rawText: string) {
     tier === 'Unknown' || !Number.isFinite(Number(tier)) || Number(tier) < 1
     || wave === 'Unknown' || !Number.isFinite(Number(wave)) || Number(wave) < 1
     || !roundDuration
-    || !totalCoins
-    || !totalCells
-    || !totalDice
+    || totalCoins === undefined || totalCoins === null || String(totalCoins).trim() === ''
+    || totalCells === undefined || totalCells === null || String(totalCells).trim() === ''
+    || totalDice === undefined || totalDice === null || String(totalDice).trim() === ''
   ) {
     throw new IncompleteRunReportError('missing_fields');
   }

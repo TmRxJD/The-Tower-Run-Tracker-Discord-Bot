@@ -1,3 +1,4 @@
+import { TransientCache } from '../../../core/transient-cache';
 import { randomUUID } from 'node:crypto';
 import type { SaveImportDiscovery, SaveImportTargetKey } from '@tmrxjd/platform/tools';
 import type { BotProfileOption } from '../upload-target-profile';
@@ -27,7 +28,7 @@ export type ImportPendingSession = {
   createdAt: number;
 };
 
-const sessions = new Map<string, ImportPendingSession>();
+const sessions = new TransientCache<string, ImportPendingSession>();
 
 export function createImportPendingSession(input: Omit<ImportPendingSession, 'token' | 'createdAt' | 'importOutcomes'>): ImportPendingSession {
   const token = randomUUID();

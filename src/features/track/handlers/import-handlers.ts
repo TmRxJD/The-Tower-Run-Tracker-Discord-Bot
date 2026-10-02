@@ -304,7 +304,8 @@ async function importSelectedTrackers(
     session.discoveries.some(tracker => tracker.key === key && tracker.count > 0),
   ) as SaveImportTargetKey[];
 
-  const port = createDiscordSaveImportPort(interaction, session.selectedProfileId ?? null);
+  if (session.selectedProfileId === undefined) throw new Error('Upload target unavailable; restart the import to select its target.');
+  const port = createDiscordSaveImportPort(interaction, session.selectedProfileId);
   const ui = getTrackUiConfig();
   invalidateBotLocalRunsCache(interaction.user.id);
   const existingRuns = await getLocalRuns(interaction.user.id);
@@ -392,7 +393,7 @@ async function renderImportReview(
   }
 
   let profileOptions: Awaited<ReturnType<typeof listBotUserProfiles>> = [];
-  let selectedProfileId: string | null = null;
+  let selectedProfileId: string | null | undefined = null;
   try {
     profileOptions = await listBotUserProfiles(userId);
     if (profileOptions.length > 1) {

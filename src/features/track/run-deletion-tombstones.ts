@@ -25,7 +25,7 @@ export async function markRunPermanentlyDeleted(userId: string, runId: string): 
   const task = previous.catch(() => {}).then(async () => {
     const existing = await getPermanentlyDeletedRunIds(scope);
     existing.add(normalized);
-    await setTrackerKv(buildKey(scope), Array.from(existing));
+    await setTrackerKv(buildKey(scope), Array.from(existing), { requirePersistent: true });
   });
   pendingWrites.set(scope, task);
   try { await task; }

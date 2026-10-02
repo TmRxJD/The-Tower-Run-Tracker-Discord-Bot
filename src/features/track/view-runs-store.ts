@@ -1,3 +1,4 @@
+import { TransientCache } from '../../core/transient-cache';
 type ViewRunsState = {
   count: number;
   offset: number;
@@ -14,7 +15,7 @@ export type ViewRunsPresentationPrefs = {
   count: number;
 };
 
-const state = new Map<string, ViewRunsState>();
+const state = new TransientCache<string, ViewRunsState>();
 
 const defaultColumns = [
   'Tier',

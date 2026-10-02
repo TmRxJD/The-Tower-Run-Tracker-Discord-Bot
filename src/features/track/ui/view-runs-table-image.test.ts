@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderImportPreviewTableImage } from './view-runs-table-image';
+import { buildTrackerRunTableColumnValue } from '@tmrxjd/platform/tools';
 
 const renderCalls: Array<{ title: string; rows: string[][] }> = [];
 vi.mock('./view-runs-chart', () => ({
@@ -10,6 +11,11 @@ vi.mock('./view-runs-chart', () => ({
 }));
 
 describe('renderImportPreviewTableImage', () => {
+  it('keeps missing/invalid table metrics distinct from genuine zero', () => {
+    expect(buildTrackerRunTableColumnValue({}, 'Coins')).toBe('Unavailable');
+    expect(buildTrackerRunTableColumnValue({totalCoins:'Unknown'}, 'Coins')).toBe('Unavailable');
+    expect(buildTrackerRunTableColumnValue({totalCoins:0}, 'Coins')).toBe('0');
+  });
   it('does not apply type or tier filters to imported runs', async () => {
     renderCalls.length = 0;
 

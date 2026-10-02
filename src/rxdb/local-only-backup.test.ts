@@ -15,6 +15,7 @@ vi.mock('../features/track/local-run-store', () => ({
 }));
 
 import { initSharedBotRunTrackerRxDatabase } from './init-database';
+import { setTrackerKv } from '../services/idb';
 import { countRunsInBotRxDB, removeRunFromBotRxDB, upsertMergedRunsToBotRxDB } from './persistence';
 import {
   LOCAL_ONLY_BACKUP_KEY_PREFIX,
@@ -67,6 +68,30 @@ describe('local-only run backup', () => {
     expect(await restoreLocalOnlyRuns()).toEqual({ users: 0, runs: 0 });
     const db = await initSharedBotRunTrackerRxDatabase();
     expect(await countRunsInBotRxDB(db, 'back-online')).toBe(0);
+  });
+
+  it('never restores a forced whole-history snapshot for a cloud-addressable identity', async () => {
+    const userId = '371914184822095873';
+    settings.set(userId, { cloudSyncEnabled: true });
+    kv.set(`${LOCAL_ONLY_BACKUP_KEY_PREFIX}${userId}`, { savedAt: 1, restoreForUnsupportedIdentity: true, runs: [makeRun('deleted-on-cloud')] });
+    expect(await restoreLocalOnlyRuns()).toEqual({ users: 0, runs: 0 });
+    const db = await initSharedBotRunTrackerRxDatabase();
+    expect(await countRunsInBotRxDB(db, userId)).toBe(0);
+  });
+
+  it('does not acknowledge snapshot success before durable storage resolves or after it rejects', async () => {
+    settings.set('await-disk-user', { cloudSyncEnabled: false });
+    let release: (() => void) | undefined;
+    vi.mocked(setTrackerKv).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    let acknowledged = false;
+    const pending = backupLocalOnlyRunsNow('await-disk-user').then(() => { acknowledged = true; });
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    expect(acknowledged).toBe(false);
+    release!(); await pending;
+    expect(acknowledged).toBe(true);
+    vi.mocked(setTrackerKv).mockRejectedValueOnce(new Error('fixture disk failure'));
+    await expect(backupLocalOnlyRunsNow('await-disk-user')).rejects.toThrow('disk failure');
+    expect(vi.mocked(setTrackerKv).mock.calls.at(-1)?.[2]).toEqual({ requirePersistent: true });
   });
 
   it('backs up automatically after writes and removals, and flushes on demand', async () => {

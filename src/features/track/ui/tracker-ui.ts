@@ -1,6 +1,7 @@
+import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '@tmrxjd/platform/tools';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
 import { computeHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
-import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
+import { formatNumberForDisplay } from '../../../utils/tracker-math';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { trimDisplayTimeSeconds } from '../handlers/upload-helpers';
 import { normalizeNoteForDisplay } from '../handlers/note-panel-handlers';
@@ -17,17 +18,10 @@ function firstPresentValue(data: Record<string, unknown>, keys: string[]): strin
   return null;
 }
 
-function parseMetricNumber(value: unknown): number {
-  const parsed = parseNumberInput(standardizeNotation(String(value ?? '0')))
-  return Number.isFinite(parsed) ? Number(parsed) : 0
-}
 
 function resolveModuleShardsTotal(data: Record<string, unknown>): string {
-  const total = parseMetricNumber(data.cannonShardsFetched)
-    + parseMetricNumber(data.armorShardsFetched)
-    + parseMetricNumber(data.generatorShardsFetched)
-    + parseMetricNumber(data.coreShardsFetched)
-  return formatNumberForDisplay(total)
+  const total = readTrackerModuleShardsTotal(data);
+  return total === null ? 'Unavailable' : formatNumberForDisplay(total);
 }
 
 function toButtonStyle(style: string): ButtonStyle {
@@ -267,10 +261,11 @@ export function createInitialEmbed(params: {
     const waveValue = String(lastRun.wave ?? 'N/A');
     const durationValue = String(lastRun.duration || lastRun.roundDuration || 'N/A');
     const killedByValue = String(lastRun.killedBy || 'Unknown');
-    const coinsValue = String(lastRun.coins || lastRun.totalCoins || 'N/A');
-    const cellsValue = String(lastRun.cells || lastRun.totalCells || 'N/A');
-    const diceValue = String(lastRun.rerollShards || lastRun.totalDice || 'N/A');
-    const deathDefyValue = String(lastRun.deathDefy || 'N/A');
+    const metricDisplay = (value: unknown) => { const parsed = readTrackerMetricValue(value); return parsed === null ? 'Unavailable' : formatNumberForDisplay(parsed); };
+    const coinsValue = metricDisplay(lastRun.totalCoins ?? lastRun.coins);
+    const cellsValue = metricDisplay(lastRun.totalCells ?? lastRun.cells);
+    const diceValue = metricDisplay(lastRun.totalDice ?? lastRun.rerollShards);
+    const deathDefyValue = metricDisplay(lastRun.deathDefy);
     const rawRunDate = String(lastRun.runDate || lastRun.date || '').trim();
     const rawRunTime = String(lastRun.runTime || lastRun.time || '').trim();
     const dateValue = `${(rawRunDate ? formatDateToISO(rawRunDate) : '') || 'Unknown'} ${rawRunTime ? trimDisplayTimeSeconds(formatTimeTo24h(rawRunTime)) : ''}`.trim();

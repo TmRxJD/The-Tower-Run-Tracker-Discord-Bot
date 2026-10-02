@@ -1,3 +1,4 @@
+import { TransientCache } from '../../core/transient-cache';
 import type { TrackerUiMode } from '../../config/tracker-ui-config';
 
 type ModeState = {
@@ -6,7 +7,7 @@ type ModeState = {
 };
 
 const MODE_TTL_MS = 30 * 60 * 1000;
-const byUser = new Map<string, ModeState>();
+const byUser = new TransientCache<string, ModeState>();
 
 export function setTrackerFlowMode(userId: string, mode: TrackerUiMode) {
   byUser.set(userId, { mode, updatedAt: Date.now() });
@@ -18,7 +19,7 @@ type InitialRunTypeState = {
 };
 
 const INITIAL_RUN_TYPE_TTL_MS = 30 * 60 * 1000;
-const initialRunTypeByUser = new Map<string, InitialRunTypeState>();
+const initialRunTypeByUser = new TransientCache<string, InitialRunTypeState>();
 
 export function setTrackerInitialRunType(userId: string, runType: string) {
   initialRunTypeByUser.set(userId, { runType, updatedAt: Date.now() });

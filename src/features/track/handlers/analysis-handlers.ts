@@ -1,3 +1,4 @@
+import { TransientCache } from '../../../core/transient-cache';
 import {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -157,7 +158,7 @@ type AnalysisState = {
   page: number;
 };
 
-const analysisState = new Map<string, AnalysisState>();
+const analysisState = new TransientCache<string, AnalysisState>();
 
 function getAnalysisState(userId: string): AnalysisState {
   if (!analysisState.has(userId)) {

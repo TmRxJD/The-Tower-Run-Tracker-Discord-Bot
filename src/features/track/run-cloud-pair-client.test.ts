@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), identity: vi.fn() }));
 vi.mock('../../persistence/appwrite-client', () => ({ createAppwriteClient: () => ({ databases: { listDocuments: mocks.list, getDocument: mocks.get } }) }));
 vi.mock('./run-cloud-identity', () => ({ resolveBotRunCloudIdentity: mocks.identity }));
-import { loadBotCompleteRunCloudDocuments } from './run-cloud-pair-client';
+import { loadBotCompleteRunCloudDocuments, writeBotRunCloudDocumentPair } from './run-cloud-pair-client';
 
 const docs = (owner: string, n: number) => Array.from({ length: n }, (_, i) => ({
   $id: `${owner}-${String(i).padStart(4, '0')}`, userId: owner, type: 'Farming', tier: '22', wave: String(i + 1),
@@ -25,6 +25,10 @@ beforeEach(() => {
   mocks.get.mockRejectedValue({ code: 404 });
 });
 describe('complete bot history reads', () => {
+  it('rejects incomplete direct new cloud writes before writing either document', async () => {
+    await expect(writeBotRunCloudDocumentPair({userId:'discord', username:'fixture', runId:'new-direct-fixture', run:{tier:'5',wave:'321'}, uploadProfileId:null})).rejects.toThrow('required fields');
+    expect(mocks.get).toHaveBeenCalledOnce();
+  });
   it('reads all 132 legacy-owned runs across pages without writes', async () => {
     fixture({ discord: docs('discord', 132) });
     const result = await loadBotCompleteRunCloudDocuments('discord');

@@ -1,3 +1,4 @@
+import { TransientCache } from '../../../core/transient-cache';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6
 
 type CachedBuildShare = {
@@ -6,7 +7,7 @@ type CachedBuildShare = {
   expiresAt: number
 }
 
-const cache = new Map<string, CachedBuildShare>()
+const cache = new TransientCache<string, CachedBuildShare>(1_024, CACHE_TTL_MS)
 
 function pruneExpired(now = Date.now()): void {
   for (const [token, entry] of cache.entries()) {

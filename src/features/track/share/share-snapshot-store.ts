@@ -33,7 +33,7 @@ export async function saveShareSnapshot(params: { ref: string; userId: string; r
     ...(params.runTypeCounts ? { runTypeCounts: params.runTypeCounts } : {}),
   };
   try {
-    await setTrackerKv(snapshotKey(params.ref), snapshot);
+    await setTrackerKv(snapshotKey(params.ref), snapshot, { requirePersistent: true });
     return true;
   } catch (error) {
     // The caller omits version buttons on failure; never silently substitute live data.

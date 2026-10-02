@@ -2,6 +2,7 @@ import {
   TRACKER_RUN_SYNC_CURSOR_KV_PREFIX,
   type TrackerRunSyncMetadataStore,
   repairTrackerRunDateTimeRecord,
+  canonicalizeRunData,
 } from '@tmrxjd/platform/tools';
 import { logger } from '../core/logger';
 import { getTrackerKv, setTrackerKv } from '../services/idb';
@@ -32,7 +33,8 @@ export function invalidateBotLocalRunsCache(userId: string): void {
 }
 
 function toLocalRunRecord(userId: string, run: Record<string, unknown>): LocalRunRecord | null {
-  const runId = typeof run.runId === 'string' && run.runId.trim().length > 0
+  run = { ...run, ...canonicalizeRunData({ ...run, totalCoins: run.totalCoins ?? run.coins, totalCells: run.totalCells ?? run.cells, totalDice: run.totalDice ?? run.rerollShards, roundDuration: run.roundDuration ?? run.duration }) };
+  const runId = run.runId === null ? null : typeof run.runId === 'string' && run.runId.trim().length > 0
     ? run.runId.trim()
     : typeof run.id === 'string' && run.id.trim().length > 0
       ? run.id.trim()
@@ -185,7 +187,7 @@ export async function loadLocalRunsFromBotRxDB(userId: string): Promise<LocalRun
         const fallbackRun = repairTrackerRunDateTimeRecord({
           ...plainPart1,
           id: plainPart1.id,
-          runId: typeof plainPart1.runId === 'string' && plainPart1.runId.trim()
+          runId: plainPart1.runId === null ? null : typeof plainPart1.runId === 'string' && plainPart1.runId.trim()
             ? plainPart1.runId
             : plainPart1.id,
         });

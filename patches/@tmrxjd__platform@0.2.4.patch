@@ -143,3 +143,151 @@ index f9a20c1..8ff8d3c 100644
          // Not found → this is a new run → it takes the requested profileId.
      }
      const mainPayload = {
+diff --git a/dist/tools/tracker-cloud-schemas.js b/dist/tools/tracker-cloud-schemas.js
+index 335d29d..13d6574 100644
+--- a/dist/tools/tracker-cloud-schemas.js
++++ b/dist/tools/tracker-cloud-schemas.js
+@@ -22,6 +22,9 @@ exports.hydrateTrackerCloudRun = hydrateTrackerCloudRun;
+ exports.parseTrackerRunCloudWrite = parseTrackerRunCloudWrite;
+ exports.buildTrackerRunCloudWritePayload = buildTrackerRunCloudWritePayload;
+ exports.parseTrackerLifetimeCloudWrite = parseTrackerLifetimeCloudWrite;
++exports.assertTrackerRunSubmission = assertTrackerRunSubmission;
++exports.readTrackerMetricValue = readTrackerMetricValue;
++exports.readTrackerModuleShardsTotal = readTrackerModuleShardsTotal;
+ const save_1 = require("thetowersdk/save");
+ Object.defineProperty(exports, "normalizeRunDateText", { enumerable: true, get: function () { return save_1.normalizeRunDateText; } });
+ Object.defineProperty(exports, "normalizeRunTimeText", { enumerable: true, get: function () { return save_1.normalizeRunTimeText; } });
+@@ -38,6 +41,44 @@ const zod_1 = require("zod");
+ const formatting_1 = require("thetowersdk/formatting");
+ const primitives_1 = require("./tool-state/persistence/primitives");
+ const normalization_1 = require("./tool-state/runs/normalization");
++/** Missing/invalid metrics stay absent; genuine zero is a finite metric. */
++function readTrackerMetricValue(value) {
++    if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : null;
++    if (typeof value !== 'number' && typeof value !== 'string') return null;
++    const normalized = (0, formatting_1.standardizeNotation)(String(value).trim());
++    const match = normalized.match(/^(?:\d+(?:\.\d+)?|\.\d+)\s*([A-Za-z]*)$/);
++    if (!match || !Object.prototype.hasOwnProperty.call(formatting_1.unitMultipliers, match[1])) return null;
++    const parsed = (0, formatting_1.parseNumberInput)(normalized);
++    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
++}
++function readTrackerModuleShardsTotal(run) {
++    const direct = run.totalModuleShards ?? run.moduleShards;
++    if (direct !== undefined && direct !== null) return readTrackerMetricValue(direct);
++    const parts = ['cannonShardsFetched', 'armorShardsFetched', 'generatorShardsFetched', 'coreShardsFetched'].map(key => readTrackerMetricValue(run[key]));
++    if (parts.some(value => value === null)) return null;
++    const sum = parts.reduce((total, value) => total + value, 0);
++    return Number.isFinite(sum) ? sum : null;
++}
++/** Validate new submissions before normalization can invent missing core values. Historical reads are unchanged. */
++function assertTrackerRunSubmission(input) {
++    const run = { ...input, ...(0, normalization_1.canonicalizeRunData)(input) };
++    const metric = value => readTrackerMetricValue(value) !== null;
++    const tier = String(run.tier ?? run.tierDisplay ?? '').trim();
++    const wave = String(run.wave ?? '').trim();
++    const duration = String(run.roundDuration ?? run.duration ?? '').replace(/\s/g, '');
++    const result = zod_1.z.object({
++        tier: zod_1.z.boolean().refine(Boolean), wave: zod_1.z.boolean().refine(Boolean),
++        duration: zod_1.z.boolean().refine(Boolean), coins: zod_1.z.boolean().refine(Boolean),
++        cells: zod_1.z.boolean().refine(Boolean), dice: zod_1.z.boolean().refine(Boolean),
++    }).safeParse({
++        tier: /^\d+\+?$/.test(tier) && Number.isSafeInteger(parseInt(tier, 10)) && parseInt(tier, 10) >= 1,
++        wave: /^\d+$/.test(wave) && Number.isSafeInteger(Number(wave)) && Number(wave) >= 1,
++        duration: /^(?:\d+h)?(?:\d+m)?(?:\d+s)?$/i.test(duration) && duration !== '' && Number.isFinite((0, formatting_1.parseDuration)(duration)) && (0, formatting_1.parseDuration)(duration) >= 0 && (0, formatting_1.parseDuration)(duration) <= Number.MAX_SAFE_INTEGER,
++        coins: metric(run.totalCoins ?? run.coins), cells: metric(run.totalCells ?? run.cells),
++        dice: metric(run.totalDice ?? run.rerollShards ?? run.dice),
++    });
++    if (!result.success) throw new Error('Run report is missing or has invalid required fields.');
++}
+ const trackerAppwriteDocumentSystemShape = {
+     $id: zod_1.z.string().optional(),
+     $collectionId: zod_1.z.string().optional(),
+diff --git a/dist/tools/tracker-cloud-schemas.d.ts b/dist/tools/tracker-cloud-schemas.d.ts
+index 2f27dbd..5bfb80b 100644
+--- a/dist/tools/tracker-cloud-schemas.d.ts
++++ b/dist/tools/tracker-cloud-schemas.d.ts
+@@ -289,3 +289,9 @@ export declare function buildTrackerRunCloudWritePayload(input: {
+     screenshotUrl?: string | null;
+ }): TrackerRunCloudWrite;
+ export declare function parseTrackerLifetimeCloudWrite(input: Record<string, unknown>): TrackerLifetimeCloudWrite;
++/** Validate a new submission before applying storage defaults; never use for historical reads. */
++export declare function assertTrackerRunSubmission(input: Record<string, unknown>): void;
++/** Return a finite, nonnegative metric or null for missing/invalid/unsupported notation. */
++export declare function readTrackerMetricValue(value: unknown): number | null;
++/** An explicit total or all four valid components; incomplete totals remain unavailable. */
++export declare function readTrackerModuleShardsTotal(run: Record<string, unknown>): number | null;
+diff --git a/dist/tools/tracker-run-collection-split.js b/dist/tools/tracker-run-collection-split.js
+index 98b7536..6b9bda9 100644
+--- a/dist/tools/tracker-run-collection-split.js
++++ b/dist/tools/tracker-run-collection-split.js
+@@ -7,6 +7,7 @@ exports.withTrackerRunUpdatedAtEpoch = withTrackerRunUpdatedAtEpoch;
+ const tracker_cloud_schemas_1 = require("./tracker-cloud-schemas");
+ const tracker_run_cloud_write_1 = require("./tracker-run-cloud-write");
+ const tracker_run_datetime_normalize_1 = require("./tracker-run-datetime-normalize");
++const normalization_1 = require("./tool-state/runs/normalization");
+ const MAIN_FIELD_KEYS = new Set([
+     ...tracker_run_cloud_write_1.TRACKER_RUN_LEGACY_REQUIRED_KEYS,
+     ...tracker_cloud_schemas_1.RUN_MAIN_COLLECTION_OPTIONAL_FIELDS,
+@@ -33,6 +34,12 @@ function resolveRunDocumentId(run) {
+     return id;
+ }
+ function splitTrackerRunForCollections(run) {
++    const canonical = (0, normalization_1.canonicalizeRunData)(run);
++    // Preserve provided values in storage aliases without synthesizing missing values.
++    run = { ...run };
++    for (const [canonicalKey, storedKey] of [['totalCoins', 'coins'], ['totalCells', 'cells'], ['totalDice', 'rerollShards'], ['roundDuration', 'duration']]) {
++        if (canonical[canonicalKey] !== undefined && canonical[canonicalKey] !== null) run[storedKey] = canonical[canonicalKey];
++    }
+     const runId = resolveRunDocumentId(run);
+     const userId = typeof run.userId === 'string' ? run.userId.trim() : '';
+     const updatedAt = resolveTrackerRunUpdatedAtEpoch(run);
+@@ -45,8 +52,9 @@ function splitTrackerRunForCollections(run) {
+         updatedAt,
+     };
+     if (runId) {
+-        fieldsForPart1.runId = runId;
+-        fieldsForPart2.runId = runId;
++        const localOnly = run.runId === null || (typeof run.localId === 'string' && !run.runId);
++        fieldsForPart1.runId = localOnly ? null : runId;
++        fieldsForPart2.runId = localOnly ? null : runId;
+     }
+     if (userId) {
+         fieldsForPart1.userId = userId;
+@@ -85,7 +93,7 @@ function stitchTrackerRunCollections(part1, part2) {
+     return (0, tracker_run_datetime_normalize_1.repairTrackerRunDateTimeRecord)({
+         ...merged,
+         id: runId,
+-        runId,
++        runId: merged.runId === null ? null : runId,
+     });
+ }
+ function resolveTrackerRunUpdatedAtEpoch(value) {
+diff --git a/dist/tools/tracker-run-table-display.js b/dist/tools/tracker-run-table-display.js
+index 30398d2..039f75e 100644
+--- a/dist/tools/tracker-run-table-display.js
++++ b/dist/tools/tracker-run-table-display.js
+@@ -6,6 +6,7 @@ exports.normalizeTrackerRunTableColumnOrder = normalizeTrackerRunTableColumnOrde
+ exports.buildTrackerRunTableColumnValue = buildTrackerRunTableColumnValue;
+ const formatting_1 = require("thetowersdk/formatting");
+ const tracker_run_derived_metrics_1 = require("./tracker-run-derived-metrics");
++const tracker_cloud_schemas_1 = require("./tracker-cloud-schemas");
+ exports.TRACKER_RUN_TABLE_COLUMN_OPTIONS = [
+     'Tier',
+     'Wave',
+@@ -32,14 +33,8 @@ function trimDisplayTimeSeconds(value) {
+     return /^\d{2}:\d{2}:\d{2}$/.test(trimmed) ? trimmed.slice(0, 5) : trimmed;
+ }
+ function formatTrackerRunTableMetric(value) {
+-    if (value === null || value === undefined)
+-        return '0';
+-    const raw = String(value).trim();
+-    if (!raw)
+-        return '0';
+-    const parsed = (0, formatting_1.parseNumberInput)((0, formatting_1.standardizeNotation)(raw));
+-    if (!Number.isFinite(parsed) || parsed <= 0)
+-        return '0';
++    const parsed = (0, tracker_cloud_schemas_1.readTrackerMetricValue)(value);
++    if (parsed === null) return 'Unavailable';
+     return (0, formatting_1.formatNumberForDisplay)(parsed);
+ }
+ function clampTrackerRunTableCellValue(value) {

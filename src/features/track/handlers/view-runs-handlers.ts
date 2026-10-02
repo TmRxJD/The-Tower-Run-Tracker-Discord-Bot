@@ -1,3 +1,4 @@
+import { TransientCache } from '../../../core/transient-cache';
 import type {
   MessageComponentInteraction,
   ModalSubmitInteraction} from 'discord.js';
@@ -91,7 +92,7 @@ function buildShareActionButtons(token: string, selectedCount: number): ActionRo
   );
 }
 
-const runShareSessions = new Map<string, ShareSessionState>();
+const runShareSessions = new TransientCache<string, ShareSessionState>();
 
 function buildShareRunOption(entry: ShareSessionRun, index: number, selectedIndex: number): { label: string; description: string; value: string; default: boolean } {
   const run = entry.run;

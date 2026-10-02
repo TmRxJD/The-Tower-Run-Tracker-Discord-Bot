@@ -1,6 +1,7 @@
+import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '@tmrxjd/platform/tools';
 import { Colors, EmbedBuilder } from 'discord.js'
 import { getFirstMeaningfulRunDataValue, type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools'
-import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math'
+import { formatNumberForDisplay } from '../../../utils/tracker-math'
 import { getTrackUiConfig } from '../../../config/tracker-ui-config'
 import { computeHourlyRate } from '../tracker-helpers'
 import { generateCoverageDescription, trimDisplayTimeSeconds } from '../handlers/upload-helpers'
@@ -8,7 +9,7 @@ import { generateCoverageDescription, trimDisplayTimeSeconds } from '../handlers
 type RunDataLike = Record<string, unknown>
 
 function formatDurationForEmbed(duration?: string | null) {
-  if (!duration || typeof duration !== 'string') return '0h0m0s'
+  if (!duration || typeof duration !== 'string') return 'Unavailable'
   const normalized = duration.toLowerCase().replace(/\s+/g, '')
   const h = normalized.match(/(\d+)h/)
   const m = normalized.match(/(\d+)m/)
@@ -77,17 +78,16 @@ function normalizeCoverageFields(data: RunDataLike): RunDataLike {
   }
 }
 
-function parseMetricNumber(value: unknown): number {
-  const parsed = parseNumberInput(standardizeNotation(String(value ?? '0')))
-  return Number.isFinite(parsed) ? Number(parsed) : 0
+
+function displayMetric(...values: unknown[]): string {
+  const value = getFirstMeaningfulRunDataValue(...values)
+  const parsed = readTrackerMetricValue(value)
+  return parsed === null ? 'Unavailable' : formatNumberForDisplay(parsed)
 }
 
-function resolveModuleShardsTotal(data: RunDataLike): string {
-  const total = parseMetricNumber(data?.cannonShardsFetched)
-    + parseMetricNumber(data?.armorShardsFetched)
-    + parseMetricNumber(data?.generatorShardsFetched)
-    + parseMetricNumber(data?.coreShardsFetched)
-  return formatNumberForDisplay(total)
+function resolveModuleShardsTotal(data: Record<string, unknown>): string {
+  const total = readTrackerModuleShardsTotal(data);
+  return total === null ? 'Unavailable' : formatNumberForDisplay(total);
 }
 
 export function buildSubmissionResultEmbed(params: {
@@ -114,9 +114,9 @@ export function buildSubmissionResultEmbed(params: {
 
   const durationRaw = String(coverageData?.roundDuration ?? coverageData?.duration ?? '')
   const duration = formatDurationForEmbed(durationRaw)
-  const coinsStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalCoins ?? coverageData?.coins ?? '0'))))
-  const cellsStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalCells ?? coverageData?.cells ?? '0'))))
-  const diceStr = formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? '0'))))
+  const coinsStr = displayMetric(coverageData?.totalCoins, coverageData?.coins)
+  const cellsStr = displayMetric(coverageData?.totalCells, coverageData?.cells)
+  const diceStr = displayMetric(coverageData?.totalDice, coverageData?.rerollShards, coverageData?.dice)
   const coinsPerHour = computeHourlyRate(String(coverageData?.totalCoins ?? coverageData?.coins ?? ''), durationRaw) || 'N/A'
   const cellsPerHour = computeHourlyRate(String(coverageData?.totalCells ?? coverageData?.cells ?? ''), durationRaw) || 'N/A'
   const dicePerHour = computeHourlyRate(String(coverageData?.totalDice ?? coverageData?.rerollShards ?? coverageData?.dice ?? ''), durationRaw) || 'N/A'
@@ -126,11 +126,11 @@ export function buildSubmissionResultEmbed(params: {
 
   const tierDisplay = coverageData?.tierDisplay && String(coverageData.tierDisplay).trim()
     ? String(coverageData.tierDisplay)
-    : formatNumberForDisplay(parseNumberInput(standardizeNotation(String(coverageData?.tier ?? '0'))))
+    : displayMetric(coverageData?.tier)
   const waveStr = String(coverageData?.wave ?? 'N/A')
   const dateStr = coverageData?.date
     ? (coverageData?.time ? `${String(coverageData.date)} @ ${trimDisplayTimeSeconds(coverageData.time)}` : String(coverageData.date))
-    : 'Now'
+    : 'Unavailable'
 
   function delta(key: string): string {
     if (!deltaResult) return ''

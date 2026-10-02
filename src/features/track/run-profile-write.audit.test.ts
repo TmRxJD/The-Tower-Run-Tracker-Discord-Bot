@@ -5,7 +5,7 @@ vi.mock('./run-cloud-identity',()=>({resolveBotRunCloudIdentity:async()=>({cloud
 import { writeTrackerRunCloudDocumentPair } from '@tmrxjd/platform/tools';
 import { writeBotRunCloudDocumentPair } from './run-cloud-pair-client';
 import { setPendingUploadProfile } from './upload-target-profile';
-const params={userId:'fixture-discord',username:'fixture',runId:'fixture-run',run:{totalCoins:'2B',wave:'100',tier:'1',roundDuration:'1h'}};
+const params={userId:'fixture-discord',username:'fixture',runId:'fixture-run',run:{totalCoins:'2B',totalCells:0,totalDice:0,wave:'100',tier:'1',roundDuration:'1h'}};
 describe('immutable upload target and verified existence',()=>{
  beforeEach(()=>{vi.resetAllMocks();m.get.mockRejectedValue({code:404,type:'document_not_found'});m.update.mockResolvedValue({});m.create.mockResolvedValue({});});
  it('uses the captured target even after another session changes the carrier',async()=>{

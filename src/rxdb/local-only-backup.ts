@@ -1,4 +1,6 @@
 import { logger } from '../core/logger';
+import { isTrackerCloudAddressableUserId } from '@tmrxjd/platform/tools';
+import { getPermanentlyDeletedRunIds } from '../features/track/run-deletion-tombstones';
 import { getTrackerKv, listTrackerKvKeys, setTrackerKv } from '../services/idb';
 import { getOrInitBotRunTrackerRxDatabase } from './database-manager';
 import { loadStitchedRunsFromBotRxDB, setBotRunWriteListener, upsertMergedRunsToBotRxDB } from './persistence';
@@ -14,6 +16,7 @@ const BACKUP_DEBOUNCE_MS = 2_000;
 
 interface LocalOnlyBackup {
   savedAt: number;
+  restoreForUnsupportedIdentity?: boolean;
   runs: Record<string, unknown>[];
 }
 
@@ -30,15 +33,44 @@ async function isLocalOnlyUser(userId: string): Promise<boolean> {
 }
 
 /** Snapshots the user's runs if (and only if) they are a cloud-sync-off user. */
-export async function backupLocalOnlyRunsNow(userId: string): Promise<boolean> {
-  if (!await isLocalOnlyUser(userId)) {
+const backupTails = new Map<string, Promise<unknown>>();
+
+export async function backupLocalOnlyRunsNow(userId: string, options: { force?: boolean } = {}): Promise<boolean> {
+  const previous = backupTails.get(userId) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(() => writeLocalOnlySnapshot(userId, options.force === true));
+  backupTails.set(userId, pending);
+  try { return await pending; }
+  finally { if (backupTails.get(userId) === pending) backupTails.delete(userId); }
+}
+
+async function writeLocalOnlySnapshot(userId: string, force: boolean): Promise<boolean> {
+  if (!force && !await isLocalOnlyUser(userId)) {
     return false;
   }
 
   const db = await getOrInitBotRunTrackerRxDatabase(userId);
   const runs = await loadStitchedRunsFromBotRxDB(db, userId);
-  await setTrackerKv(backupKey(userId), { savedAt: Date.now(), runs } satisfies LocalOnlyBackup);
+  await setTrackerKv(backupKey(userId), { savedAt: Date.now(), runs, restoreForUnsupportedIdentity: force && !isTrackerCloudAddressableUserId(userId) } satisfies LocalOnlyBackup, { requirePersistent: true });
   return true;
+}
+
+/** Preserve acknowledged offline records while cloud sync is enabled but unfinished. */
+export async function refreshExistingLocalOnlyBackup(userId: string): Promise<void> {
+  if (await getTrackerKv<LocalOnlyBackup>(backupKey(userId))) await backupLocalOnlyRunsNow(userId, { force: true });
+}
+
+/** A confirmed cloud write retires only its local snapshot entry, never a whole user's history. */
+export async function retireLocalOnlyBackupRun(userId: string, localId: unknown): Promise<void> {
+  if (typeof localId !== 'string' || !localId.trim()) return;
+  const pending = (backupTails.get(userId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    const backup = await getTrackerKv<LocalOnlyBackup>(backupKey(userId));
+    if (!backup) return;
+    const runs = backup.runs.filter(run => run.localId !== localId);
+    if (runs.length !== backup.runs.length) await setTrackerKv(backupKey(userId), { ...backup, runs, savedAt: Date.now() }, { requirePersistent: true });
+  });
+  backupTails.set(userId, pending);
+  try { await pending; }
+  finally { if (backupTails.get(userId) === pending) backupTails.delete(userId); }
 }
 
 function scheduleBackup(userId: string): void {
@@ -90,18 +122,24 @@ export async function restoreLocalOnlyRuns(): Promise<{ users: number; runs: num
   for (const key of keys) {
     const userId = key.slice(LOCAL_ONLY_BACKUP_KEY_PREFIX.length);
     try {
-      if (!await isLocalOnlyUser(userId)) {
-        continue;
-      }
       const backup = await getTrackerKv<LocalOnlyBackup>(key);
       if (!backup?.runs?.length) {
         continue;
       }
 
+      const offline = await isLocalOnlyUser(userId);
+      const unsupported = backup.restoreForUnsupportedIdentity && !isTrackerCloudAddressableUserId(userId);
+      const tombstones = await getPermanentlyDeletedRunIds(userId);
+      const restorable = backup.runs.filter(run => {
+        if (!offline && !unsupported && run.runId) return false;
+        return ![run.runId, run.id, run.$id, run.localId].some(id => typeof id === 'string' && tombstones.has(id));
+      });
+      if (!restorable.length) continue;
+
       const db = await getOrInitBotRunTrackerRxDatabase(userId);
-      await upsertMergedRunsToBotRxDB(db, userId, backup.runs);
+      await upsertMergedRunsToBotRxDB(db, userId, restorable);
       users += 1;
-      runs += backup.runs.length;
+      runs += restorable.length;
     } catch (error) {
       logger.error('[local-only-backup] restore failed for user', { userId, error });
     }

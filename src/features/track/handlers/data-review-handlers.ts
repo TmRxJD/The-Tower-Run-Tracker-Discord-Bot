@@ -268,13 +268,13 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     });
     const localSummaryBefore = await getLocalRunSummary(userId, existingRuns);
 
-    setPendingUploadProfile(userId, pending.uploadProfileId ?? null);
+    if (pending.uploadProfileId !== undefined) setPendingUploadProfile(userId, pending.uploadProfileId);
     if (dispatchPlan.operation === 'edit') {
       syncResult = await editRun({
         userId,
         username,
         runData: dispatchPlan.runData,
-        uploadProfileId: pending.uploadProfileId ?? null,
+        uploadProfileId: pending.uploadProfileId,
         canonicalRunData,
         settings: undefined,
         skipLeaderboardRefresh: true,
@@ -285,7 +285,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         userId,
         username,
         runData: dispatchPlan.runData,
-        uploadProfileId: pending.uploadProfileId ?? null,
+        uploadProfileId: pending.uploadProfileId,
         canonicalRunData,
         deferredScreenshotSource,
         skipLeaderboardRefresh: true,
@@ -357,8 +357,8 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
             await interaction.editReply({ content: ui.messages.cloudUnavailable }).catch(() => {});
           }
         })
-        .catch(error => {
-          logger.warn('deferred tracker submission follow-up failed', error);
+        .catch(() => {
+          logger.warn('deferred tracker submission follow-up failed');
         });
     }
 

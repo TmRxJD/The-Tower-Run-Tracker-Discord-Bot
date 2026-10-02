@@ -160,7 +160,7 @@ describe('tracker-api-client settings sync', () => {
       return {};
     });
     const result = await logRun({ userId, username: 'fixture', uploadProfileId: 'fixture-alt-a',
-      skipLeaderboardRefresh: true, runData: { localId: 'fixture-partial', tier: '5', wave: '321',
+      skipLeaderboardRefresh: true, runData: { ...{totalCoins: '0', totalCells: '0', totalDice: '0', roundDuration: '1h'}, localId: 'fixture-partial', tier: '5', wave: '321',
         spotlightDamage: '1Q', totalCoins: '2B', roundDuration: '1h', runDate: '2026-10-01', runTime: '12:00:00' } });
     expect(result.queuedForCloud).toBe(true);
     const attemptedId = [...main.keys()][0];
@@ -185,7 +185,7 @@ describe('tracker-api-client settings sync', () => {
   it('recovers a queued payload after a memory cache miss and uses its captured profile',async()=>{
     const userId='fixture.recover-queue';await clearQueue(userId);
     createDocumentMock.mockResolvedValue({});
-    await queueCloudUpsert({userId,username:'fixture',localId:'fixture-recover-local',uploadProfileId:'fixture-alt-a',runData:{localId:'fixture-recover-local',wave:'123',tier:'5',type:'Farming'}});
+    await queueCloudUpsert({userId,username:'fixture',localId:'fixture-recover-local',uploadProfileId:'fixture-alt-a',runData:{...{totalCoins:'0',totalCells:'0',totalDice:'0',roundDuration:'1h'},localId:'fixture-recover-local',wave:'123',tier:'5',type:'Farming'}});
     const queued=(await getQueueItems(userId))[0];
     await forceSyncQueuedRuns(userId);
     expect(await getQueueItems(userId)).toHaveLength(0);
@@ -274,7 +274,7 @@ describe('tracker-api-client settings sync', () => {
     await logRun({
       userId,
       username: 'tester',
-      runData: {
+      runData: { ...{totalCoins: '0', totalCells: '0', totalDice: '0', roundDuration: '1h'},
         localId: 'queued-run-1',
         type: 'Farming',
         tier: '4',
@@ -314,8 +314,9 @@ describe('tracker-api-client settings sync', () => {
 
     const result = await logRun({
       userId,
+      uploadProfileId: null,
       username: 'tester',
-      runData: {
+      runData: { ...{totalCoins: '0', totalCells: '0', totalDice: '0', roundDuration: '1h'},
         localId: 'queued-run-strip-1',
         type: 'Farming',
         tier: '9',
@@ -358,8 +359,9 @@ describe('tracker-api-client settings sync', () => {
 
     const runPromise = logRun({
       userId,
+      uploadProfileId: null,
       username: 'tester',
-      runData: {
+      runData: { ...{totalCoins: '0', totalCells: '0', totalDice: '0', roundDuration: '1h'},
         localId: 'queued-run-screen-1',
         type: 'Farming',
         tier: '10',
@@ -404,8 +406,9 @@ describe('tracker-api-client settings sync', () => {
 
     const result = await logRun({
       userId,
+      uploadProfileId: null,
       username: 'tester',
-      runData: {
+      runData: { ...{totalCoins: '0', totalCells: '0', totalDice: '0', roundDuration: '1h'},
         localId: 'queued-run-screen-async-1',
         type: 'Farming',
         tier: '10',
@@ -442,8 +445,9 @@ describe('tracker-api-client settings sync', () => {
 
     const result = await logRun({
       userId,
+      uploadProfileId: null,
       username: 'tmrxjd',
-      runData: {
+      runData: { ...{totalCoins: '0', totalCells: '0', totalDice: '0', roundDuration: '1h'},
         localId: 'queued-run-jwt-1',
         type: 'Farming',
         tier: '14',
@@ -468,8 +472,9 @@ describe('tracker-api-client settings sync', () => {
 
     const result = await logRun({
       userId,
+      uploadProfileId: null,
       username: 'tester',
-      runData: {
+      runData: { ...{totalCoins: '0', totalCells: '0', totalDice: '0', roundDuration: '1h'},
         localId: 'queued-run-2',
         type: 'Farming',
         tier: '5',
@@ -480,7 +485,7 @@ describe('tracker-api-client settings sync', () => {
 
     expect(result.cloudSyncDeferred).toBe(true);
     expect(result.backgroundSync).toBeTruthy();
-    expect(await getQueueItems(userId)).toHaveLength(0);
+    expect(await getQueueItems(userId)).toHaveLength(1);
 
     const backgroundResult = await result.backgroundSync;
 

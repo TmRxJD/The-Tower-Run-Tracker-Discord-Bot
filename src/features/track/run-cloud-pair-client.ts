@@ -1,6 +1,7 @@
 import { Permission, Query, Role, type Models } from 'node-appwrite';
 import {
   buildTrackerRunDocumentPermissions,
+  assertTrackerRunSubmission,
   fetchTrackerRunCloudDocumentsByIds,
   loadTrackerRunCloudDocumentPairBatch,
   parseTrackerRunExtendedDocumentRecord,
@@ -16,6 +17,7 @@ import {
 import { createAppwriteClient } from '../../persistence/appwrite-client';
 import { resolveBotRunCloudIdentity } from './run-cloud-identity';
 import { isNotFoundAppwriteError } from '../../persistence/appwrite-error-utils';
+import { retireLocalOnlyBackupRun } from '../../rxdb/local-only-backup';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
 
@@ -190,6 +192,7 @@ export async function writeBotRunCloudDocumentPair(params: {
   } catch (error) {
     if (!isNotFoundAppwriteError(error)) throw error;
     if (uploadProfileId === undefined) throw new Error('Queued new run needs an explicit target profile; entry retained.');
+    assertTrackerRunSubmission(params.run);
   }
   const permissions = buildTrackerRunDocumentPermissions({
     userIds: identity.permissionUserIds,
@@ -197,7 +200,7 @@ export async function writeBotRunCloudDocumentPair(params: {
     roleFactory: Role,
   });
 
-  return writeTrackerRunCloudDocumentPair({
+  const result = await writeTrackerRunCloudDocumentPair({
     databases,
     databaseId: RUNS_DATABASE_ID,
     mainCollectionId: TRACKER_RUN_MAIN_COLLECTION_ID,
@@ -211,4 +214,6 @@ export async function writeBotRunCloudDocumentPair(params: {
     // pair-writer never re-stamps an existing run, so a Main run is never moved.
     profileId: uploadProfileId,
   });
+  await retireLocalOnlyBackupRun(params.userId, params.run.localId);
+  return result;
 }

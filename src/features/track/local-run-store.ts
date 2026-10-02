@@ -264,7 +264,7 @@ async function ensureLoadedOnce() {
 
 async function persist() {
   if (!cache) return;
-  await setTrackerKv(STORE_KEY, cache);
+  await setTrackerKv(STORE_KEY, cache, { requirePersistent: true });
 }
 
 function pickQueueScreenshotTempPath(item: CloudQueueItem | null | undefined): string | null {
@@ -355,9 +355,11 @@ export async function updateLocalSettings(userId: string, patch: Partial<Tracker
   const bucket = getOrCreateUser(userId);
   const nextUpdatedAt = Number.isFinite(Number(patch.updatedAt)) ? Number(patch.updatedAt) : Date.now();
   const parsed = trackerStoredSettingsSchema.parse({ ...bucket.settings, ...patch, updatedAt: nextUpdatedAt });
+  const previousSettings = bucket.settings;
   bucket.settings = parsed;
   if (bucket.settings.cloudSyncEnabled === undefined) bucket.settings.cloudSyncEnabled = true;
-  await persist();
+  try { await persist(); }
+  catch (error) { bucket.settings = previousSettings; throw error; }
   return { ...defaultSettings(), ...bucket.settings, cloudSyncEnabled: bucket.settings.cloudSyncEnabled !== false };
 }
 
@@ -402,11 +404,13 @@ export async function getLocalLifetime(userId: string): Promise<LocalLifetimeRec
 export async function updateLocalLifetime(userId: string, entries: Array<Record<string, unknown>>, updatedAt = Date.now()): Promise<LocalLifetimeRecord> {
   await ensureLoaded();
   const bucket = getOrCreateUser(userId);
+  const previousLifetime = bucket.lifetime;
   bucket.lifetime = {
     entries: Array.isArray(entries) ? entries : [],
     updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
   };
-  await persist();
+  try { await persist(); }
+  catch (error) { bucket.lifetime = previousLifetime; throw error; }
   return {
     entries: [...bucket.lifetime.entries],
     updatedAt: bucket.lifetime.updatedAt,
@@ -582,7 +586,7 @@ export type QueueCloudUpsertInput = {
   localId?: string;
 };
 
-async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<void> {
+async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput) {
   if (!cache) throw new Error('Local store not loaded');
   const normalizedRunData = canonicalizeRunData(input.runData ?? {});
   const normalizedCanonicalRunData = input.canonicalRunData ? canonicalizeRunData(input.canonicalRunData) : undefined;
@@ -603,6 +607,8 @@ async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<v
     existingItems: cache.queue,
     matchesExisting: item => {
       if (item.op !== 'upsert' || item.userId !== input.userId) return false;
+      // A new submission cannot turn an ambiguous historical entry into recovery.
+      if (item.uploadProfileId === undefined && !item.runId && input.uploadProfileId !== undefined) return false;
       return trackerRunReferencesSameEntry({
         left: {
           localId: targetReference.localId,
@@ -612,7 +618,7 @@ async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<v
       });
     },
     buildItem: previousItem => {
-      const uploadProfileId = input.uploadProfileId !== undefined ? input.uploadProfileId : previousItem?.uploadProfileId;
+      const uploadProfileId = previousItem?.uploadProfileId !== undefined ? previousItem.uploadProfileId : input.uploadProfileId;
       const runId = targetRunId ?? previousItem?.runId ?? (uploadProfileId !== undefined ? randomUUID() : undefined);
       return ({
       id: randomUUID(),
@@ -633,26 +639,24 @@ async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput): Promise<v
     },
   });
 
-  if (nextQueue.previousItem) {
-    await cleanupSupersededQueuedScreenshot(nextQueue.previousItem, nextScreenshotTempPath);
-  }
-
   cache.queue = nextQueue.items;
+  return { previousItem: nextQueue.previousItem, nextScreenshotTempPath };
 }
 
 async function queueCloudUpsertUnsafe(input: QueueCloudUpsertInput) {
   await ensureLoaded();
-  await applyQueueUpsertInMemory(input);
+  const cleanup = await applyQueueUpsertInMemory(input);
   await persist();
+  await cleanupSupersededQueuedScreenshot(cleanup.previousItem, cleanup.nextScreenshotTempPath);
 }
 
 async function queueCloudUpsertsBatchUnsafe(inputs: QueueCloudUpsertInput[]): Promise<void> {
   if (!inputs.length) return;
   await ensureLoaded();
-  for (const input of inputs) {
-    await applyQueueUpsertInMemory(input);
-  }
+  const cleanup = [];
+  for (const input of inputs) cleanup.push(await applyQueueUpsertInMemory(input));
   await persist();
+  for (const item of cleanup) await cleanupSupersededQueuedScreenshot(item.previousItem, item.nextScreenshotTempPath);
 }
 
 async function queueCloudDeleteUnsafe(input: { userId: string; username: string; runId: string }) {
@@ -820,7 +824,12 @@ export async function removeLocalRun(userId: string, input: { runId?: string | n
 
 let queueMutationTail: Promise<void> = Promise.resolve();
 function mutateQueue(action: () => Promise<void>): Promise<void> {
-  const task = queueMutationTail.catch(() => {}).then(action);
+  const task = queueMutationTail.catch(() => {}).then(async () => {
+    await ensureLoaded();
+    const previousQueue = structuredClone(cache!.queue);
+    try { await action(); }
+    catch (error) { cache!.queue = previousQueue; throw error; }
+  });
   queueMutationTail = task;
   return task;
 }

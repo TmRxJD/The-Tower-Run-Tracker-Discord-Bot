@@ -108,6 +108,9 @@ async function getTrackerBotDb(): Promise<sqlite3.Database | null> {
         });
       });
 
+      // Successful persistent writes wait for SQLite's full disk sync.
+      await runSql(db, 'PRAGMA synchronous = FULL');
+
       await runSql(
         db,
         'CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt INTEGER NOT NULL)'
@@ -174,7 +177,7 @@ export async function getTrackerKv<T>(key: string): Promise<T | null> {
   }
 }
 
-export async function setTrackerKv(key: string, value: unknown): Promise<void> {
+export async function setTrackerKv(key: string, value: unknown, options: { requirePersistent?: boolean } = {}): Promise<void> {
   const db = await getTrackerBotDb();
   const record: KvRecord = {
     key,
@@ -183,7 +186,7 @@ export async function setTrackerKv(key: string, value: unknown): Promise<void> {
   };
 
   if (!db) {
-    if (!allowMemoryFallback) {
+    if (!allowMemoryFallback || options.requirePersistent) {
       throw new Error(`Persistent Tracker KV write unavailable (key=${key}, dbPath=${trackerKvDbPath}).`);
     }
     inMemoryKv.set(key, record);
@@ -199,7 +202,7 @@ export async function setTrackerKv(key: string, value: unknown): Promise<void> {
   } catch (error) {
     storageUnavailable = true;
     const detail = formatStorageError(error);
-    if (!allowMemoryFallback) {
+    if (!allowMemoryFallback || options.requirePersistent) {
       logger.error(`SQLite KV write failed and memory fallback is disabled (${detail})`);
       throw error;
     }

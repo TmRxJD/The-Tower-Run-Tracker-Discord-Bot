@@ -1,4 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as trackerKv from '../../services/idb';
 import { mkdirSync, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -39,6 +40,17 @@ beforeEach(async () => {
 });
 
 describe('local-run-store queue retry behavior', () => {
+  it('rejects a failed durable delete enqueue and persists a later identical retry', async () => {
+    const spy = vi.spyOn(trackerKv, 'setTrackerKv').mockRejectedValueOnce(new Error('fixture disk failure'));
+    try {
+      await expect(queueCloudDelete({ userId: TEST_USER_ID, username: 'fixture', runId: 'failed-disk-delete' })).rejects.toThrow('disk failure');
+      expect(await getQueueItems(TEST_USER_ID)).toHaveLength(0);
+      await queueCloudDelete({ userId: TEST_USER_ID, username: 'fixture', runId: 'failed-disk-delete' });
+      expect(await getQueueItems(TEST_USER_ID)).toEqual([expect.objectContaining({ runId: 'failed-disk-delete' })]);
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy.mock.calls[1]?.[2]).toEqual({ requirePersistent: true });
+    } finally { spy.mockRestore(); }
+  });
   it('captures a stable cloud id before a new run can be partially written',async()=>{
     const input={userId:TEST_USER_ID,username:'fixture',localId:'audit-stable',runData:{localId:'audit-stable',wave:'100'},uploadProfileId:null};
     await queueCloudUpsert(input);

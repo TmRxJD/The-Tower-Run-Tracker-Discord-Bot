@@ -1,7 +1,8 @@
+import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '@tmrxjd/platform/tools';
 import { Colors, EmbedBuilder } from 'discord.js';
 import { generateCoverageDescription, formatDuration as formatRunDuration } from '../handlers/upload-helpers';
 import { computeHourlyRate } from '../tracker-helpers';
-import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
+import { formatNumberForDisplay } from '../../../utils/tracker-math';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 import { type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools';
 
@@ -52,9 +53,14 @@ function getRunString(run: Record<string, unknown>, key: string): string | null 
 function firstAvailable(run: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const value = getRunString(run, key);
-    if (value !== null) return value;
+    if (value !== null && value.trim()) return value;
   }
   return null;
+}
+
+function displayMetric(value: unknown): string {
+  const parsed = readTrackerMetricValue(value);
+  return parsed === null ? 'Unavailable' : formatNumberForDisplay(parsed);
 }
 
 function replaceTokens(template: string, values: Record<string, string>): string {
@@ -63,17 +69,10 @@ function replaceTokens(template: string, values: Record<string, string>): string
   }, template);
 }
 
-function parseMetricNumber(value: string | null): number {
-  const parsed = parseNumberInput(standardizeNotation(String(value ?? '0')))
-  return Number.isFinite(parsed) ? Number(parsed) : 0
-}
 
 function resolveModuleShardsTotal(run: Record<string, unknown>): string {
-  const total = parseMetricNumber(firstAvailable(run, ['cannonShardsFetched']))
-    + parseMetricNumber(firstAvailable(run, ['armorShardsFetched']))
-    + parseMetricNumber(firstAvailable(run, ['generatorShardsFetched']))
-    + parseMetricNumber(firstAvailable(run, ['coreShardsFetched']))
-  return formatNumberForDisplay(total)
+  const total = readTrackerModuleShardsTotal(run);
+  return total === null ? 'Unavailable' : formatNumberForDisplay(total);
 }
 
 function buildDescription(
@@ -86,15 +85,15 @@ function buildDescription(
   const tierDisplayRaw = getRunString(run, 'tierDisplay');
   const tierDisplay = tierDisplayRaw && tierDisplayRaw.trim()
     ? tierDisplayRaw
-    : formatNumberForDisplay(parseNumberInput(standardizeNotation(firstAvailable(run, ['tier']) ?? '0')));
+    : displayMetric(firstAvailable(run, ['tier']));
 
   const wave = firstAvailable(run, ['wave']) ?? 'N/A';
-  const duration = firstAvailable(run, ['duration', 'roundDuration']) ?? '0';
-  const killedBy = firstAvailable(run, ['killedBy']) ?? 'Apathy';
-  const totalCoins = firstAvailable(run, ['totalCoins', 'coins']) ?? '0';
-  const totalCells = firstAvailable(run, ['totalCells', 'cells']) ?? '0';
-  const totalDice = firstAvailable(run, ['totalDice', 'rerollShards', 'dice']) ?? '0';
-  const deathDefy = firstAvailable(run, ['deathDefy']) ?? '0';
+  const duration = firstAvailable(run, ['duration', 'roundDuration']);
+  const killedBy = firstAvailable(run, ['killedBy']) ?? 'Unavailable';
+  const totalCoins = firstAvailable(run, ['totalCoins', 'coins']);
+  const totalCells = firstAvailable(run, ['totalCells', 'cells']);
+  const totalDice = firstAvailable(run, ['totalDice', 'rerollShards', 'dice']);
+  const deathDefy = displayMetric(firstAvailable(run, ['deathDefy']));
 
   function delta(key: string): string {
     if (!deltaResult) return '';
@@ -108,7 +107,7 @@ function buildDescription(
     if (options.includeTier !== false) collapsedParts.push(`🔢 Tier: **${tierDisplay}**`);
     if (options.includeWave !== false) collapsedParts.push(`🌊 Wave: **${wave}**`);
     if (options.includeTotalCoins !== false) {
-      const coinsFormatted = formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCoins)));
+      const coinsFormatted = displayMetric(totalCoins);
       collapsedParts.push(`🪙 Coins: **${coinsFormatted}** (${hourlyRates.coinsPerHour}/hr)`);
     }
     return collapsedParts.length
@@ -125,22 +124,22 @@ function buildDescription(
     parts.push(`🌊 Wave: **${wave}**${delta('wave')}`);
   }
   if (options.includeDuration !== false) {
-    parts.push(`⏱️ Duration: **${formatRunDuration(duration)}**${delta('duration')}`);
+    parts.push(`⏱️ Duration: **${duration === null ? 'Unavailable' : formatRunDuration(duration)}**${delta('duration')}`);
   }
   if (options.includeKilledBy !== false) {
     parts.push(`💀 Killed By: **${killedBy}**`);
   }
   if (options.includeTotalCoins !== false) {
-    parts.push(`🪙 Coins: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCoins)))}**${delta('coins')}`);
+    parts.push(`🪙 Coins: **${displayMetric(totalCoins)}**${delta('coins')}`);
   }
   if (options.includeTotalCells !== false) {
-    parts.push(`🔋 Cells: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalCells)))}**${delta('cells')}`);
+    parts.push(`🔋 Cells: **${displayMetric(totalCells)}**${delta('cells')}`);
   }
   if (options.includeTotalDice !== false) {
-    parts.push(`🎲 Dice: **${formatNumberForDisplay(parseNumberInput(standardizeNotation(totalDice)))}**${delta('rerollShards')}`);
+    parts.push(`🎲 Dice: **${displayMetric(totalDice)}**${delta('rerollShards')}`);
   }
   const totalShards = resolveModuleShardsTotal(run);
-  if (options.includeTotalShards !== false && totalShards !== '0') {
+  if (options.includeTotalShards !== false) {
     parts.push(`🔼 Shards: **${totalShards}**${delta('moduleShards')}`);
   }
   if (options.includeDeathDefy !== false) {
@@ -206,12 +205,12 @@ export function buildShareEmbed({ user, run, runTypeCounts, deltaResult, options
   const hasVerifiedCount = Number.isSafeInteger(typeCount) && typeCount > 0;
 
   const durationRaw = firstAvailable(run, ['roundDuration', 'duration']);
-  const coinsPerHour = computeHourlyRate(firstAvailable(run, ['totalCoins', 'coins']), durationRaw) || '0';
-  const cellsPerHour = computeHourlyRate(firstAvailable(run, ['totalCells', 'cells']), durationRaw) || '0';
-  const dicePerHour = computeHourlyRate(firstAvailable(run, ['totalDice', 'rerollShards', 'dice']), durationRaw) || '0';
-  const moduleShardsPerHour = computeHourlyRate(resolveModuleShardsTotal(run), durationRaw) || '0';
-  const wavesPerHour = computeHourlyRate(firstAvailable(run, ['wave']), durationRaw) || '0';
-  const enemiesPerHour = computeHourlyRate(firstAvailable(run, ['totalEnemies']), durationRaw) || '0';
+  const coinsPerHour = computeHourlyRate(firstAvailable(run, ['totalCoins', 'coins']), durationRaw) || 'Unavailable';
+  const cellsPerHour = computeHourlyRate(firstAvailable(run, ['totalCells', 'cells']), durationRaw) || 'Unavailable';
+  const dicePerHour = computeHourlyRate(firstAvailable(run, ['totalDice', 'rerollShards', 'dice']), durationRaw) || 'Unavailable';
+  const moduleShardsPerHour = computeHourlyRate(resolveModuleShardsTotal(run), durationRaw) || 'Unavailable';
+  const wavesPerHour = computeHourlyRate(firstAvailable(run, ['wave']), durationRaw) || 'Unavailable';
+  const enemiesPerHour = computeHourlyRate(firstAvailable(run, ['totalEnemies']), durationRaw) || 'Unavailable';
 
   const embed = new EmbedBuilder()
     .setAuthor({
