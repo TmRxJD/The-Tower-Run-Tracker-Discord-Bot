@@ -47,9 +47,9 @@ export async function resolveBotRunCloudIdentity(discordUserId: string): Promise
     // account — fall back to the Appwrite id carried by the session JWT.
     // Without this the run is written with an empty permission set, leaving it
     // unreadable by the very user who created it.
-    const linkedAppwriteUserId = await resolveAppwriteIdForDiscordUser(normalized, { failOnLookupError: true });
-    const appwriteUserId = linkedAppwriteUserId
-      ?? readTrackerAppwriteUserIdFromJwt(process.env.APPWRITE_JWT);
+    const jwtAppwriteUserId = readTrackerAppwriteUserIdFromJwt(process.env.APPWRITE_JWT);
+    const linkedAppwriteUserId = await resolveAppwriteIdForDiscordUser(normalized, { failOnLookupError: !jwtAppwriteUserId });
+    const appwriteUserId = linkedAppwriteUserId ?? jwtAppwriteUserId;
 
     const identity = buildTrackerRunIdentityContext({
       appwriteUserId,
