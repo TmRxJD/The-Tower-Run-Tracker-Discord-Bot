@@ -1,9 +1,9 @@
 import { updatePasteDiagnostic } from '../paste-diagnostics';
 import type { MessageComponentInteraction} from 'discord.js';
-import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
+import { prepareBotRunUploadHistory, withBotRunSubmissionLock, type BotRunOperationContext } from '../run-upload-history';
 import { findPotentialDuplicateRun } from './upload-helpers';
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
-import { editRun, getLastRun, getLocalRunSummary, getUserSettings, logRun } from '../tracker-api-client';
+import { editRun, getLocalRunSummary, getUserSettings, logRun } from '../tracker-api-client';
 import { createSuccessButtons, createLoadingEmbed } from '../ui/tracker-ui';
 import { buildEditFieldPickerPayload } from '../ui/tracker-review-payloads';
 import { buildSubmissionResultEmbed } from '../ui/tracker-submission-embeds';
@@ -182,17 +182,21 @@ export async function handleDataSubmission(interaction: ReviewInteraction) {
 async function submitPendingRun(interaction: ReviewInteraction, token: string, pending: PendingRecordLike) {
   // Acknowledge before waiting for another submission/cloud history; avoid Discord expiry.
   if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate().catch(() => {});
-  await withBotRunSubmissionLock(pending.userId, async () => {
+  await interaction.editReply({ embeds: [createLoadingEmbed(reviewUi().messages.processingSubmission)], components: [] }).catch(() => {});
+  const settingsForDuplicate = getTrackerFlowMode(pending.userId) === 'lifetime'
+    ? null : await getUserSettings(pending.userId);
+  const present = await withBotRunSubmissionLock(pending.userId, async context => {
     const current = await getPendingRun(token);
     if (!current) return; // Same Submit button clicked twice while the first write ran.
-    await submitPendingRunLocked(interaction, token, current);
+    return submitPendingRunLocked(interaction, token, current, context, settingsForDuplicate);
   });
+  // Preserve delivery order for automatic log-channel updates independently of saves.
+  if (present) await withBotRunSubmissionLock(`${pending.userId}:presentation`, present, 'presentation');
 }
 
-async function submitPendingRunLocked(interaction: ReviewInteraction, token: string, pending: PendingRecordLike) {
+async function submitPendingRunLocked(interaction: ReviewInteraction, token: string, pending: PendingRecordLike, context: BotRunOperationContext,
+  settingsForDuplicate: Awaited<ReturnType<typeof getUserSettings>>) {
   const ui = reviewUi();
-  const component = interaction as MessageComponentInteraction;
-
   const { userId, username } = pending;
   const includeType = isTrackReviewFlowEnabled(userId);
   const includeNotes = isTrackReviewFlowEnabled(userId);
@@ -216,14 +220,9 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     };
 
     const payload = await buildSubmitPayload(userId, username, mergedSourceData, includeType, includeNotes);
-    if (!interaction.deferred && !interaction.replied && 'update' in component && typeof component.update === 'function') {
-      await component.update({ embeds: [createLoadingEmbed(ui.messages.processingSubmission)], components: [] });
-    } else {
-      await interaction.editReply({ embeds: [createLoadingEmbed(ui.messages.processingSubmission)], components: [] }).catch(() => {});
-    }
-
     if (isLifetimeMode) {
-      await submitLifetimePendingRun({
+      context.setStage('save');
+      const presentLifetime = await submitLifetimePendingRun({
         interaction,
         pending,
         token,
@@ -231,13 +230,14 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         username,
         uiMessages: ui.messages,
       });
-      return;
+      runSaved = true;
+      return async () => { try { await presentLifetime(); } catch (error) { await reportFailure(error); } };
     }
 
-    const history = await prepareBotRunUploadHistory(userId);
+    const history = await prepareBotRunUploadHistory(userId, { onStage: context.setStage });
+    context.setStage('duplicate-check');
     const existingRuns = await history.getRuns();
     let submitRunData = buildSubmitRunData(pending, payload.runData);
-    const settingsForDuplicate = await getUserSettings(userId);
     if (settingsForDuplicate?.autoDetectDuplicates !== false && !submitRunData.runId && !submitRunData.localId) {
       // Recheck inside the lock: two reviews may have opened before either was saved.
       const duplicate = findPotentialDuplicateRun(submitRunData, existingRuns);
@@ -269,6 +269,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     const localSummaryBefore = await getLocalRunSummary(userId, existingRuns);
 
     if (pending.uploadProfileId !== undefined) setPendingUploadProfile(userId, pending.uploadProfileId);
+    context.setStage('save');
     if (dispatchPlan.operation === 'edit') {
       syncResult = await editRun({
         userId,
@@ -294,6 +295,9 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     }
 
     runSaved = true;
+    context.setStage('saved-state');
+    // Observe rejection immediately even while this saved run waits for presentation.
+    void syncResult?.backgroundSync?.catch(() => {});
     await updatePasteDiagnostic(pending.pasteDiagnosticId, { result: 'saved', stage: 'submit',
       ...(syncResult?.runId ? { runId: syncResult.runId } : {}), ...(syncResult?.localId ? { localId: syncResult.localId } : {}),
     });
@@ -316,85 +320,93 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
       coverageSource,
       shareableRun,
     } = presentationState;
-    const hasScreenshot = Boolean(pending.screenshot?.url);
-    const settings = await getUserSettings(userId).catch(() => null);
-
-    const allRunsSummary = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
-    const sharedSettings = await getEffectiveUserSharedSettings(userId).catch(() => ({ runDeltaMode: 'disabled' as const }));
-    const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
-    const runTypeForDelta = String(canonicalRunData.type ?? 'Farming').trim() || 'Farming';
-    const allRunsArr = (allRunsSummary?.allRuns ?? []) as Record<string, unknown>[];
-    const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 1
-      ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode, undefined, { ...coverageSource, runId: resolvedRunId }) ?? undefined
-      : undefined;
-
-    const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts, hasScreenshot, screenshotUrl, deltaResult });
-
-    setShareableRun(userId, {
-      run: shareableRun,
-      runTypeCounts,
-      screenshotUrl,
-    });
-
-    const shouldAttachChart = settings?.shareChart !== false;
-    let chartAttachment = null;
-    if (shouldAttachChart) {
-      if (allRunsSummary?.allRuns?.length) {
-        chartAttachment = await buildPerHourChartAttachment(
-          allRunsSummary.allRuns as Record<string, unknown>[],
-          runTypeForDelta,
-        ).catch(() => null);
-      }
-    }
-
-    if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
-    await interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: chartAttachment ? [chartAttachment] : [] });
-
-    if (syncResult?.backgroundSync) {
-      void syncResult.backgroundSync
-        .then(async backgroundResult => {
-          if (backgroundResult.queuedForCloud && backgroundResult.cloudUnavailable) {
-            await interaction.editReply({ content: ui.messages.cloudUnavailable }).catch(() => {});
-          }
-        })
-        .catch(() => {
-          logger.warn('deferred tracker submission follow-up failed');
-        });
-    }
-
-    await autoShareToConfiguredLogChannel({
-      interaction,
-      userId,
-      run: shareableRun,
-      runTypeCounts,
-      deltaResult,
-    });
-
-    if (syncResult?.queuedForCloud && syncResult?.cloudUnavailable) {
-      await interaction.editReply({ content: ui.messages.cloudUnavailable }).catch(() => {});
-    }
-
-    const trackerClient = interaction.client as TrackerBotClient;
-    void trackerClient.persistence?.analytics.log({
-      ts: new Date().toISOString(),
-      event: ANALYTICS_EVENT_RUN_TRACKER_UPLOAD,
-      userId,
-      guildId: interaction.guildId ?? undefined,
-      commandName: 'track',
-      runId: resolvedRunId ?? undefined,
-    }).catch(() => {});
-
+    // Consume the session and capture coherent state before allowing another save.
+    // Discord delivery, settings lookups and chart work must not hold the mutation lock.
+    const allRunsArr = await history.getRuns({ runId: syncResult?.runId, localId: syncResult?.localId });
+    setShareableRun(userId, { run: shareableRun, runTypeCounts, screenshotUrl });
     await deletePendingRun(token);
+    return async () => {
+      try {
+        const hasScreenshot = Boolean(pending.screenshot?.url);
+        const settings = await getUserSettings(userId).catch(() => null);
+
+        const sharedSettings = await getEffectiveUserSharedSettings(userId).catch(() => ({ runDeltaMode: 'disabled' as const }));
+        const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
+        const runTypeForDelta = String(canonicalRunData.type ?? 'Farming').trim() || 'Farming';
+        const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 1
+          ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode, undefined, { ...coverageSource, runId: resolvedRunId }) ?? undefined
+          : undefined;
+
+        const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts, hasScreenshot, screenshotUrl, deltaResult });
+
+        const shouldAttachChart = settings?.shareChart !== false;
+        let chartAttachment = null;
+        if (shouldAttachChart) {
+          if (allRunsArr.length) {
+            chartAttachment = await buildPerHourChartAttachment(
+              allRunsArr,
+              runTypeForDelta,
+            ).catch(() => null);
+          }
+        }
+
+        if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
+        await interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: chartAttachment ? [chartAttachment] : [] });
+
+        if (syncResult?.backgroundSync) {
+          void syncResult.backgroundSync
+            .then(async backgroundResult => {
+              if (backgroundResult.queuedForCloud && backgroundResult.cloudUnavailable) {
+                await interaction.editReply({ content: ui.messages.cloudUnavailable }).catch(() => {});
+              }
+            })
+            .catch(() => {
+              logger.warn('deferred tracker submission follow-up failed');
+            });
+        }
+
+        await autoShareToConfiguredLogChannel({
+          interaction,
+          userId,
+          run: shareableRun,
+          runTypeCounts,
+          deltaResult,
+          allRuns: allRunsArr,
+        });
+
+        if (syncResult?.queuedForCloud && syncResult?.cloudUnavailable) {
+          await interaction.editReply({ content: ui.messages.cloudUnavailable }).catch(() => {});
+        }
+
+        const trackerClient = interaction.client as TrackerBotClient;
+        void trackerClient.persistence?.analytics.log({
+          ts: new Date().toISOString(),
+          event: ANALYTICS_EVENT_RUN_TRACKER_UPLOAD,
+          userId,
+          guildId: interaction.guildId ?? undefined,
+          commandName: 'track',
+          runId: resolvedRunId ?? undefined,
+        }).catch(() => {});
+
+      } catch (error) {
+        await reportFailure(error);
+      }
+    };
   } catch (error) {
+    await deletePendingRun(token);
+    return async () => { await reportFailure(error); };
+  }
+
+  async function reportFailure(error: unknown) {
     await updatePasteDiagnostic(pending.pasteDiagnosticId, { result: runSaved ? 'saved' : 'failed', stage: 'submit', errorCode: runSaved ? 'presentation_error' : 'internal_error' });
     const safeError = pending.pasteDiagnosticId ? new Error(`Paste submission failed (reference ${pending.pasteDiagnosticId}).`) : error;
     await handleError({ client: interaction.client, user: interaction.user, error: safeError, context: 'dataSubmission' });
-    await deletePendingRun(token);
     const errMsg = pending.pasteDiagnosticId ? `Reference: ${pending.pasteDiagnosticId}` : error instanceof Error ? error.message : 'Unknown error';
-    const content = pending.pasteDiagnosticId
-      ? runSaved ? `Your run was saved, but the response could not be displayed. Please retry sharing. ${errMsg}`
-        : `The submission could not be completed. Check your latest run before retrying. ${errMsg}`
-      : `${ui.messages.submissionFailedPrefix} (${errMsg})`;
+    const content = runSaved
+      ? `Your run was saved, but the response could not be displayed. Please retry sharing.${pending.pasteDiagnosticId ? ` ${errMsg}` : ''}`
+      : pending.pasteDiagnosticId
+        ? `The submission could not be completed. Check your latest run before retrying. ${errMsg}`
+        : `${ui.messages.submissionFailedPrefix} (${errMsg})`;
     await interaction.editReply({ content, embeds: [], components: [] }).catch(() => {});
   }
 }

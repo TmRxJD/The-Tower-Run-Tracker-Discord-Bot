@@ -74,22 +74,24 @@ export async function submitLifetimePendingRun(params: {
     screenshotUrl: payload.screenshotUrl,
   });
 
-  await params.interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files }).catch(() => {
-    return params.interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: [] });
-  });
-
-  if (lifetimeResult.cloudUnavailable) {
-    await params.interaction.editReply({ content: params.uiMessages.cloudUnavailable }).catch(() => {});
-  }
-
-  const trackerClient = params.interaction.client as TrackerBotClient;
-  void trackerClient.persistence?.analytics.log({
-    ts: new Date().toISOString(),
-    event: ANALYTICS_EVENT_LIFETIME_TRACKER_UPLOAD,
-    userId: params.userId,
-    guildId: params.interaction.guildId ?? undefined,
-    commandName: 'lifetime',
-  }).catch(() => {});
-
   await deletePendingRun(params.token);
+  return async () => {
+    await params.interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files }).catch(() => {
+      return params.interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: [] });
+    });
+
+    if (lifetimeResult.cloudUnavailable) {
+      await params.interaction.editReply({ content: params.uiMessages.cloudUnavailable }).catch(() => {});
+    }
+
+    const trackerClient = params.interaction.client as TrackerBotClient;
+    void trackerClient.persistence?.analytics.log({
+      ts: new Date().toISOString(),
+      event: ANALYTICS_EVENT_LIFETIME_TRACKER_UPLOAD,
+      userId: params.userId,
+      guildId: params.interaction.guildId ?? undefined,
+      commandName: 'lifetime',
+    }).catch(() => {});
+
+  };
 }

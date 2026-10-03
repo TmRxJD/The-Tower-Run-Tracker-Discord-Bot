@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ prepare: vi.fn(), runs: vi.fn(), create: vi.fn(), review: vi.fn(), ocr: vi.fn(), settings: vi.fn() }));
 vi.mock('../paste-diagnostics', () => ({ beginPasteDiagnostic: async () => 'P-test-fixture', updatePasteDiagnostic: async () => true }));
-vi.mock('../run-upload-history', () => ({ prepareBotRunUploadHistory: mocks.prepare, withBotRunSubmissionLock: async (_user: string, action: () => Promise<unknown>) => action() }));
+vi.mock('../run-upload-history', () => ({ prepareBotRunUploadHistory: mocks.prepare, withBotRunSubmissionLock: async (_user: string, action: (context: { setStage: () => void }) => Promise<unknown>) => action({ setStage: vi.fn() }) }));
 vi.mock('../tracker-api-client', async importOriginal => ({ ...await importOriginal<object>(), runOCR: mocks.ocr }));
 vi.mock('../local-run-store', async importOriginal => ({ ...await importOriginal<object>(), getLocalSettings: mocks.settings }));
 vi.mock('../pending-run-store', async importOriginal => ({ ...await importOriginal<object>(), createPendingRun: mocks.create }));
@@ -26,14 +26,14 @@ describe('direct upload history paths', () => {
   it('direct pasted report checks all cold-cache history before review', async () => {
     await handleDirectTextPaste(interaction() as never,
       'Battle Report\nTier\t22\nWave\t900\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1', null, null, 'Farming', 'track');
-    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner');
+    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { onStage: expect.any(Function) });
     expect(mocks.create).toHaveBeenCalledOnce();
     expect(mocks.create.mock.calls[0][0]).toMatchObject({ isDuplicate: true, runData: { runId: 'run-0' } });
     expect(mocks.review).toHaveBeenCalledOnce();
   });
   it('direct screenshot checks the same complete history before review', async () => {
     await handleDirectAttachment(interaction() as never, { url: 'https://example.invalid/fixture.png', name: 'fixture.png' }, null, 'Farming', 'track');
-    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner');
+    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { onStage: expect.any(Function) });
     expect(mocks.create).toHaveBeenCalledOnce();
     expect(mocks.create.mock.calls[0][0]).toMatchObject({ isDuplicate: true, runData: { runId: 'run-0' } });
     expect(mocks.review).toHaveBeenCalledOnce();

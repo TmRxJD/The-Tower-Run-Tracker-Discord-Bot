@@ -9,17 +9,49 @@ const diagnosticSalt = randomBytes(32);
 
 // Bot interaction coordination only; parsing, hydration and reference semantics remain shared.
 const tails = new Map<string, Promise<void>>();
-export async function withBotRunSubmissionLock<T>(userId: string, action: () => Promise<T>): Promise<T> {
+type LockOperation = 'submission' | 'upload-history' | 'share-history' | 'presentation';
+type OperationStage = 'action' | 'settings' | 'cloud-history' | 'local-history' | 'hydration' | 'duplicate-check' | 'save' | 'saved-state';
+export type BotRunOperationContext = { setStage: (stage: OperationStage) => void };
+const owners = new Map<string, { operation: LockOperation; started: number; stage: OperationStage }>();
+export async function withBotRunSubmissionLock<T>(userId: string, action: (context: BotRunOperationContext) => Promise<T>,
+  operation: LockOperation = 'submission'): Promise<T> {
   const previous = tails.get(userId) ?? Promise.resolve();
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const tail = previous.then(() => gate);
   tails.set(userId, tail);
+  const waitingSince = Date.now();
+  let acquired = false;
+  let slowTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await withBotHistoryDeadline(() => previous, 60_000, 'Another run is still being saved. Please retry shortly.');
-    return await action();
+    await withBotHistoryDeadline(() => previous, 60_000, operation === 'presentation'
+      ? 'Another response is still being delivered. Check your latest run before retrying.'
+      : 'Another run is still being saved. Please retry shortly.');
+    acquired = true;
+    const owner = { operation, started: Date.now(), stage: 'action' as OperationStage };
+    owners.set(userId, owner);
+    slowTimer = setTimeout(() => logger.warn('Run operation lock held', {
+      scope: createHmac('sha256', diagnosticSalt).update(userId).digest('hex').slice(0, 16),
+      operation, stage: owner.stage, elapsedMs: Date.now() - owner.started,
+    }), 30_000);
+    return await action({ setStage: stage => { owner.stage = stage; } });
+  }
+  catch (error) {
+    if (!acquired) {
+      const owner = owners.get(userId);
+      logger.warn('Run operation lock wait failed', {
+        scope: createHmac('sha256', diagnosticSalt).update(userId).digest('hex').slice(0, 16),
+        operation, waitMs: Date.now() - waitingSince,
+        ownerOperation: owner?.operation ?? 'unknown',
+        ownerStage: owner?.stage ?? 'unknown',
+        ownerElapsedMs: owner ? Date.now() - owner.started : null,
+      });
+    }
+    throw error;
   }
   finally {
+    if (slowTimer) clearTimeout(slowTimer);
+    if (acquired) owners.delete(userId);
     release();
     // A timed-out waiter must not remove the active predecessor's protection.
     void tail.then(() => { if (tails.get(userId) === tail) tails.delete(userId); });
@@ -54,13 +86,15 @@ function reference(run: Record<string, unknown>) {
   return buildTrackerResolvedRunReference({ runId: run.runId, fallbackRunId: run.id ?? run.$id, localId: run.localId });
 }
 
-export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean } = {}) {
+export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean; onStage?: BotRunOperationContext['setStage'] } = {}) {
+  options.onStage?.('settings');
   const settings = await getLocalSettings(userId);
   if (settings.cloudSyncEnabled === false) {
     return { getRuns: () => loadLocalRunsFromBotRxDB(userId) };
   }
   // Never ingest partial results or normalize/write remote records on this read path.
   const started = Date.now();
+  options.onStage?.('cloud-history');
   const cloudRuns = await withBotHistoryDeadline(() => readCompleteHistory(userId), 45_000,
     options.readOnly ? 'Run history lookup timed out. Please retry sharing.' : undefined).catch(error => {
       logger.warn('Run history read failed', { operation: options.readOnly ? 'share-history' : 'upload-history',
@@ -68,6 +102,7 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
         elapsedMs: Date.now() - started, pendingRead: cloudReads.has(userId) });
       throw error;
     });
+  options.onStage?.('local-history');
   const tombstones = await getPermanentlyDeletedRunIds(userId);
   const active = cloudRuns.filter(run => !run.deletedAt && !tombstones.has(reference(run).runId ?? ''));
   const cloudIds = new Set(active.map(run => reference(run).runId).filter(Boolean));
@@ -101,6 +136,7 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
   }
   // Preserve queued local edits. Hydrate in small chunks to keep gateway acknowledgments responsive.
   const toHydrate = active.filter(run => !pendingRunIds.has(reference(run).runId ?? ''));
+  options.onStage?.('hydration');
   for (let offset = 0; offset < toHydrate.length; offset += 25) {
     await upsertMergedRunsIntoBotRxDB(userId, toHydrate.slice(offset, offset + 25)
       .map(run => hydrateTrackerCloudRun(run, userId, String(run.username ?? 'unknown'))));
@@ -119,6 +155,7 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
         || Boolean(submitted?.runId && submitted.runId === ref.runId);
     });
   };
+  options.onStage?.('local-history');
   const visible = await getRuns();
   const visibleIds = new Set(visible.map(run => reference(run).runId));
   if (active.some(run => !visibleIds.has(reference(run).runId))) {

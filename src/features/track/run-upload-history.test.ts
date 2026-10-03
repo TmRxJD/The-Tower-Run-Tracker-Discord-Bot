@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ cloud: vi.fn(), read: vi.fn(), upsert: vi.fn(), settings: vi.fn(), queue: vi.fn(), tombstones: vi.fn() }));
+const logMocks = vi.hoisted(() => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }));
+vi.mock('../../core/logger', () => ({ logger: logMocks }));
 vi.mock('./run-cloud-pair-client', () => ({ loadBotCompleteRunCloudDocuments: mocks.cloud }));
 vi.mock('../../rxdb/run-rxdb-store', async importOriginal => ({ ...await importOriginal<object>(), loadLocalRunsFromBotRxDB: mocks.read, upsertMergedRunsIntoBotRxDB: mocks.upsert }));
 vi.mock('./local-run-store', async importOriginal => ({ ...await importOriginal<object>(), getLocalSettings: mocks.settings, getQueueItems: mocks.queue }));
@@ -188,10 +190,14 @@ describe('bounded history waits', () => {
     vi.useFakeTimers();
     let finish!: () => void;
     const gate = new Promise<void>(resolve => { finish = resolve; });
-    const first = withBotRunSubmissionLock('timeout-owner', () => gate);
+    const first = withBotRunSubmissionLock('timeout-owner', context => { context.setStage('hydration'); return gate; }, 'upload-history');
     const second = expect(withBotRunSubmissionLock('timeout-owner', async () => 'should not run')).rejects.toThrow('still being saved');
     try {
       await vi.advanceTimersByTimeAsync(60_001); await second;
+      expect(logMocks.warn).toHaveBeenCalledWith('Run operation lock wait failed', expect.objectContaining({
+        ownerOperation: 'upload-history', ownerStage: 'hydration', ownerElapsedMs: 60_000,
+      }));
+      expect(JSON.stringify(logMocks.warn.mock.calls)).not.toContain('timeout-owner');
       const thirdAction = vi.fn(async () => 'third');
       const third = withBotRunSubmissionLock('timeout-owner', thirdAction);
       await Promise.resolve(); await Promise.resolve(); expect(thirdAction).not.toHaveBeenCalled();

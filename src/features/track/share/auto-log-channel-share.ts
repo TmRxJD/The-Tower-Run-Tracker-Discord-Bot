@@ -27,6 +27,7 @@ export async function autoShareToConfiguredLogChannel(params: {
   run: Record<string, unknown>;
   runTypeCounts: Record<string, number>;
   deltaResult?: TrackerRunDeltaResult;
+  allRuns?: Record<string, unknown>[];
 }) {
   const settings = await getUserSettings(params.userId).catch(() => null);
   const logChannelId = typeof settings?.logChannelId === 'string' ? settings.logChannelId.trim() : '';
@@ -49,7 +50,7 @@ export async function autoShareToConfiguredLogChannel(params: {
     if (!saved) shareRunRef = null;
   }
 
-  const allRuns = await getLocalRuns(params.userId).catch(() => [] as Awaited<ReturnType<typeof getLocalRuns>>);
+  const allRuns = params.allRuns ?? await getLocalRuns(params.userId).catch(() => [] as Awaited<ReturnType<typeof getLocalRuns>>);
   const runType = typeof params.run.type === 'string' && params.run.type.trim() ? params.run.type : 'Farming';
   const chartAttachment = await buildPerHourChartAttachment(allRuns as Record<string, unknown>[], runType).catch(() => null);
   const files = chartAttachment ? [chartAttachment] : [];

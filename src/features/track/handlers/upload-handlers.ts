@@ -325,7 +325,7 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
   // Both paste and OCR converge here, before duplicate detection/review.
   const history = getTrackerFlowMode(userId) === 'lifetime'
     ? { getRuns: () => getLocalRuns(userId) }
-    : await withBotRunSubmissionLock(userId, () => prepareBotRunUploadHistory(userId));
+    : await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { onStage: context.setStage }), 'upload-history');
   let hydratedRunData = { ...runData };
   const rawParseFields = hydratedRunData.rawParseFields && typeof hydratedRunData.rawParseFields === 'object' && !Array.isArray(hydratedRunData.rawParseFields)
     ? { ...(hydratedRunData.rawParseFields as Record<string, unknown>) }

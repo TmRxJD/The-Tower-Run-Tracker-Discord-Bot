@@ -173,7 +173,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       await disableShareButtonOnOriginalMessage(interaction);
     } else {
       stage = 'history';
-      const history = await withBotRunSubmissionLock(userId, () => prepareBotRunUploadHistory(userId, { readOnly: true }));
+      const history = await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { readOnly: true, onStage: context.setStage }), 'share-history');
       const verifiedRuns = await history.getRuns();
       const cached = getShareableRun(userId);
       let run = cached?.run ?? null;

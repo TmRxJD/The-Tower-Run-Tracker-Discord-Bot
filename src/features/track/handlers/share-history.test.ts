@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), snapshot: vi.fn(), settings: vi.fn() }));
-vi.mock('../run-upload-history', () => ({ prepareBotRunUploadHistory: mocks.history, withBotRunSubmissionLock: async (_user: string, action: () => Promise<unknown>) => action() }));
+vi.mock('../run-upload-history', () => ({ prepareBotRunUploadHistory: mocks.history, withBotRunSubmissionLock: async (_user: string, action: (context: { setStage: () => void }) => Promise<unknown>) => action({ setStage: vi.fn() }) }));
 vi.mock('../tracker-api-client', async importOriginal => ({ ...await importOriginal<object>(), getUserSettings: mocks.settings }));
 vi.mock('../share/share-snapshot-store', () => ({ saveShareSnapshot: mocks.snapshot }));
 vi.mock('../share/share-embed-delivery', () => ({ resolveShareEmbedChannelPayload: async (input: object) => input }));
