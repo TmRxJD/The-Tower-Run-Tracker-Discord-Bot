@@ -3,12 +3,16 @@ import { updatePasteDiagnostic } from '../paste-diagnostics';
 import { IncompleteRunReportError } from './paste-input-error';
 import { logError } from './error-handlers';
 import type { TrackReplyInteractionLike } from '../interaction-types';
+import { readHistoryFailure } from '../history-failure-diagnostic';
 
 export async function reportPasteFailure(interaction: TrackReplyInteractionLike, error: unknown,
   reference: string, stage: 'parse' | 'history' | 'review', context: 'direct_text_paste' | 'paste_flow_modal') {
   const reason = error instanceof IncompleteRunReportError ? error.reason
     : stage === 'history' ? 'history_unavailable' : 'internal_error';
-  await updatePasteDiagnostic(reference, { result: error instanceof IncompleteRunReportError ? 'rejected' : 'failed', stage, errorCode: reason });
+  const historyFailure = stage === 'history' ? readHistoryFailure(error) : undefined;
+  await updatePasteDiagnostic(reference, { result: error instanceof IncompleteRunReportError ? 'rejected' : 'failed', stage, errorCode: reason,
+    ...(historyFailure ? { historyFailure } : {}) });
+  if (historyFailure) logger.warn('[paste] history failure', { reference, ...historyFailure });
   if (error instanceof IncompleteRunReportError && reason !== 'unrecognized_report') {
     logger.info('[paste] incomplete input rejected', { reference, reason });
   } else {

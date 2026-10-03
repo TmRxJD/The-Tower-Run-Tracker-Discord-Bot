@@ -10,6 +10,7 @@ import { prepareBotRunUploadHistory, withBotRunSubmissionLock, withBotHistoryDea
 import { getLocalRunSummary } from './tracker-api-client';
 import { findPotentialDuplicateRun } from './handlers/upload-helpers';
 import { buildRunTypeCounts } from './handlers/review-submission-helpers';
+import { historyFailureError, readHistoryFailure } from './history-failure-diagnostic';
 
 type Row = Record<string, unknown>;
 let local: Row[];
@@ -95,6 +96,15 @@ describe('upload history coordination', () => {
 });
 
 describe('bounded history waits', () => {
+  it('preserves the cloud failure correlation and logs only safe machine metadata', async () => {
+    const error = historyFailureError('PRIVATE_HISTORY_DATA', 'count_consistency', 'main_count');
+    const diagnostic = readHistoryFailure(error);
+    mocks.cloud.mockRejectedValue(error);
+    await expect(prepareBotRunUploadHistory('diagnostic-owner')).rejects.toBe(error);
+    expect(logMocks.warn).toHaveBeenCalledWith('Run history read failed', expect.objectContaining(diagnostic));
+    expect(JSON.stringify(logMocks.warn.mock.calls)).not.toContain('PRIVATE_HISTORY_DATA');
+    expect(JSON.stringify(logMocks.warn.mock.calls)).not.toContain('diagnostic-owner');
+  });
   it('shares one cloud lookup between concurrent read-only callers and clears a rejected lookup for retry', async () => {
     let finish!: (rows: Row[]) => void;
     mocks.cloud.mockImplementation(() => new Promise<Row[]>(resolve => { finish = resolve; }));

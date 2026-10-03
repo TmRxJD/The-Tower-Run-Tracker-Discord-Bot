@@ -5,6 +5,7 @@ import { join, resolve, sep } from 'node:path';
 vi.mock('../../core/logger', () => ({ logger: { warn: vi.fn() } }));
 import { logger } from '../../core/logger';
 import { PasteDiagnosticStore, redactPasteText, startPasteDiagnosticMaintenance, stopPasteDiagnosticMaintenance } from './paste-diagnostics';
+import { historyFailureError, readHistoryFailure } from './history-failure-diagnostic';
 let directory: string;
 let now: number;
 beforeEach(async () => { vi.clearAllMocks(); now = 1_790_945_000_000; directory = await fs.mkdtemp(join(tmpdir(), 'tracker-paste-test-')); });
@@ -16,6 +17,15 @@ afterEach(async () => {
 const read = async (id: string) => JSON.parse(await fs.readFile(join(directory, id + '.json'), 'utf8'));
 const store = (options: { retentionDays?: number; maxBytes?: number; maxFiles?: number; inputBytes?: number } = {}) => new PasteDiagnosticStore({ directory, now: () => now, ...options });
 describe('local paste diagnostics', () => {
+  it('persists strictly allowlisted history metadata and rejects injected diagnostic content', async () => {
+    const diagnostics = store(); const id = await diagnostics.begin('fixture-user', 'direct', 'synthetic report');
+    const historyFailure = readHistoryFailure(historyFailureError('PRIVATE_EXCEPTION', 'schema', 'extended_page'));
+    expect(await diagnostics.update(id, { result: 'failed', stage: 'history', historyFailure })).toBe(true);
+    expect((await read(id)).historyFailure).toEqual(historyFailure);
+    expect(await diagnostics.update(id, { historyFailure: { ...historyFailure, message: 'PRIVATE_INJECTED_BODY' } } as never)).toBe(false);
+    expect(JSON.stringify(await read(id))).not.toContain('PRIVATE_EXCEPTION');
+    expect(JSON.stringify(await read(id))).not.toContain('PRIVATE_INJECTED_BODY');
+  });
   it('redacts recognizable credentials before disk and retains successful/rejected outcome metadata', async () => {
     const fakeToken = 'A'.repeat(24) + '.' + 'B'.repeat(6) + '.' + 'C'.repeat(27);
     const text = `Battle Report\napi_key=synthetic-key\nAuthorization: Bearer ${'D'.repeat(24)}\npassword="synthetic phrase"\n${fakeToken}\nsk-proj-${'E'.repeat(24)}\n-----BEGIN PRIVATE KEY-----\nsynthetic-private-key\n-----END PRIVATE KEY-----`;

@@ -3,6 +3,7 @@ const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), identity: vi.fn()
 vi.mock('../../persistence/appwrite-client', () => ({ createAppwriteClient: () => ({ databases: { listDocuments: mocks.list, getDocument: mocks.get } }) }));
 vi.mock('./run-cloud-identity', () => ({ resolveBotRunCloudIdentity: mocks.identity }));
 import { loadBotCompleteRunCloudDocuments, writeBotRunCloudDocumentPair } from './run-cloud-pair-client';
+import { readHistoryFailure } from './history-failure-diagnostic';
 
 const docs = (owner: string, n: number) => Array.from({ length: n }, (_, i) => ({
   $id: `${owner}-${String(i).padStart(4, '0')}`, userId: owner, type: 'Farming', tier: '22', wave: String(i + 1),
@@ -25,6 +26,31 @@ beforeEach(() => {
   mocks.get.mockRejectedValue({ code: 404 });
 });
 describe('complete bot history reads', () => {
+  it.each([
+    [{ total: 1, documents: 'PRIVATE' }, 'schema'],
+    [{ total: 2, documents: [] }, 'pagination'],
+    [{ total: 2, documents: [...docs('discord', 1), ...docs('discord', 1)] }, 'pagination'],
+  ])('labels rejected main pages without emitting their content %#', async (page, cause) => {
+    mocks.list.mockResolvedValue(page);
+    const error = await loadBotCompleteRunCloudDocuments('discord').catch(error => error);
+    expect(readHistoryFailure(error)).toMatchObject({ cause, stage: 'main_page' });
+    expect(JSON.stringify(readHistoryFailure(error))).not.toContain('PRIVATE');
+  });
+  it('labels a changed final count distinctly from malformed records', async () => {
+    mocks.list.mockResolvedValueOnce({ total: 1, documents: docs('discord', 1) }).mockResolvedValueOnce({ total: 2, documents: [] });
+    const error = await loadBotCompleteRunCloudDocuments('discord').catch(error => error);
+    expect(readHistoryFailure(error)).toMatchObject({ cause: 'count_consistency', stage: 'main_count' });
+  });
+  it('labels SDK failures with safe status and the actual request stage', async () => {
+    mocks.list.mockRejectedValue(Object.assign(new Error('PRIVATE_HTTP_BODY'), { code: 429, response: 'PRIVATE_HTTP_BODY' }));
+    const error = await loadBotCompleteRunCloudDocuments('discord').catch(error => error);
+    expect(readHistoryFailure(error)).toMatchObject({ cause: 'http_status', status: 429, stage: 'main_page' });
+    expect(JSON.stringify(readHistoryFailure(error))).not.toContain('PRIVATE_HTTP_BODY');
+    mocks.list.mockRejectedValue(Object.assign(new Error('PRIVATE_SOCKET_BODY'), { code: 'ECONNRESET' }));
+    const transport = await loadBotCompleteRunCloudDocuments('discord').catch(error => error);
+    expect(readHistoryFailure(transport)).toMatchObject({ cause: 'transport', transportCode: 'ECONNRESET', stage: 'main_page' });
+    expect(JSON.stringify(readHistoryFailure(transport))).not.toContain('PRIVATE_SOCKET_BODY');
+  });
   it('completes a 1359-run, one-second-per-request lookup in 29 seconds rather than 70 seconds', async () => {
     vi.useFakeTimers();
     fixture({ discord: docs('discord', 1359) });
@@ -48,8 +74,10 @@ describe('complete bot history reads', () => {
     const list = mocks.list.getMockImplementation()!;
     mocks.list.mockImplementation(async (...args) => { await new Promise(resolve => setTimeout(resolve, 46_000)); return list(...args); });
     try {
-      const rejected = expect(loadBotCompleteRunCloudDocuments('discord')).rejects.toThrow('timed out');
+      let failure: unknown;
+      const rejected = expect(loadBotCompleteRunCloudDocuments('discord').catch(error => { failure = error; throw error; })).rejects.toThrow('timed out');
       await vi.advanceTimersByTimeAsync(46_001); await rejected;
+      expect(readHistoryFailure(failure)).toMatchObject({ cause: 'timeout', stage: 'main_page' });
       expect(mocks.list).toHaveBeenCalledOnce(); expect(mocks.get).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });

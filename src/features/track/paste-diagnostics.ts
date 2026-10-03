@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { logger } from '../../core/logger';
+import { historyFailureSchema } from './history-failure-diagnostic';
 
 const referencePattern = /^P-([a-z0-9]{8,12})-([a-f0-9]{12})$/;
 const filePattern = /^P-([a-z0-9]{8,12})-[a-f0-9]{12}\.json(?:\.tmp-[a-f0-9]{12})?$/;
@@ -13,6 +14,7 @@ const patchSchema = z.object({
   result: z.enum(outcomes).optional(), stage: z.enum(stages).optional(), errorCode: z.enum(codes).optional(),
   runId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).optional(),
   localId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).optional(),
+  historyFailure: historyFailureSchema.optional(),
 }).strict();
 const recordSchema = patchSchema.extend({
   reference: z.string().regex(referencePattern), createdAt: z.number().int(), updatedAt: z.number().int(),

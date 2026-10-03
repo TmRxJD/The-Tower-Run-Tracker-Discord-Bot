@@ -18,6 +18,8 @@ import { createAppwriteClient } from '../../persistence/appwrite-client';
 import { resolveBotRunCloudIdentity } from './run-cloud-identity';
 import { isNotFoundAppwriteError } from '../../persistence/appwrite-error-utils';
 import { retireLocalOnlyBackupRun } from '../../rxdb/local-only-backup';
+import { randomUUID } from 'node:crypto';
+import { annotateHistoryFailure, historyFailureError, type HistoryFailureStage } from './history-failure-diagnostic';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
 
@@ -26,86 +28,95 @@ const RUNS_DATABASE_ID = 'run-tracker-data';
  * Validate before ingestion; an error never becomes an empty account.
  */
 export async function loadBotCompleteRunCloudDocuments(userId: string): Promise<Record<string, unknown>[]> {
-  const deadline = Date.now() + 45_000;
-  const checkDeadline = () => { if (Date.now() >= deadline) throw new Error('Run history lookup timed out. Please retry.'); };
-  const { databases } = createAppwriteClient();
-  const identity = await resolveBotRunCloudIdentity(userId);
-  checkDeadline();
-  if (!identity.lookupUserIds.length) throw new Error('Run history identity is unavailable. Please retry.');
-  const documents = new Map<string, Record<string, unknown>>();
-  for (const ownerId of new Set(identity.lookupUserIds)) {
-    let cursor: string | null = null;
-    let expectedTotal: number | null = null;
-    const ownerIds = new Set<string>();
-    for (;;) {
-      checkDeadline();
-      const page: Models.DocumentList<Models.Document & { userId?: unknown }> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
-        ...buildBotRunCloudUserIdQueries(ownerId, cursor, TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE),
-        Query.orderAsc('$id'),
-      ]);
-      checkDeadline();
-      if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0
-        || (expectedTotal !== null && expectedTotal !== page.total)) {
-        throw new Error('Run history changed or could not be verified. Please retry.');
-      }
-      expectedTotal = page.total;
-      for (const raw of page.documents) {
-        const parsed = trackerRunCloudDocumentReadSchema.safeParse(raw);
-        if (!parsed.success || raw.userId !== ownerId || !raw.$id || ownerIds.has(raw.$id)) {
-          throw new Error('Run history contains an unreadable or repeated record. Please retry.');
-        }
-        ownerIds.add(raw.$id);
-        documents.set(raw.$id, parsed.data);
-      }
-      if (ownerIds.size === expectedTotal) break;
-      if (!page.documents.length || ownerIds.size > expectedTotal) {
-        throw new Error('Run history is incomplete. Please retry.');
-      }
-      cursor = page.documents[page.documents.length - 1].$id;
-    }
-    // Detect concurrent additions/deletions after the last page, before trusting counts.
-    const check = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
-      Query.equal('userId', ownerId), Query.limit(1), Query.select(['$id']),
-    ]);
+  const correlation = randomUUID();
+  let stage: HistoryFailureStage = 'identity';
+  const failure = (cause: Parameters<typeof historyFailureError>[1], message: string) => historyFailureError(message, cause, stage, correlation);
+  try {
+    const deadline = Date.now() + 45_000;
+    const checkDeadline = () => { if (Date.now() >= deadline) throw failure('timeout', 'Run history lookup timed out. Please retry.'); };
+    const { databases } = createAppwriteClient();
+    const identity = await resolveBotRunCloudIdentity(userId);
     checkDeadline();
-    if (check.total !== expectedTotal) throw new Error('Run history changed. Please retry.');
-  }
-  const mainDocuments = [...documents.values()];
-  const extendedDocuments: Record<string, unknown>[] = [];
-  // Complete bot history already verified the owning main records. Query their
-  // exact IDs in bulk rather than issuing one extended GET per historical run.
-  const ids = [...documents.keys()];
-  for (let offset = 0; offset < ids.length; offset += TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE) {
-    const batch = ids.slice(offset, offset + TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE);
-    const requested = new Set(batch);
-    const seen = new Set<string>();
-    let cursor: string | null = null;
-    let expectedTotal: number | null = null;
-    for (;;) {
-      checkDeadline();
-      const page: Models.DocumentList<Models.Document> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_EXTENDED_COLLECTION_ID, [
-        Query.equal('$id', batch), Query.limit(TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE), Query.orderAsc('$id'),
-        ...(cursor ? [Query.cursorAfter(cursor)] : []),
+    if (!identity.lookupUserIds.length) throw failure('identity', 'Run history identity is unavailable. Please retry.');
+    const documents = new Map<string, Record<string, unknown>>();
+    for (const ownerId of new Set(identity.lookupUserIds)) {
+      let cursor: string | null = null;
+      let expectedTotal: number | null = null;
+      const ownerIds = new Set<string>();
+      for (;;) {
+        stage = 'main_page';
+        checkDeadline();
+        const page: Models.DocumentList<Models.Document & { userId?: unknown }> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
+          ...buildBotRunCloudUserIdQueries(ownerId, cursor, TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE),
+          Query.orderAsc('$id'),
+        ]);
+        checkDeadline();
+        if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0
+          || (expectedTotal !== null && expectedTotal !== page.total)) {
+          throw failure(!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 ? 'schema' : 'count_consistency', 'Run history changed or could not be verified. Please retry.');
+        }
+        expectedTotal = page.total;
+        for (const raw of page.documents) {
+          const parsed = trackerRunCloudDocumentReadSchema.safeParse(raw);
+          if (!parsed.success || raw.userId !== ownerId || !raw.$id || ownerIds.has(raw.$id)) {
+            throw failure(!parsed.success || !raw.$id ? 'schema' : raw.userId !== ownerId ? 'ownership' : 'pagination', 'Run history contains an unreadable or repeated record. Please retry.');
+          }
+          ownerIds.add(raw.$id);
+          documents.set(raw.$id, parsed.data);
+        }
+        if (ownerIds.size === expectedTotal) break;
+        if (!page.documents.length || ownerIds.size > expectedTotal) {
+          throw failure('pagination', 'Run history is incomplete. Please retry.');
+        }
+        cursor = page.documents[page.documents.length - 1].$id;
+      }
+      // Detect concurrent additions/deletions after the last page, before trusting counts.
+      stage = 'main_count';
+      const check = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
+        Query.equal('userId', ownerId), Query.limit(1), Query.select(['$id']),
       ]);
       checkDeadline();
-      if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > batch.length
-        || (expectedTotal !== null && expectedTotal !== page.total)) throw new Error('Extended run history could not be verified. Please retry.');
-      expectedTotal = page.total;
-      for (const raw of page.documents) {
-        const parsed = parseTrackerRunExtendedDocumentRecord(raw);
-        const id = parsed ? resolveTrackerRunCloudDocumentId(parsed) : null;
-        if (!parsed || !id || !requested.has(id) || seen.has(id)) throw new Error('Extended run history contains an unreadable or repeated record. Please retry.');
-        const main = documents.get(id)!;
-        if (parsed.userId !== undefined && parsed.userId !== main.userId) throw new Error('Extended run history ownership could not be verified. Please retry.');
-        if (parsed.profileId !== undefined && (parsed.profileId || null) !== (main.profileId || null)) throw new Error('Extended run history profile could not be verified. Please retry.');
-        seen.add(id); extendedDocuments.push(parsed);
-      }
-      if (seen.size === expectedTotal) break;
-      if (!page.documents.length || seen.size > expectedTotal) throw new Error('Extended run history is incomplete. Please retry.');
-      cursor = page.documents[page.documents.length - 1].$id;
+      if (check.total !== expectedTotal) throw failure('count_consistency', 'Run history changed. Please retry.');
     }
-  }
-  return stitchTrackerRunCloudLoadDocuments({ mainDocuments, extendedDocuments }).stitchedDocuments;
+    const mainDocuments = [...documents.values()];
+    const extendedDocuments: Record<string, unknown>[] = [];
+    // Complete bot history already verified the owning main records. Query their
+    // exact IDs in bulk rather than issuing one extended GET per historical run.
+    const ids = [...documents.keys()];
+    for (let offset = 0; offset < ids.length; offset += TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE) {
+      const batch = ids.slice(offset, offset + TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE);
+      const requested = new Set(batch);
+      const seen = new Set<string>();
+      let cursor: string | null = null;
+      let expectedTotal: number | null = null;
+      for (;;) {
+        stage = 'extended_page';
+        checkDeadline();
+        const page: Models.DocumentList<Models.Document> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_EXTENDED_COLLECTION_ID, [
+          Query.equal('$id', batch), Query.limit(TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE), Query.orderAsc('$id'),
+          ...(cursor ? [Query.cursorAfter(cursor)] : []),
+        ]);
+        checkDeadline();
+        if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > batch.length
+          || (expectedTotal !== null && expectedTotal !== page.total)) throw failure(!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 ? 'schema' : 'count_consistency', 'Extended run history could not be verified. Please retry.');
+        expectedTotal = page.total;
+        for (const raw of page.documents) {
+          const parsed = parseTrackerRunExtendedDocumentRecord(raw);
+          const id = parsed ? resolveTrackerRunCloudDocumentId(parsed) : null;
+          if (!parsed || !id || !requested.has(id) || seen.has(id)) throw failure(!parsed || !id ? 'schema' : 'pagination', 'Extended run history contains an unreadable or repeated record. Please retry.');
+          const main = documents.get(id)!;
+          if (parsed.userId !== undefined && parsed.userId !== main.userId) throw failure('ownership', 'Extended run history ownership could not be verified. Please retry.');
+          if (parsed.profileId !== undefined && (parsed.profileId || null) !== (main.profileId || null)) throw failure('ownership', 'Extended run history profile could not be verified. Please retry.');
+          seen.add(id); extendedDocuments.push(parsed);
+        }
+        if (seen.size === expectedTotal) break;
+        if (!page.documents.length || seen.size > expectedTotal) throw failure('pagination', 'Extended run history is incomplete. Please retry.');
+        cursor = page.documents[page.documents.length - 1].$id;
+      }
+    }
+    stage = 'stitch';
+    return stitchTrackerRunCloudLoadDocuments({ mainDocuments, extendedDocuments }).stitchedDocuments;
+  } catch (error) { throw annotateHistoryFailure(error, stage, correlation); }
 }
 
 
