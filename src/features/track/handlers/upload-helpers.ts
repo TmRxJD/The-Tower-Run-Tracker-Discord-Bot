@@ -484,7 +484,8 @@ export function generateCoverageDescription(
   };
   const correctedOrbs = getOptionalVal(runData.killsWithOrbs) ?? getOptionalVal(rawFields.killsWithOrbs);
   const orbsCoverage = correctedOrbs ?? enemiesHitByOrbs;
-  const blackHoleCoverage = getOptionalVal(runData.killsWithBlackHole) ?? enemiesHitByBlackHole;
+  const correctedBlackHole = getOptionalVal(runData.killsWithBlackHole) ?? getOptionalVal(rawFields.killsWithBlackHole);
+  const blackHoleCoverage = correctedBlackHole ?? enemiesHitByBlackHole;
   const taggedByDeathWave = getVal(runData['Tagged by Death Wave'] ?? runData.taggedByDeathWave);
   const destroyedInSpotlight = getVal(runData['Destroyed in Spotlight'] ?? runData.destroyedInSpotlight);
   const destroyedInGoldenBot = getVal(runData['Destroyed in Golden Bot'] ?? runData.destroyedInGoldenBot);
@@ -509,7 +510,7 @@ export function generateCoverageDescription(
 
   const allMetrics: { label: string; value: number | null; block: string; deltaKey: string; metricKey: string }[] = [
     { label: 'Golden Tower', value: toPct(killsWithGoldenTower), block: '🟨', deltaKey: 'killsWithGoldenTowerPercentage', metricKey: 'goldenTower' },
-    { label: 'Black Hole',   value: toPct(blackHoleCoverage), block: '🟪', deltaKey: 'destroyedByBlackHolePercentage', metricKey: 'blackHole' },
+    { label: 'Black Hole',   value: correctedBlackHole === 0 ? 0 : toPct(blackHoleCoverage), block: '🟪', deltaKey: 'destroyedByBlackHolePercentage', metricKey: 'blackHole' },
     { label: 'Spotlight',    value: toPct(destroyedInSpotlight), block: '⬜', deltaKey: 'destroyedInSpotlightPercentage', metricKey: 'spotlight' },
     { label: 'Death Wave',   value: toPct(taggedByDeathWave), block: '🟥', deltaKey: 'taggedByDeathWavePercentage', metricKey: 'deathWave' },
     { label: 'Orbs',         value: correctedOrbs === 0 ? 0 : toPct(orbsCoverage), block: '🟪', deltaKey: 'hitByOrbsPercentage', metricKey: 'orbs' },

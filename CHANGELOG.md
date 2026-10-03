@@ -78,3 +78,8 @@
 
 - Cooperative45-second deadline checks stop further SDK pages after timeout; unresolved SDK calls remain coalesced until settled because the SDK has no per-request abort hook. Extended rows are checked against authoritative main owner/profile; tests cover fresh mutation counts and capacity cleanup.
 
+
+## 2026-10-03 — Black Hole coverage comparison correction
+- Compare only explicit killsWithBlackHole (Killed With Effect Active) measurements; legacy hits/weapon kills/stored percentages cannot masquerade as corrected comparison data. Compatible rolling windows and actual prior-run selection match established Orbs correctness without changing other metrics.
+- Recover explicit corrected raw fields, preserve genuine zero and unavailable comparisons, and align submission/share/table/chart numbers. No historical record rewrite; existing Discord images need regeneration.
+
