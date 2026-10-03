@@ -182,6 +182,8 @@ export async function handleDataSubmission(interaction: ReviewInteraction) {
 async function submitPendingRun(interaction: ReviewInteraction, token: string, pending: PendingRecordLike) {
   // Acknowledge before waiting for another submission/cloud history; avoid Discord expiry.
   if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate().catch(() => {});
+  // Another Submit may consume this session while Discord acknowledgement is pending.
+  if (!await getPendingRun(token)) return;
   await interaction.editReply({ embeds: [createLoadingEmbed(reviewUi().messages.processingSubmission)], components: [] }).catch(() => {});
   const settingsForDuplicate = getTrackerFlowMode(pending.userId) === 'lifetime'
     ? null : await getUserSettings(pending.userId);

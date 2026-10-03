@@ -44,6 +44,18 @@ beforeEach(() => {
   mocks.edit.mockResolvedValue({ localId: 'new-local' });
 });
 describe('actual submission history integration', () => {
+  it('does not replace a saved response with loading when a repeated Submit acknowledgement arrives late', async () => {
+    let finish!: () => void;
+    const blocked = new Promise<void>(resolve => { finish = resolve; });
+    const late = interaction('a');
+    late.deferUpdate.mockImplementation(async () => { await blocked; late.deferred = true; });
+    const repeated = handleDataSubmission(late as never);
+    await vi.waitFor(() => expect(late.deferUpdate).toHaveBeenCalledOnce());
+    await handleDataSubmission(interaction('a') as never);
+    finish(); await repeated;
+    expect(mocks.log).toHaveBeenCalledOnce();
+    expect(late.editReply).not.toHaveBeenCalled();
+  });
   it('a failed write consumes its session and releases the save lock while its error reply stalls', async () => {
     pending.get('a')!.pasteDiagnosticId = 'fixture-reference';
     mocks.log.mockRejectedValueOnce(new Error('PRIVATE_WRITE_FAILURE'));

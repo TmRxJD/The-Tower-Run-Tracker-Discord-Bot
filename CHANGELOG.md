@@ -6,6 +6,7 @@
 - Release per-user mutation locks after durable saves, session consumption and coherent history capture; perform chart rendering, Discord replies and automatic log-channel sharing on a separate ordered delivery lane. Slow delivery no longer prevents a second run from saving. Apply the same separation to lifetime submission delivery and observe background-sync rejection immediately.
 - Carry the captured run history into submission and automatic-share charts; preserve duplicate checks, selected-run state and repeated-submit protection while delivery is pending.
 - Diagnose long-held operation locks and failed waits with salted scope hashes, operation names, safe stages and elapsed times. Keep existing wait deadlines and retain protection around unfinished writes and hydration.
+- Recheck consumed review sessions after delayed Discord acknowledgements so repeated Submit cannot replace an already saved response with a loading message.
 
 ## 2026-10-02
 
