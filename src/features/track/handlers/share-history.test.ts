@@ -76,3 +76,30 @@ it('does not attach an unavailable version reference when snapshot persistence f
   expect(owner.channel.send).toHaveBeenCalledOnce();
   expect(owner.channel.send.mock.calls[0][0].shareRunRef).toBeNull();
 });
+
+it('does not read, snapshot or publish after both acknowledgement attempts fail', async () => {
+  const owner = { ...interaction(), deferReply: vi.fn().mockRejectedValue(Object.assign(new Error('PRIVATE_ACK_FAILURE'), { code: 'UND_ERR_CONNECT_TIMEOUT' })) };
+  owner.deferUpdate.mockRejectedValue(new Error('PRIVATE_UPDATE_FAILURE'));
+  await handleTrackMenuShareLast(owner as never);
+  expect(mocks.settings).not.toHaveBeenCalled();
+  expect(mocks.history).not.toHaveBeenCalled();
+  expect(mocks.snapshot).not.toHaveBeenCalled();
+  expect(owner.channel.send).not.toHaveBeenCalled();
+  expect(owner.followUp).not.toHaveBeenCalled();
+  expect(logError).toHaveBeenCalledWith(owner.client, owner.user, expect.objectContaining({ code: 'UND_ERR_CONNECT_TIMEOUT' }), 'track_menu_sharelast', null, null, 'acknowledge');
+});
+it('retains a successful deferred-reply fallback before publishing', async () => {
+  setShareableRun('share-owner', { run: rows[0], runTypeCounts: {} });
+  const owner = { ...interaction(), deferReply: vi.fn().mockResolvedValue(undefined) };
+  owner.deferUpdate.mockRejectedValue(new Error('update unavailable'));
+  await handleTrackMenuShareLast(owner as never);
+  expect(owner.deferReply).toHaveBeenCalledOnce();
+  expect(owner.channel.send).toHaveBeenCalledOnce();
+});
+it('uses an existing acknowledgement without attempting a second one', async () => {
+  setShareableRun('share-owner', { run: rows[0], runTypeCounts: {} });
+  const owner = { ...interaction(), deferred: true };
+  await handleTrackMenuShareLast(owner as never);
+  expect(owner.deferUpdate).not.toHaveBeenCalled();
+  expect(owner.channel.send).toHaveBeenCalledOnce();
+});

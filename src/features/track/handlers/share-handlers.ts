@@ -66,17 +66,17 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
   const mode = getTrackerFlowMode(interaction.user.id);
   const shareUiConfig = getTrackerUiConfig(mode).share;
   let stage: DiagnosticStage = 'acknowledge';
+  let acknowledged = interaction.deferred || interaction.replied;
   try {
-    let acknowledged = false;
-    try {
-      await interaction.deferUpdate();
-      acknowledged = true;
-    } catch {
+    if (!acknowledged) {
       try {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferUpdate();
         acknowledged = true;
       } catch {
-        /* ignore */
+        // A failed fallback must stop before history reads, snapshots or public sends.
+        // The user cannot receive confirmation on an unacknowledged interaction.
+        await interaction.deferReply({ ephemeral: true });
+        acknowledged = true;
       }
     }
 
@@ -294,6 +294,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     }
   } catch (error) {
     await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'track_menu_sharelast', null, null, stage);
+    if (!acknowledged) return;
     const message = shareUiConfig.shareFailed;
     if (interaction.followUp) {
       await interaction.followUp({ content: message, ephemeral: true }).catch(() => {});
