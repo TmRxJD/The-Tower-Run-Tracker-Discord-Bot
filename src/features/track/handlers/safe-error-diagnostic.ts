@@ -4,10 +4,10 @@ import { resolve, relative } from 'node:path';
 const candidateRoot = resolve(__dirname, '../../../..');
 const root = existsSync(resolve(candidateRoot, 'src/features/track/handlers/error-handlers.ts')) ? candidateRoot : resolve(__dirname);
 const types = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'AggregateError', 'DiscordAPIError', 'HTTPError', 'AppwriteException', 'ZodError']);
-const codes = new Set(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ABORT_ERR', 'SQLITE_BUSY', 'SQLITE_FULL', 'SQLITE_IOERR']);
-const operations = new Set(['track_menu_sharelast', 'track_menu_log_channel_autoshare', 'share_embed_expand', 'share_embed_battle_report', 'share_embed_track_run']);
-export type DiagnosticStage = 'acknowledge' | 'settings' | 'history' | 'render' | 'snapshot' | 'payload' | 'send' | 'finalize' | 'lookup' | 'unknown';
-const stages = new Set<DiagnosticStage>(['acknowledge', 'settings', 'history', 'render', 'snapshot', 'payload', 'send', 'finalize', 'lookup', 'unknown']);
+const codes = new Set(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ABORT_ERR', 'SQLITE_BUSY', 'SQLITE_FULL', 'SQLITE_IOERR', 'unrecognized_report', 'missing_fields', 'invalid_date', 'history_unavailable', 'internal_error', 'presentation_error']);
+const operations = new Set(['track_menu_sharelast', 'track_menu_log_channel_autoshare', 'share_embed_expand', 'share_embed_battle_report', 'share_embed_track_run', 'direct_text_paste', 'paste_flow_modal', 'paste_add_run_modal']);
+export type DiagnosticStage = 'acknowledge' | 'settings' | 'history' | 'render' | 'snapshot' | 'payload' | 'send' | 'finalize' | 'lookup' | 'parse' | 'review' | 'unknown';
+const stages = new Set<DiagnosticStage>(['acknowledge', 'settings', 'history', 'render', 'snapshot', 'payload', 'send', 'finalize', 'lookup', 'parse', 'review', 'unknown']);
 function value(error: unknown, key: string): unknown {
   if (!error || typeof error !== 'object') return undefined;
   try {

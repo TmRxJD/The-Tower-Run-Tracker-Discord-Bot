@@ -2,7 +2,7 @@ import { TransientCache } from '../../../core/transient-cache';
 import { downloadBoundedBuffer } from '../../../core/bounded-download';
 import * as Discord from 'discord.js';
 import { beginPasteDiagnostic, updatePasteDiagnostic } from '../paste-diagnostics';
-import { reportPasteFailure } from './paste-failure-response';
+import { reportPasteFailure, type PasteFailureContext } from './paste-failure-response';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
 import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import {
@@ -1087,12 +1087,13 @@ export async function handleDirectTextPaste(
   preNote: string | null = null,
   defaultRunType: string | null = null,
   mode?: TrackerUiMode,
+  pasteOptions: { source?: 'direct' | 'modal'; context?: PasteFailureContext } = {},
 ) {
   const resolvedMode = mode ?? getTrackerFlowMode(interaction.user.id);
   const uploadUi = getTrackerUiConfig(resolvedMode).uploadFlows;
   const userId = interaction.user.id;
   const username = interaction.user.username;
-  const pasteDiagnosticId = await beginPasteDiagnostic(userId, 'direct', text);
+  const pasteDiagnosticId = await beginPasteDiagnostic(userId, pasteOptions.source ?? 'direct', text);
   let stage: 'parse' | 'history' | 'review' = 'parse';
 
   await interaction.editReply({ embeds: [createLoadingEmbed(uploadUi.processingPaste)], components: [] }).catch(async (err: unknown) => {
@@ -1137,7 +1138,7 @@ export async function handleDirectTextPaste(
     await updatePasteDiagnostic(pasteDiagnosticId, { result: 'review_ready', stage });
     await renderDataReview(interaction, pending.token, pending);
   } catch (err: unknown) {
-    await reportPasteFailure(interaction, err, pasteDiagnosticId, stage, 'direct_text_paste');
+    await reportPasteFailure(interaction, err, pasteDiagnosticId, stage, pasteOptions.context ?? 'direct_text_paste');
   }
 }
 
@@ -1230,7 +1231,6 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
   const ui = getTrackerUiConfig(mode);
   const uploadUi = ui.uploadFlows;
   const userId = interaction.user.id;
-  const username = interaction.user.username;
 
   const Builders = Discord as unknown as BuildersLike;
   if (typeof interaction.showModal !== 'function') {
@@ -1375,43 +1375,11 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
       }
     }
 
-    const handleParsed = async (runData: RunDataLike, attachmentOrNull: NormalizedAttachment | null) => {
-      const processedData = buildProcessedRunDataFromParsed(runData, {
-        preNote,
-        defaultRunType: selectedRunType ?? 'Farming',
-        mode,
-      });
-
-      const pending = await createPendingRunWithMetadata({
-        userId,
-        username,
-        runData: processedData,
-        canonicalRunData: runData,
-        screenshot: attachmentOrNull ? { url: attachmentOrNull.url, name: attachmentOrNull.name, contentType: attachmentOrNull.contentType } : null,
-        defaultRunType: selectedRunType ?? 'Farming',
-      });
-
-      if (mode === 'track' && attachmentOrNull) {
-        void verifyScreenshotMatchesPastedRun(attachmentOrNull, processedData).catch(() => {
-          logger.warn('Tracker screenshot verification failed', {
-          });
-        });
-      }
-
-      await renderDataReview(interaction as unknown as TrackReplyInteractionLike, pending.token, pending);
-    };
-
     if (mode === 'track' && pastedText.trim().length > 0) {
-      await submitted.editReply({ embeds: [createLoadingEmbed(uploadUi.processingPaste)], components: [] }).catch(() => {});
-      try {
-        const runData = toRunDataLike(parseRunDataFromText(pastedText));
-        await handleParsed(runData, normalizedAttachment);
-        return;
-      } catch (err: unknown) {
-        await logError(submitted.client, submitted.user, err, 'add_run_modal_flow');
-        await submitted.editReply({ content: uploadUi.unableParsePasted, embeds: [], components: [] }).catch(() => {});
-        return;
-      }
+      await handleDirectTextPaste(submitted as unknown as TrackReplyInteractionLike,
+        pastedText, normalizedAttachment, preNote, selectedRunType, mode,
+        { source: 'modal', context: 'paste_add_run_modal' });
+      return;
     }
     if (normalizedAttachment) {
       await submitted.editReply({ embeds: [createLoadingEmbed(uploadUi.processingScreenshot)], components: [] }).catch(() => {});

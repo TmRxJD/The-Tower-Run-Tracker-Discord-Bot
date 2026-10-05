@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-05
+
+### Fixed
+- Route Add Run modal pastes through the shared private paste diagnostic, validation, history and review pipeline. Carry modal source and diagnostic reference into pending review; retain bounded redacted local captures and expose no report content through alerts.
+- Emit allowlisted paste operation, parse/history/review stage and failure code in sanitized diagnostics. Preserve error visibility for unrecognized reports and unexpected parser defects; give consistent full-report guidance for validation rejection and separate guidance for internal processing/history failures.
+
 ## 2026-10-03
 
 ### Fixed
