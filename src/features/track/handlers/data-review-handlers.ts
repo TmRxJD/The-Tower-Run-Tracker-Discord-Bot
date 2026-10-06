@@ -1,4 +1,5 @@
 import { updatePasteDiagnostic } from '../paste-diagnostics';
+import { copyKnownHistoryFailure, getKnownHistoryFailure } from '../history-failure-diagnostic';
 import type { MessageComponentInteraction} from 'discord.js';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock, type BotRunOperationContext } from '../run-upload-history';
 import { findPotentialDuplicateRun } from './upload-helpers';
@@ -400,9 +401,15 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
   }
 
   async function reportFailure(error: unknown) {
-    await updatePasteDiagnostic(pending.pasteDiagnosticId, { result: runSaved ? 'saved' : 'failed', stage: 'submit', errorCode: runSaved ? 'presentation_error' : 'internal_error' });
-    const safeError = pending.pasteDiagnosticId ? new Error(`Paste submission failed (reference ${pending.pasteDiagnosticId}).`) : error;
-    await handleError({ client: interaction.client, user: interaction.user, error: safeError, context: 'dataSubmission' });
+    const historyFailure = !runSaved ? getKnownHistoryFailure(error) : undefined;
+    await updatePasteDiagnostic(pending.pasteDiagnosticId, { result: runSaved ? 'saved' : 'failed', stage: 'submit',
+      errorCode: runSaved ? 'presentation_error' : historyFailure ? 'history_unavailable' : 'internal_error',
+      ...(historyFailure ? { historyFailure } : {}) });
+    const wrapper = pending.pasteDiagnosticId ? new Error(`Paste submission failed (reference ${pending.pasteDiagnosticId}).`)
+      : historyFailure ? new Error('Run history could not be verified.') : undefined;
+    const safeError = historyFailure && wrapper ? copyKnownHistoryFailure(error, wrapper) : wrapper ?? error;
+    if (historyFailure && safeError instanceof Error) Object.defineProperty(safeError, 'code', { value: 'history_unavailable', configurable: true });
+    await handleError({ client: interaction.client, user: interaction.user, error: safeError, context: 'dataSubmission', stage: historyFailure ? 'history' : 'submit' });
     const errMsg = pending.pasteDiagnosticId ? `Reference: ${pending.pasteDiagnosticId}` : error instanceof Error ? error.message : 'Unknown error';
     const content = runSaved
       ? `Your run was saved, but the response could not be displayed. Please retry sharing.${pending.pasteDiagnosticId ? ` ${errMsg}` : ''}`

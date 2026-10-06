@@ -13,6 +13,18 @@ export type HistoryFailureDiagnostic = z.infer<typeof historyFailureSchema>;
 export type HistoryFailureStage = HistoryFailureDiagnostic['stage'];
 const metadata = new WeakMap<object, Readonly<HistoryFailureDiagnostic>>();
 
+export function getKnownHistoryFailure(error: unknown): HistoryFailureDiagnostic | undefined {
+  const known = error && typeof error === 'object' ? metadata.get(error) : undefined;
+  return known ? { ...known } : undefined;
+}
+
+/** Carry registered safe metadata through a privacy wrapper without inspecting the source. */
+export function copyKnownHistoryFailure(source: unknown, target: Error): Error {
+  const known = getKnownHistoryFailure(source);
+  if (known) metadata.set(target, Object.freeze(known));
+  return target;
+}
+
 // Never inspect messages, stacks, response bodies or invoke arbitrary property getters.
 function ownData(value: unknown, key: string): unknown {
   if (!value || typeof value !== 'object') return undefined;

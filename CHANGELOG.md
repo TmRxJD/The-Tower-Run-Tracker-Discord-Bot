@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-06
+
+### Fixed
+- Preserve registered, allowlisted history cause, stage and correlation through privacy-safe submission failure wrappers and local operation diagnostics. Classify pre-save history verification failures as history unavailable; retain post-save presentation failures and generic internal failures separately. Do not change history guards, retry behavior, run writes or draft consumption.
+
 ## 2026-10-05
 
 ### Fixed

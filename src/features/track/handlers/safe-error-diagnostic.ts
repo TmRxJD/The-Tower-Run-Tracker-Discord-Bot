@@ -1,13 +1,14 @@
 import { existsSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
+import { getKnownHistoryFailure } from '../history-failure-diagnostic';
 
 const candidateRoot = resolve(__dirname, '../../../..');
 const root = existsSync(resolve(candidateRoot, 'src/features/track/handlers/error-handlers.ts')) ? candidateRoot : resolve(__dirname);
 const types = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'AggregateError', 'DiscordAPIError', 'HTTPError', 'AppwriteException', 'ZodError']);
 const codes = new Set(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ABORT_ERR', 'SQLITE_BUSY', 'SQLITE_FULL', 'SQLITE_IOERR', 'unrecognized_report', 'missing_fields', 'invalid_date', 'history_unavailable', 'internal_error', 'presentation_error']);
-const operations = new Set(['track_menu_sharelast', 'track_menu_log_channel_autoshare', 'share_embed_expand', 'share_embed_battle_report', 'share_embed_track_run', 'direct_text_paste', 'paste_flow_modal', 'paste_add_run_modal']);
-export type DiagnosticStage = 'acknowledge' | 'settings' | 'history' | 'render' | 'snapshot' | 'payload' | 'send' | 'finalize' | 'lookup' | 'parse' | 'review' | 'unknown';
-const stages = new Set<DiagnosticStage>(['acknowledge', 'settings', 'history', 'render', 'snapshot', 'payload', 'send', 'finalize', 'lookup', 'parse', 'review', 'unknown']);
+const operations = new Set(['track_menu_sharelast', 'track_menu_log_channel_autoshare', 'share_embed_expand', 'share_embed_battle_report', 'share_embed_track_run', 'direct_text_paste', 'paste_flow_modal', 'paste_add_run_modal', 'dataSubmission']);
+export type DiagnosticStage = 'acknowledge' | 'settings' | 'history' | 'render' | 'snapshot' | 'payload' | 'send' | 'finalize' | 'lookup' | 'parse' | 'review' | 'submit' | 'unknown';
+const stages = new Set<DiagnosticStage>(['acknowledge', 'settings', 'history', 'render', 'snapshot', 'payload', 'send', 'finalize', 'lookup', 'parse', 'review', 'submit', 'unknown']);
 function value(error: unknown, key: string): unknown {
   if (!error || typeof error !== 'object') return undefined;
   try {
@@ -39,5 +40,7 @@ export function safeErrorDiagnostic(error: unknown, context: string, stage: Diag
       if (frames.length === 6) break;
     }
   }
-  return { exceptionType, code, operation: operations.has(context) ? context : 'other', stage: stages.has(stage) ? stage : 'unknown', frames };
+  const historyFailure = getKnownHistoryFailure(error);
+  return { exceptionType, code, operation: operations.has(context) ? context : 'other', stage: stages.has(stage) ? stage : 'unknown', frames,
+    ...(historyFailure ? { historyFailure } : {}) };
 }

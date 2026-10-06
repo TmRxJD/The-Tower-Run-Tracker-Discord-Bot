@@ -28,3 +28,16 @@ it('does not leak delivery failures into local logs', async () => {
   log.error.mockClear(); await handleError({ client: { channels: { fetch: async () => { throw Error('PRIVATE_DELIVERY_SECRET'); } } }, error: Error('PRIVATE_ERROR_SECRET'), context: 'upload' });
   expect(JSON.stringify(log.error.mock.calls)).not.toContain('PRIVATE_');
 });
+
+it('logs only registered safe history correlation while external alerts remain category-only', async () => {
+  const { historyFailureError, readHistoryFailure } = await import('../history-failure-diagnostic.js');
+  log.error.mockClear(); const send = vi.fn().mockResolvedValue({});
+  const error = historyFailureError('PRIVATE_CLOUD_BODY', 'count_consistency', 'main_page');
+  const historyFailure = readHistoryFailure(error);
+  await handleError({ client: { channels: { fetch: async () => ({ send }) } }, error, context: 'dataSubmission', stage: 'history' });
+  expect(log.error.mock.calls[0][1]).toMatchObject({ operation: 'dataSubmission', stage: 'history', historyFailure });
+  expect(JSON.stringify(log.error.mock.calls)).not.toContain('PRIVATE_CLOUD_BODY');
+  expect(JSON.stringify(send.mock.calls)).not.toContain(historyFailure.correlation);
+  expect(JSON.stringify(send.mock.calls)).not.toContain('main_page');
+});
+

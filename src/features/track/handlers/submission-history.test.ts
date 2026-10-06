@@ -188,3 +188,43 @@ it('does not forward private errors from a deferred submission follow-up to diag
   await vi.waitFor(()=>expect(logMocks.warn).toHaveBeenCalledWith('deferred tracker submission follow-up failed'));
   expect(JSON.stringify(logMocks.warn.mock.calls)).not.toContain('PRIVATE_');
 });
+
+it('preserves pre-save history cause and correlation through the private submission wrapper', async () => {
+  const { historyFailureError, readHistoryFailure } = await import('../history-failure-diagnostic.js');
+  const { handleError } = await import('./error-handlers.js');
+  const { safeErrorDiagnostic } = await import('./safe-error-diagnostic.js');
+  pending.get('a')!.pasteDiagnosticId = 'fixture-reference';
+  const error = historyFailureError('PRIVATE_HISTORY_CONTENT', 'count_consistency', 'main_page');
+  const metadata = readHistoryFailure(error);
+  mocks.history.mockRejectedValueOnce(error);
+  const owner = interaction('a'); await handleDataSubmission(owner as never);
+  expect(mocks.log).not.toHaveBeenCalled(); expect(mocks.edit).not.toHaveBeenCalled();
+  expect(mocks.diagnostic).toHaveBeenCalledWith('fixture-reference', expect.objectContaining({ result: 'failed', stage: 'submit', errorCode: 'history_unavailable', historyFailure: metadata }));
+  const diagnostic = vi.mocked(handleError).mock.calls.at(-1)![0];
+  expect(safeErrorDiagnostic(diagnostic.error, diagnostic.context, diagnostic.stage)).toMatchObject({ operation: 'dataSubmission', stage: 'history', code: 'history_unavailable', historyFailure: metadata });
+  expect(JSON.stringify(owner.editReply.mock.calls)).not.toContain('PRIVATE_HISTORY_CONTENT');
+  expect(JSON.stringify(safeErrorDiagnostic(diagnostic.error, diagnostic.context, diagnostic.stage))).not.toContain('PRIVATE_HISTORY_CONTENT');
+});
+
+it('does not classify an unregistered submission exception as a history failure', async () => {
+  const { handleError } = await import('./error-handlers.js');
+  const { safeErrorDiagnostic } = await import('./safe-error-diagnostic.js');
+  pending.get('a')!.pasteDiagnosticId = 'fixture-reference';
+  mocks.history.mockRejectedValueOnce(Object.assign(new Error('PRIVATE_GENERIC'), { historyFailure: { cause: 'count_consistency', stage: 'main_page', correlation: 'forged' } }));
+  await handleDataSubmission(interaction('a') as never);
+  expect(mocks.diagnostic).toHaveBeenCalledWith('fixture-reference', { result: 'failed', stage: 'submit', errorCode: 'internal_error' });
+  const diagnostic = vi.mocked(handleError).mock.calls.at(-1)![0];
+  expect(safeErrorDiagnostic(diagnostic.error, diagnostic.context, diagnostic.stage)).toMatchObject({ operation: 'dataSubmission', stage: 'submit' });
+  expect(safeErrorDiagnostic(diagnostic.error, diagnostic.context, diagnostic.stage)).not.toHaveProperty('historyFailure');
+});
+it('preserves already-saved classification when presentation throws a registered history error', async () => {
+  const { historyFailureError } = await import('../history-failure-diagnostic.js');
+  pending.get('a')!.pasteDiagnosticId = 'fixture-reference';
+  mocks.render.mockImplementationOnce(() => { throw historyFailureError('PRIVATE_PRESENTATION', 'timeout', 'cloud_history'); });
+  const owner = interaction('a'); await handleDataSubmission(owner as never);
+  expect(mocks.log).toHaveBeenCalledOnce();
+  expect(mocks.diagnostic).toHaveBeenLastCalledWith('fixture-reference', { result: 'saved', stage: 'submit', errorCode: 'presentation_error' });
+  expect(JSON.stringify(owner.editReply.mock.calls)).toContain('run was saved');
+  expect(JSON.stringify(owner.editReply.mock.calls)).not.toContain('PRIVATE_PRESENTATION');
+});
+

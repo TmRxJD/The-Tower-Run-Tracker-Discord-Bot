@@ -35,3 +35,17 @@ describe('allowlisted history failure metadata', () => {
     expect(readHistoryFailure(annotateHistoryFailure('PRIVATE', 'identity')).cause).toBe('unknown');
   });
 });
+
+it('copies only registered history metadata to a privacy wrapper without inspecting getters', async () => {
+  const { copyKnownHistoryFailure, getKnownHistoryFailure } = await import('./history-failure-diagnostic.js');
+  const original = historyFailureError('PRIVATE', 'count_consistency', 'main_page');
+  const copy = copyKnownHistoryFailure(Object.freeze(original), new Error('safe wrapper'));
+  expect(getKnownHistoryFailure(copy)).toEqual(getKnownHistoryFailure(original));
+  const metadata = getKnownHistoryFailure(copy)!; metadata.stage = 'unknown';
+  expect(getKnownHistoryFailure(copy)?.stage).toBe('main_page');
+  const getter = vi.fn(() => { throw Error('PRIVATE_GETTER'); });
+  const forged = Object.defineProperty({}, 'historyFailure', { get: getter });
+  expect(getKnownHistoryFailure(copyKnownHistoryFailure(forged, new Error('safe wrapper')))).toBeUndefined();
+  expect(getter).not.toHaveBeenCalled();
+});
+
