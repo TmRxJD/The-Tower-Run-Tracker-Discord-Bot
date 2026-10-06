@@ -781,6 +781,7 @@ export async function handleTrackMenuShareRunsEdit(interaction: TrackMenuInterac
     }
 
     const pending = await createPendingRun({
+      flowMode: 'track',
       userId: interaction.user.id,
       username: interaction.user.username,
       runData: {
@@ -820,3 +821,4 @@ export async function handleTrackMenuShareRunsCancel(interaction: TrackMenuInter
     await updateOrEdit(interaction, { content: 'Unable to cancel run share.', components: [] });
   }
 }
+

@@ -45,3 +45,13 @@ describe('direct upload history paths', () => {
     expect(mocks.create).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
   });
 });
+it.each(['paste', 'screenshot'])('captures the input flow before asynchronous history finishes: %s', async source => {
+  let finish!: (history: { getRuns: typeof mocks.runs }) => void;
+  mocks.prepare.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const work = source === 'paste'
+    ? handleDirectTextPaste(interaction() as never, 'Battle Report\nTier\t22\nWave\t900\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1', null, null, 'Farming', 'track')
+    : handleDirectAttachment(interaction() as never, { url: 'https://example.invalid/fixture.png', name: 'fixture.png' }, null, 'Farming', 'track');
+  await vi.waitFor(() => expect(mocks.prepare).toHaveBeenCalledOnce());
+  setTrackerFlowMode('fixture-owner', 'lifetime'); finish({ getRuns: mocks.runs }); await work;
+  expect(mocks.create.mock.calls[0][0].flowMode).toBe('track');
+});

@@ -19,7 +19,7 @@ import { resolveBotRunCloudIdentity } from './run-cloud-identity';
 import { isNotFoundAppwriteError } from '../../persistence/appwrite-error-utils';
 import { retireLocalOnlyBackupRun } from '../../rxdb/local-only-backup';
 import { randomUUID } from 'node:crypto';
-import { annotateHistoryFailure, historyFailureError, type HistoryFailureStage } from './history-failure-diagnostic';
+import { annotateHistoryFailure, getKnownHistoryFailure, historyFailureError, type HistoryFailureStage } from './history-failure-diagnostic';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
 
@@ -27,13 +27,29 @@ const RUNS_DATABASE_ID = 'run-tracker-data';
  * Unlike a menu prime, a short page is not evidence of a complete history.
  * Validate before ingestion; an error never becomes an empty account.
  */
-export async function loadBotCompleteRunCloudDocuments(userId: string): Promise<Record<string, unknown>[]> {
+export async function loadBotCompleteRunCloudDocuments(userId: string, options: { signal?: AbortSignal } = {}): Promise<Record<string, unknown>[]> {
   const correlation = randomUUID();
+  const deadline = Date.now() + 45_000;
+  for (let attempt = 0; ; attempt++) {
+    try { return await loadCompleteHistoryAttempt(userId, deadline, correlation, options.signal); }
+    catch (error) {
+      const failure = getKnownHistoryFailure(error);
+      if (attempt !== 0 || failure?.cause !== 'count_consistency'
+        || !['main_page', 'main_count'].includes(failure.stage) || Date.now() >= deadline || options.signal?.aborted) throw error;
+      // Retry the entire verified read, never pages from different observations.
+    }
+  }
+}
+
+async function loadCompleteHistoryAttempt(userId: string, deadline: number, correlation: ReturnType<typeof randomUUID>, signal?: AbortSignal): Promise<Record<string, unknown>[]> {
   let stage: HistoryFailureStage = 'identity';
   const failure = (cause: Parameters<typeof historyFailureError>[1], message: string) => historyFailureError(message, cause, stage, correlation);
   try {
-    const deadline = Date.now() + 45_000;
-    const checkDeadline = () => { if (Date.now() >= deadline) throw failure('timeout', 'Run history lookup timed out. Please retry.'); };
+    const checkDeadline = () => {
+      if (signal?.aborted) throw failure('unknown', 'Run history lookup cancelled.');
+      if (Date.now() >= deadline) throw failure('timeout', 'Run history lookup timed out. Please retry.');
+    };
+    checkDeadline();
     const { databases } = createAppwriteClient();
     const identity = await resolveBotRunCloudIdentity(userId);
     checkDeadline();
@@ -72,6 +88,7 @@ export async function loadBotCompleteRunCloudDocuments(userId: string): Promise<
       }
       // Detect concurrent additions/deletions after the last page, before trusting counts.
       stage = 'main_count';
+      checkDeadline();
       const check = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
         Query.equal('userId', ownerId), Query.limit(1), Query.select(['$id']),
       ]);
@@ -115,6 +132,7 @@ export async function loadBotCompleteRunCloudDocuments(userId: string): Promise<
       }
     }
     stage = 'stitch';
+    checkDeadline();
     return stitchTrackerRunCloudLoadDocuments({ mainDocuments, extendedDocuments }).stitchedDocuments;
   } catch (error) { throw annotateHistoryFailure(error, stage, correlation); }
 }

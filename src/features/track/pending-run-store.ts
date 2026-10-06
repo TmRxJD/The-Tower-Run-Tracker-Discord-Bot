@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { canonicalizeRunData } from '@tmrxjd/platform/tools';
 import { getTrackerKv, setTrackerKv } from '../../services/idb';
 import type { BotProfileOption } from './upload-target-profile';
+import { PENDING_RUN_INACTIVITY_MS, submissionDraftVersion } from './submission-draft';
 
 interface PendingRunRecord {
   token: string;
@@ -18,6 +19,9 @@ interface PendingRunRecord {
   uploadProfileId?: string | null;
   pasteDiagnosticId?: string;
   runSource?: 'paste' | 'ocr' | 'manual' | 'unknown';
+  historyRetryRequired?: boolean;
+  submissionWriteIntent?: boolean;
+  flowMode?: 'track' | 'lifetime';
   createdAt: number;
   lastActivity: number;
 }
@@ -41,7 +45,7 @@ async function persist() {
   await setTrackerKv(STORE_KEY, all);
 }
 
-export async function createPendingRun(input: Omit<PendingRunRecord, 'token' | 'createdAt' | 'lastActivity'>) {
+export async function createPendingRun(input: Omit<PendingRunRecord, 'token' | 'createdAt' | 'lastActivity' | 'flowMode'> & { flowMode: 'track' | 'lifetime' }) {
   await ensureLoaded();
   // Purge stale sessions before creating a new one so abandoned flows don't accumulate.
   await cleanupStalePendingRuns();
@@ -49,6 +53,7 @@ export async function createPendingRun(input: Omit<PendingRunRecord, 'token' | '
   const now = Date.now();
   const record: PendingRunRecord = {
     ...input,
+    flowMode: input.flowMode,
     runData: canonicalizeRunData(input.runData ?? {}),
     canonicalRunData: input.canonicalRunData ? canonicalizeRunData(input.canonicalRunData) : null,
     rawParseFields: input.rawParseFields && typeof input.rawParseFields === 'object' ? { ...input.rawParseFields } : null,
@@ -89,11 +94,38 @@ export async function updatePendingRun(token: string, patch: Partial<PendingRunR
 
 export async function deletePendingRun(token: string) {
   await ensureLoaded();
+  const current = cache!.get(token);
   cache!.delete(token);
-  await persist();
+  try { await persist(); }
+  catch (error) { if (current && !cache!.has(token)) cache!.set(token, current); throw error; }
 }
 
-export async function cleanupStalePendingRuns(maxInactivityMs = 1000 * 60 * 5) {
+/** Persist admission before calling a write, so an uncertain outcome cannot be replayed after restart. */
+export async function markPendingRunWriteIntent(token: string, version: string): Promise<PendingRunRecord | null> {
+  await ensureLoaded();
+  const current = cache!.get(token);
+  if (!current || current.submissionWriteIntent || submissionDraftVersion(current) !== version) return null;
+  const next = { ...current, submissionWriteIntent: true };
+  cache!.set(token, next);
+  try { await persist(); }
+  catch (error) { if (cache!.get(token) === next) cache!.set(token, current); throw error; }
+  return next;
+}
+
+/** Retain only the unchanged draft; do not refresh its original inactivity timestamp. */
+export async function retainPendingRunForHistoryRetry(token: string, version: string): Promise<PendingRunRecord | null> {
+  await ensureLoaded();
+  const current = cache!.get(token);
+  if (!current || submissionDraftVersion(current) !== version) return null;
+  if (current.historyRetryRequired) return current;
+  const next = { ...current, historyRetryRequired: true };
+  cache!.set(token, next);
+  try { await persist(); }
+  catch (error) { if (cache!.get(token) === next) cache!.set(token, current); throw error; }
+  return next;
+}
+
+export async function cleanupStalePendingRuns(maxInactivityMs = PENDING_RUN_INACTIVITY_MS) {
   await ensureLoaded();
   const cutoff = Date.now() - maxInactivityMs;
   let changed = false;

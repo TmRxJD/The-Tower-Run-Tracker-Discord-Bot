@@ -320,10 +320,10 @@ function applyAutoTournament(processedData: RunDataLike, rawTierCandidates: unkn
   }
 }
 
-async function createPendingRunWithMetadata(params: { userId: string; username: string; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null; defaultRunType?: string | null; pasteDiagnosticId?: string }) {
+async function createPendingRunWithMetadata(params: { userId: string; username: string; flowMode: TrackerUiMode; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null; defaultRunType?: string | null; pasteDiagnosticId?: string }) {
   const { userId, username, runData, screenshot, canonicalRunData } = params;
   // Both paste and OCR converge here, before duplicate detection/review.
-  const history = getTrackerFlowMode(userId) === 'lifetime'
+  const history = params.flowMode === 'lifetime'
     ? { getRuns: () => getLocalRuns(userId) }
     : await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { onStage: context.setStage }), 'upload-history');
   let hydratedRunData = { ...runData };
@@ -365,6 +365,7 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
   }
 
   return createPendingRun({
+    flowMode: params.flowMode,
     userId,
     username,
     runData: canonicalizeRunData(hydratedRunData),
@@ -623,6 +624,7 @@ export async function handleDirectAttachment(
       }
 
       const pending = await createPendingRunWithMetadata({
+        flowMode: 'lifetime',
         userId,
         username,
         runData: {
@@ -669,6 +671,7 @@ export async function handleDirectAttachment(
     }
 
     const pending = await createPendingRunWithMetadata({
+      flowMode: resolvedMode,
       userId,
       username,
       runData,
@@ -1007,6 +1010,7 @@ export async function handleTrackMenuEditLast(interaction: MessageComponentInter
         fallbackDocumentId: latest.id,
       }).entryId ?? undefined;
       const pending = await createPendingRunWithMetadata({
+        flowMode: 'lifetime',
         userId: interaction.user.id,
         username: interaction.user.username,
         runData: { ...latest, runId: entryId },
@@ -1025,6 +1029,7 @@ export async function handleTrackMenuEditLast(interaction: MessageComponentInter
     }
 
     const pending = await createPendingRunWithMetadata({
+      flowMode: 'track',
       userId: interaction.user.id,
       username: interaction.user.username,
       runData: { ...summary.lastRun, runId: summary.lastRun.runId },
@@ -1118,6 +1123,7 @@ export async function handleDirectTextPaste(
     logger.info('[paste] report parsed', { userId, reference: pasteDiagnosticId });
 
     const pending = await createPendingRunWithMetadata({
+      flowMode: resolvedMode,
       userId,
       username,
       runData: processedData,
@@ -1209,7 +1215,7 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
         mode,
       });
 
-      const pending = await createPendingRunWithMetadata({ userId, username, runData: processedData, canonicalRunData: runData, pasteDiagnosticId, screenshot: null, defaultRunType: getTrackerInitialRunType(userId) ?? 'Farming' });
+      const pending = await createPendingRunWithMetadata({ flowMode: 'track', userId, username, runData: processedData, canonicalRunData: runData, pasteDiagnosticId, screenshot: null, defaultRunType: getTrackerInitialRunType(userId) ?? 'Farming' });
       stage = 'review';
       await updatePasteDiagnostic(pasteDiagnosticId, { result: 'review_ready', stage });
       await renderDataReview(interaction as unknown as TrackReplyInteractionLike, pending.token, pending);
@@ -1415,3 +1421,4 @@ export const handleManualEditStageOne = manualHandlers.handleManualEditStageOne;
 export const handleManualEditStageTwo = manualHandlers.handleManualEditStageTwo;
 export const handleManualNext = manualHandlers.handleManualNext;
 export const handleManualBackToMenu = manualHandlers.handleManualBackToMenu;
+

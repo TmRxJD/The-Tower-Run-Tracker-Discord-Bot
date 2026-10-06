@@ -3,6 +3,9 @@
 ## 2026-10-06
 
 ### Fixed
+- Retry changing valid main-history totals once from a completely fresh, fully validated read within the original shared 45-second budget. Keep schema, ownership, pagination, profile and final-count guards; never combine partial attempts or retry a write.
+- Retain unchanged reviewed input after known transient pre-dispatch history failures for explicit, versioned owner Retry. Preserve the five-minute inactivity deadline, recheck owner/session/version/profile/flow/cancellation immediately before dispatch, and consume ambiguous write failures instead of offering resubmission.
+- Record each new draft's original flow; preserve unknown-flow drafts until normal expiry and ask for a fresh paste or upload instead of guessing. Stop review mutation after failed acknowledgement, and require owner/session matching for cancellation. No historical replay or analytics retry change.
 - Preserve registered, allowlisted history cause, stage and correlation through privacy-safe submission failure wrappers and local operation diagnostics. Classify pre-save history verification failures as history unavailable; retain post-save presentation failures and generic internal failures separately. Do not change history guards, retry behavior, run writes or draft consumption.
 
 ## 2026-10-05

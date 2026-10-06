@@ -60,6 +60,7 @@ type ManualDeps = {
   createPendingRunWithMetadata: (params: {
     userId: string;
     username: string;
+    flowMode: 'track' | 'lifetime';
     runData: RunDataRecord;
     screenshot?: { url: string; name?: string; contentType?: string } | null;
     canonicalRunData?: RunDataRecord | null;
@@ -290,6 +291,7 @@ export function createManualHandlers(deps: ManualDeps) {
       const mode = getTrackerFlowMode(interaction.user.id);
       await interaction.deferUpdate().catch(() => {});
       const pending = await createPendingRunWithMetadata({
+        flowMode: mode,
         userId: interaction.user.id,
         username: interaction.user.username,
         runData: withManualDefaults({}, mode),

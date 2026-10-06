@@ -37,7 +37,7 @@ describe('complete bot history reads', () => {
     expect(JSON.stringify(readHistoryFailure(error))).not.toContain('PRIVATE');
   });
   it('labels a changed final count distinctly from malformed records', async () => {
-    mocks.list.mockResolvedValueOnce({ total: 1, documents: docs('discord', 1) }).mockResolvedValueOnce({ total: 2, documents: [] });
+    mocks.list.mockResolvedValueOnce({ total: 1, documents: docs('discord', 1) }).mockResolvedValueOnce({ total: 2, documents: [] }).mockResolvedValueOnce({ total: 1, documents: docs('discord', 1) }).mockResolvedValueOnce({ total: 2, documents: [] });
     const error = await loadBotCompleteRunCloudDocuments('discord').catch(error => error);
     expect(readHistoryFailure(error)).toMatchObject({ cause: 'count_consistency', stage: 'main_count' });
   });
@@ -164,7 +164,79 @@ describe('complete bot history reads', () => {
     mocks.list.mockResolvedValue({ total: 1, documents: [{ $id: 42, userId: 'discord' }] });
     await expect(loadBotCompleteRunCloudDocuments('discord')).rejects.toThrow('unreadable');
     mocks.list.mockReset().mockResolvedValueOnce({ total: 1, documents: docs('discord', 1) })
+      .mockResolvedValueOnce({ total: 2, documents: docs('discord', 1) })
+      .mockResolvedValueOnce({ total: 1, documents: docs('discord', 1) })
       .mockResolvedValueOnce({ total: 2, documents: docs('discord', 1) });
     await expect(loadBotCompleteRunCloudDocuments('discord')).rejects.toThrow('changed');
+  });
+});
+
+it.each([102, 100])('investigation: rejects a changed total on a later main page (%i) without fetching extended data', async changedTotal => {
+  mocks.list.mockResolvedValueOnce({ total: 101, documents: docs('discord', 101).slice(0, 100) })
+    .mockResolvedValueOnce({ total: changedTotal, documents: docs('discord', 101).slice(100) }).mockResolvedValueOnce({ total: 101, documents: docs('discord', 101).slice(0, 100) }).mockResolvedValueOnce({ total: changedTotal, documents: docs('discord', 101).slice(100) });
+  const error = await loadBotCompleteRunCloudDocuments('discord').catch(error => error);
+  expect(readHistoryFailure(error)).toMatchObject({ cause: 'count_consistency', stage: 'main_page' });
+  expect(mocks.list).toHaveBeenCalledTimes(4);
+  expect(mocks.get).not.toHaveBeenCalled();
+});
+
+
+describe('one fresh bounded consistency retry', () => {
+  it('discards first attempt rows and starts without its cursor after changing page totals', async () => {
+    const fresh = docs('discord', 2).map((row, i) => ({ ...row, $id: `fresh-${i}` }));
+    mocks.list.mockResolvedValueOnce({ total: 101, documents: docs('discord', 101).slice(0, 100) })
+      .mockResolvedValueOnce({ total: 102, documents: docs('discord', 101).slice(100) })
+      .mockResolvedValueOnce({ total: 2, documents: fresh })
+      .mockResolvedValueOnce({ total: 2, documents: fresh.slice(0, 1) })
+      .mockResolvedValueOnce({ total: 0, documents: [] });
+    const result = await loadBotCompleteRunCloudDocuments('discord');
+    expect(result.map(row => row.$id)).toEqual(['fresh-0', 'fresh-1']);
+    expect(mocks.identity).toHaveBeenCalledTimes(2);
+    expect(mocks.list).toHaveBeenCalledTimes(5);
+    expect(mocks.list.mock.calls[2][2].map((q: string) => JSON.parse(q)).some((q: { method: string }) => q.method === 'cursorAfter')).toBe(false);
+  });
+  it('retries a changed final count from a fresh complete read', async () => {
+    const fresh = [{ ...docs('discord', 1)[0], $id: 'fresh-final' }];
+    mocks.list.mockResolvedValueOnce({ total: 1, documents: docs('discord', 1) })
+      .mockResolvedValueOnce({ total: 2, documents: [] })
+      .mockResolvedValueOnce({ total: 1, documents: fresh })
+      .mockResolvedValueOnce({ total: 1, documents: fresh })
+      .mockResolvedValueOnce({ total: 0, documents: [] });
+    expect((await loadBotCompleteRunCloudDocuments('discord'))[0].$id).toBe('fresh-final');
+    expect(mocks.identity).toHaveBeenCalledTimes(2);
+  });
+  it('does not retry schema, ownership, repeated-page or SDK transport failures', async () => {
+    for (const page of [{ total: 1, documents: [{ $id: 'wrong', userId: 'other' }] }, { total: -1, documents: [] }]) {
+      mocks.list.mockReset().mockResolvedValue(page); mocks.identity.mockClear();
+      await expect(loadBotCompleteRunCloudDocuments('discord')).rejects.toThrow();
+      expect(mocks.identity).toHaveBeenCalledOnce();
+    }
+    mocks.list.mockReset().mockRejectedValue({ code: 'ETIMEDOUT' }); mocks.identity.mockClear();
+    await expect(loadBotCompleteRunCloudDocuments('discord')).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+    expect(mocks.identity).toHaveBeenCalledOnce();
+  });
+  it('cancellation after a changed-total response prevents another attempt', async () => {
+    const cancellation = new AbortController();
+    mocks.list.mockResolvedValueOnce({ total: 101, documents: docs('discord', 101).slice(0, 100) })
+      .mockImplementationOnce(async () => { cancellation.abort(); return { total: 102, documents: docs('discord', 101).slice(100) }; });
+    await expect(loadBotCompleteRunCloudDocuments('discord', { signal: cancellation.signal })).rejects.toThrow('cancelled');
+    expect(mocks.list).toHaveBeenCalledTimes(2); expect(mocks.identity).toHaveBeenCalledOnce();
+  });
+  it('shares the original 45s deadline across retry and starts no request after late completion', async () => {
+    const { withBotHistoryDeadline } = await import('./run-upload-history.js');
+    vi.useFakeTimers();
+    mocks.list.mockResolvedValueOnce({ total: 1, documents: docs('discord', 1) })
+      .mockImplementationOnce(async () => { await new Promise(resolve => setTimeout(resolve, 20_000)); return { total: 2, documents: [] }; })
+      .mockImplementationOnce(async () => { await new Promise(resolve => setTimeout(resolve, 26_000)); return { total: 1, documents: docs('discord', 1) }; });
+    try {
+      const job = loadBotCompleteRunCloudDocuments('discord');
+      const final = job.catch(error => error);
+      const caller = expect(withBotHistoryDeadline(() => job, 45_000)).rejects.toThrow('timed out');
+      await vi.advanceTimersByTimeAsync(45_001); await caller;
+      expect(mocks.list).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(readHistoryFailure(await final)).toMatchObject({ cause: 'timeout', stage: 'main_page' });
+      expect(mocks.list).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
   });
 });

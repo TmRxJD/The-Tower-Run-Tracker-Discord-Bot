@@ -16,7 +16,10 @@ import { applySubmittedReviewEditValues, buildCurrentReviewReplyPayload, buildRe
 import { openNoteModal } from './note-panel-handlers';
 import { submitLifetimePendingRun } from './review-lifetime-submission';
 import { buildCanonicalRunData, buildSubmissionDispatchPlan, buildSubmissionPresentationState, buildSubmitRunData, resolveDuplicateRunInfo, type SubmissionSyncResult } from './review-submission-helpers';
-import { updatePendingRun, deletePendingRun, getPendingRun } from '../pending-run-store';
+import { updatePendingRun, deletePendingRun, getPendingRun, retainPendingRunForHistoryRetry, markPendingRunWriteIntent } from '../pending-run-store';
+import { isOwnedLiveSubmissionDraft, submissionDraftVersion } from '../submission-draft';
+import { toPendingRecord } from '../shared/track-review-records';
+import { buildSubmissionRetryPayload, submissionFlowNotice } from './submission-retry-presentation';
 import { setPendingUploadProfile } from '../upload-target-profile';
 import { TRACKER_IDS, parsePrefixedTrackerToken, parseTrackerToken, withTokenAndField } from '../track-custom-ids';
 import type { TrackReplyInteractionLike } from '../interaction-types';
@@ -158,10 +161,19 @@ export async function handleCancel(interaction: ReviewInteraction) {
   const token = parseTrackerToken(interaction.customId);
   if (token) {
     const pending = await getPendingRun(token);
+    if (!pending || pending.token !== token || pending.userId !== interaction.user.id) {
+      await updateReviewMessage(interaction, reviewUi().messages.sessionExpiredStart);
+      return;
+    }
+    if (!interaction.deferred && !interaction.replied) {
+      try { await component.deferUpdate(); } catch { return; }
+    }
     await updatePasteDiagnostic(pending?.pasteDiagnosticId, { result: 'cancelled', stage: 'review' });
     await deletePendingRun(token);
   }
-  await component.deferUpdate().catch(() => {});
+  if (!interaction.deferred && !interaction.replied) {
+    try { await component.deferUpdate(); } catch { return; }
+  }
   const { renderTrackMenu } = await import('./upload-handlers.js');
   await renderTrackMenu(asTrackReplyInteraction(component));
 }
@@ -181,8 +193,13 @@ export async function handleDataSubmission(interaction: ReviewInteraction) {
 }
 
 async function submitPendingRun(interaction: ReviewInteraction, token: string, pending: PendingRecordLike) {
+  if (pending.userId !== interaction.user.id) return;
+  const requestedVersion = submissionDraftVersion(toPendingRecord(pending));
+  const requestedMode = getTrackerFlowMode(pending.userId);
   // Acknowledge before waiting for another submission/cloud history; avoid Discord expiry.
-  if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate().catch(() => {});
+  if (!interaction.deferred && !interaction.replied) {
+    try { await interaction.deferUpdate(); } catch { return; }
+  }
   // Another Submit may consume this session while Discord acknowledgement is pending.
   if (!await getPendingRun(token)) return;
   await interaction.editReply({ embeds: [createLoadingEmbed(reviewUi().messages.processingSubmission)], components: [] }).catch(() => {});
@@ -191,13 +208,46 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
   const present = await withBotRunSubmissionLock(pending.userId, async context => {
     const current = await getPendingRun(token);
     if (!current) return; // Same Submit button clicked twice while the first write ran.
-    return submitPendingRunLocked(interaction, token, current, context, settingsForDuplicate);
+    if (!isOwnedLiveSubmissionDraft(current, token, interaction.user.id)) {
+      return async () => { await interaction.editReply({ content: reviewUi().messages.sessionExpiredStart, embeds: [], components: [] }).catch(() => {}); };
+    }
+    if (current.submissionWriteIntent) {
+      return async () => { await showCurrentSubmissionReview(interaction, token, ''); };
+    }
+    if (!current.flowMode || current.flowMode !== requestedMode) {
+      return async () => { await interaction.editReply({ content: submissionFlowNotice(current.flowMode), embeds: [], components: [] }).catch(() => {}); };
+    }
+    const parts = interaction.customId?.split(':') ?? [];
+    const clickedVersion = interaction.customId?.startsWith(TRACKER_IDS.review.acceptPrefix) && parts.length === 3 ? parts[2] : undefined;
+    if (requestedVersion !== submissionDraftVersion(toPendingRecord(current)) || requestedMode !== getTrackerFlowMode(current.userId)
+      || (clickedVersion !== undefined && clickedVersion !== submissionDraftVersion(current))
+      || (current.historyRetryRequired && clickedVersion !== submissionDraftVersion(current))) {
+      return async () => { await showCurrentSubmissionReview(interaction, token, 'Review this input and select Retry or Submit again.'); };
+    }
+    return submitPendingRunLocked(interaction, token, structuredClone(current), context, settingsForDuplicate);
   });
   // Preserve delivery order for automatic log-channel updates independently of saves.
   if (present) await withBotRunSubmissionLock(`${pending.userId}:presentation`, present, 'presentation');
 }
 
-async function submitPendingRunLocked(interaction: ReviewInteraction, token: string, pending: PendingRecordLike, context: BotRunOperationContext,
+async function showCurrentSubmissionReview(interaction: ReviewInteraction, token: string, content: string) {
+  const current = await getPendingRun(token);
+  if (!isOwnedLiveSubmissionDraft(current, token, interaction.user.id) || !current) {
+    await interaction.editReply({ content: reviewUi().messages.sessionExpiredStart, embeds: [], components: [] }).catch(() => {});
+    return;
+  }
+  if (current.submissionWriteIntent) {
+    await interaction.editReply({ content: 'This review is already being submitted or its write outcome is uncertain. Check your latest run before starting a fresh review. Its input remains retained until normal session expiry.', embeds: [], components: [] }).catch(() => {});
+    return;
+  }
+  if (!current.flowMode || current.flowMode !== getTrackerFlowMode(current.userId)) {
+    await interaction.editReply({ content: submissionFlowNotice(current.flowMode), embeds: [], components: [] }).catch(() => {});
+    return;
+  }
+  await interaction.editReply({ ...buildSubmissionRetryPayload(token, current), content, files: [] }).catch(() => {});
+}
+
+async function submitPendingRunLocked(interaction: ReviewInteraction, token: string, pending: NonNullable<Awaited<ReturnType<typeof getPendingRun>>>, context: BotRunOperationContext,
   settingsForDuplicate: Awaited<ReturnType<typeof getUserSettings>>) {
   const ui = reviewUi();
   const { userId, username } = pending;
@@ -215,6 +265,25 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
   // flow that never showed a picker) resolves to null = Main.
   // Target is reasserted at dispatch after the complete-history read.
   let runSaved = false;
+  let dispatchStarted = false;
+  let dispatchAdmitted = false;
+  let admissionAttempted = false;
+  const draftVersion = submissionDraftVersion(pending);
+  const draftMode = getTrackerFlowMode(userId);
+  async function draftIsCurrent() {
+    const current = await getPendingRun(token);
+    return isOwnedLiveSubmissionDraft(current, token, interaction.user.id) && current !== null
+      && submissionDraftVersion(current) === draftVersion && getTrackerFlowMode(userId) === draftMode;
+  }
+  async function admitDispatch() {
+    admissionAttempted = true;
+    const admitted = await markPendingRunWriteIntent(token, draftVersion);
+    if (!admitted) return false;
+    dispatchAdmitted = true;
+    const current = await getPendingRun(token);
+    return current !== null && isOwnedLiveSubmissionDraft(current, token, interaction.user.id)
+      && submissionDraftVersion(current) === submissionDraftVersion(admitted) && getTrackerFlowMode(userId) === draftMode;
+  }
 
   try {
     const mergedSourceData = {
@@ -224,7 +293,10 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
 
     const payload = await buildSubmitPayload(userId, username, mergedSourceData, includeType, includeNotes);
     if (isLifetimeMode) {
+      if (!await draftIsCurrent()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
+      if (!await admitDispatch()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
       context.setStage('save');
+      dispatchStarted = true;
       const presentLifetime = await submitLifetimePendingRun({
         interaction,
         pending,
@@ -238,6 +310,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     }
 
     const history = await prepareBotRunUploadHistory(userId, { onStage: context.setStage });
+    if (!await draftIsCurrent()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
     context.setStage('duplicate-check');
     const existingRuns = await history.getRuns();
     let submitRunData = buildSubmitRunData(pending, payload.runData);
@@ -271,8 +344,11 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     });
     const localSummaryBefore = await getLocalRunSummary(userId, existingRuns);
 
+    if (!await draftIsCurrent()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
+    if (!await admitDispatch()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
     if (pending.uploadProfileId !== undefined) setPendingUploadProfile(userId, pending.uploadProfileId);
     context.setStage('save');
+    dispatchStarted = true;
     if (dispatchPlan.operation === 'edit') {
       syncResult = await editRun({
         userId,
@@ -396,12 +472,24 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
       }
     };
   } catch (error) {
-    await deletePendingRun(token);
+    const failure = getKnownHistoryFailure(error);
+    const transientHistory = failure && (['timeout', 'transport', 'busy'].includes(failure.cause)
+      || (failure.cause === 'count_consistency' && ['main_page', 'main_count'].includes(failure.stage))
+      || (failure.cause === 'http_status' && (failure.status === 429 || (failure.status ?? 0) >= 500)));
+    if (!dispatchAdmitted && !dispatchStarted && transientHistory && await draftIsCurrent()) {
+      await retainPendingRunForHistoryRetry(token, draftVersion);
+    } else if (dispatchAdmitted || !admissionAttempted) {
+      const current = await getPendingRun(token);
+      if (current?.token === token && current.userId === interaction.user.id && (dispatchAdmitted || dispatchStarted || submissionDraftVersion(current) === draftVersion)) {
+        // A failed consumption commit leaves the durable intent blocking resubmission.
+        await deletePendingRun(token).catch(() => {});
+      }
+    }
     return async () => { await reportFailure(error); };
   }
 
   async function reportFailure(error: unknown) {
-    const historyFailure = !runSaved ? getKnownHistoryFailure(error) : undefined;
+    const historyFailure = !runSaved && !dispatchAdmitted && !dispatchStarted ? getKnownHistoryFailure(error) : undefined;
     await updatePasteDiagnostic(pending.pasteDiagnosticId, { result: runSaved ? 'saved' : 'failed', stage: 'submit',
       errorCode: runSaved ? 'presentation_error' : historyFailure ? 'history_unavailable' : 'internal_error',
       ...(historyFailure ? { historyFailure } : {}) });
@@ -410,6 +498,17 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     const safeError = historyFailure && wrapper ? copyKnownHistoryFailure(error, wrapper) : wrapper ?? error;
     if (historyFailure && safeError instanceof Error) Object.defineProperty(safeError, 'code', { value: 'history_unavailable', configurable: true });
     await handleError({ client: interaction.client, user: interaction.user, error: safeError, context: 'dataSubmission', stage: historyFailure ? 'history' : 'submit' });
+    if (admissionAttempted && !dispatchAdmitted) {
+      await showCurrentSubmissionReview(interaction, token, 'The submission could not start. Your input is retained until this session expires. Review it and select Submit or Retry again when storage is available.');
+      return;
+    }
+    if (!dispatchStarted) {
+      const current = await getPendingRun(token);
+      if (current?.historyRetryRequired && isOwnedLiveSubmissionDraft(current, token, interaction.user.id)) {
+        await showCurrentSubmissionReview(interaction, token, `History could not be verified. Your reviewed input is retained until this session expires. Select Retry to try again.${pending.pasteDiagnosticId ? ` Reference: ${pending.pasteDiagnosticId}` : ''}`);
+        return;
+      }
+    }
     const errMsg = pending.pasteDiagnosticId ? `Reference: ${pending.pasteDiagnosticId}` : error instanceof Error ? error.message : 'Unknown error';
     const content = runSaved
       ? `Your run was saved, but the response could not be displayed. Please retry sharing.${pending.pasteDiagnosticId ? ` ${errMsg}` : ''}`
