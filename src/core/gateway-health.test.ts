@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() }));
 vi.mock('./logger', () => ({ logger }));
+vi.mock('./gateway-readiness', () => ({ startGatewayReadiness: vi.fn() }));
 
 import { registerGatewayHealthLogging } from './gateway-health';
 

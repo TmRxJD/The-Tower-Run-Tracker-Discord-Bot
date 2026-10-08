@@ -1,3 +1,7 @@
+## 2026-10-08 - Gateway readiness monitoring
+
+- Publish atomic, process-bound gateway readiness every 30 seconds and on lifecycle events. Require all shards ready with recent heartbeat acknowledgements; fresh sessions, resumptions, disconnects and invalidation remain distinguishable without exposing credentials or user data.
+
 # Changelog
 
 ## 2026-10-06

@@ -1,5 +1,6 @@
 import { Events, type Client } from 'discord.js';
 import { logger } from './logger';
+import { startGatewayReadiness } from './gateway-readiness';
 
 /**
  * The gateway library explains every reconnect in a debug line ("Destroying shard / Reason:
@@ -17,6 +18,7 @@ const GATEWAY_CAUSE_PATTERN = /Destroying shard|unexpected code|unknown error|In
  * of these are fatal.
  */
 export function registerGatewayHealthLogging(client: Client, onInvalidated?: () => void): void {
+  startGatewayReadiness(client);
   client.on(Events.ShardDisconnect, (event, shardId) => {
     logger.warn('[gateway] shard disconnected', {
       shardId,
