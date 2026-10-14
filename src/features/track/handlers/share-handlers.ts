@@ -1,3 +1,4 @@
+import { logger } from '../../../core/logger';
 import type { DiagnosticStage } from './safe-error-diagnostic';
 import { logError } from './error-handlers';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
@@ -66,6 +67,13 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
   const mode = getTrackerFlowMode(interaction.user.id);
   const shareUiConfig = getTrackerUiConfig(mode).share;
   let stage: DiagnosticStage = 'acknowledge';
+  const started = performance.now();
+  let stageStarted = started;
+  const stages: Partial<Record<DiagnosticStage, number>> = {};
+  const setStage = (next: DiagnosticStage) => {
+    stages[stage] = (stages[stage] ?? 0) + performance.now() - stageStarted;
+    stage = next; stageStarted = performance.now();
+  };
   let acknowledged = interaction.deferred || interaction.replied;
   try {
     if (!acknowledged) {
@@ -92,7 +100,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     };
 
     const userId = interaction.user.id;
-    stage = 'settings';
+    setStage('settings');
     const settings = await getUserSettings(userId).catch(() => null);
     const includeNotes = settings?.shareNotes !== false;
     const includeCoverage = settings?.shareCoverage !== false;
@@ -123,7 +131,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     let embed: EmbedBuilder | null = null;
 
     if (mode === 'lifetime') {
-      stage = 'history';
+      setStage('history');
       const entries = await getLocalLifetimeData(userId);
       const sorted = [...entries].sort((a, b) => new Date(String(b.date ?? '')).getTime() - new Date(String(a.date ?? '')).getTime());
       const latest = sorted[0];
@@ -132,7 +140,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         return;
       }
 
-      stage = 'render';
+      setStage('render');
       embed = new EmbedBuilder()
         .setAuthor({ name: shareUiConfig.authorTemplate.replace('{username}', resolveInteractionDisplayName(interaction)) })
         .setTitle(shareUiConfig.titleTemplate.replace('{typeCount}', String(Math.max(1, sorted.length))))
@@ -159,20 +167,20 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         throw new Error('Unable to send share embed in this channel.');
       }
       try {
-        stage = 'payload';
+        setStage('payload');
         const payload = await resolveShareEmbedChannelPayload({
           userId,
           embed,
         });
-        stage = 'send';
+        setStage('send');
         await channelForLifetime.send(payload);
       } catch (error) {
         throw error;
       }
-      stage = 'finalize';
+      setStage('finalize');
       await disableShareButtonOnOriginalMessage(interaction);
     } else {
-      stage = 'history';
+      setStage('history');
       const history = await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { readOnly: true, onStage: context.setStage }), 'share-history');
       const verifiedRuns = await history.getRuns();
       const cached = getShareableRun(userId);
@@ -211,7 +219,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         : undefined;
 
       const embedUser = buildEmbedUserFromInteraction(interaction);
-      stage = 'render';
+      setStage('render');
       embed = buildShareEmbed({
         user: embedUser,
         run,
@@ -265,7 +273,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           else embed.setImage('attachment://per-hour-chart.png');
         }
 
-        stage = 'snapshot';
+        setStage('snapshot');
         let shareRunRef = buildShareSnapshotRef(userId, run, runTypeCounts);
         if (shareRunRef) {
           const saved = await saveShareSnapshot({ ref: shareRunRef, userId, run, runTypeCounts, sharerName: embedUser.displayName }).catch(() => false);
@@ -273,7 +281,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         }
 
         try {
-          stage = 'payload';
+          setStage('payload');
           const payload = await resolveShareEmbedChannelPayload({
             userId,
             embed,
@@ -281,13 +289,13 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
             shareRunRef,
             collapsed: compact,
           });
-          stage = 'send';
+          setStage('send');
           await channelWithSend.send(payload);
         } catch (error) {
           throw error;
         }
 
-        stage = 'finalize';
+        setStage('finalize');
       await disableShareButtonOnOriginalMessage(interaction);
       }
       return;
@@ -301,5 +309,11 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     } else if (interaction.reply) {
       await interaction.reply({ content: message, ephemeral: true }).catch(() => {});
     }
+  } finally {
+    setStage(stage);
+    logger.warn('[perf] share.operation', {
+      durationMs: Math.round(performance.now() - started),
+      stages: Object.fromEntries(Object.entries(stages).map(([name, ms]) => [name, Math.round(ms)])),
+    });
   }
 }

@@ -108,35 +108,35 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
       // Drain the current wave on failure before releasing the coalesced history read.
       // Later waves never start after failure, cancellation, or the shared deadline.
       const results = await Promise.allSettled(offsets.slice(wave, wave + COMPLETE_HISTORY_EXTENDED_CONCURRENCY).map(async offset => {
-      const batch = ids.slice(offset, offset + TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE);
-      const requested = new Set(batch);
-      const seen = new Set<string>();
-      let cursor: string | null = null;
-      let expectedTotal: number | null = null;
-      for (;;) {
-        stage = 'extended_page';
-        checkDeadline();
-        const page: Models.DocumentList<Models.Document> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_EXTENDED_COLLECTION_ID, [
-          Query.equal('$id', batch), Query.limit(TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE), Query.orderAsc('$id'),
-          ...(cursor ? [Query.cursorAfter(cursor)] : []),
-        ]);
-        checkDeadline();
-        if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > batch.length
-          || (expectedTotal !== null && expectedTotal !== page.total)) throw failure(!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 ? 'schema' : 'count_consistency', 'Extended run history could not be verified. Please retry.');
-        expectedTotal = page.total;
-        for (const raw of page.documents) {
-          const parsed = parseTrackerRunExtendedDocumentRecord(raw);
-          const id = parsed ? resolveTrackerRunCloudDocumentId(parsed) : null;
-          if (!parsed || !id || !requested.has(id) || seen.has(id)) throw failure(!parsed || !id ? 'schema' : 'pagination', 'Extended run history contains an unreadable or repeated record. Please retry.');
-          const main = documents.get(id)!;
-          if (parsed.userId !== undefined && parsed.userId !== main.userId) throw failure('ownership', 'Extended run history ownership could not be verified. Please retry.');
-          if (parsed.profileId !== undefined && (parsed.profileId || null) !== (main.profileId || null)) throw failure('ownership', 'Extended run history profile could not be verified. Please retry.');
-          seen.add(id); extendedDocuments.push(parsed);
+        const batch = ids.slice(offset, offset + TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE);
+        const requested = new Set(batch);
+        const seen = new Set<string>();
+        let cursor: string | null = null;
+        let expectedTotal: number | null = null;
+        for (;;) {
+          stage = 'extended_page';
+          checkDeadline();
+          const page: Models.DocumentList<Models.Document> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_EXTENDED_COLLECTION_ID, [
+            Query.equal('$id', batch), Query.limit(TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE), Query.orderAsc('$id'),
+            ...(cursor ? [Query.cursorAfter(cursor)] : []),
+          ]);
+          checkDeadline();
+          if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > batch.length
+            || (expectedTotal !== null && expectedTotal !== page.total)) throw failure(!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 ? 'schema' : 'count_consistency', 'Extended run history could not be verified. Please retry.');
+          expectedTotal = page.total;
+          for (const raw of page.documents) {
+            const parsed = parseTrackerRunExtendedDocumentRecord(raw);
+            const id = parsed ? resolveTrackerRunCloudDocumentId(parsed) : null;
+            if (!parsed || !id || !requested.has(id) || seen.has(id)) throw failure(!parsed || !id ? 'schema' : 'pagination', 'Extended run history contains an unreadable or repeated record. Please retry.');
+            const main = documents.get(id)!;
+            if (parsed.userId !== undefined && parsed.userId !== main.userId) throw failure('ownership', 'Extended run history ownership could not be verified. Please retry.');
+            if (parsed.profileId !== undefined && (parsed.profileId || null) !== (main.profileId || null)) throw failure('ownership', 'Extended run history profile could not be verified. Please retry.');
+            seen.add(id); extendedDocuments.push(parsed);
+          }
+          if (seen.size === expectedTotal) break;
+          if (!page.documents.length || seen.size > expectedTotal) throw failure('pagination', 'Extended run history is incomplete. Please retry.');
+          cursor = page.documents[page.documents.length - 1].$id;
         }
-        if (seen.size === expectedTotal) break;
-        if (!page.documents.length || seen.size > expectedTotal) throw failure('pagination', 'Extended run history is incomplete. Please retry.');
-        cursor = page.documents[page.documents.length - 1].$id;
-      }
       }));
       const failed = results.find(result => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;

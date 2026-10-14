@@ -1,3 +1,8 @@
+## 2026-10-14 - Consistent coverage comparisons and review reads
+
+- Exclude the selected run from every comparison metric, fixing self-comparisons that displayed +0.00%. Use the same rolling-window fallback for BH/orbs as other metrics, retaining only compatible effect-active counts. Omit an unavailable relative-change annotation consistently, including zero baselines; explicit current zero coverage remains 0%.
+- Build upload reviews from the verified read-only history view instead of rewriting every historical local record. Submission still revalidates fresh history inside its existing mutation lock; no completed cloud snapshot is reused across interactions.
+
 ## 2026-10-14 - Reduce verified history latency
 
 - Increase complete-history main pages to 500 and fetch extended pages in bounded waves of four. Preserve complete pagination, final-count, schema, ownership, profile, deadline and retry checks; drain a failed wave before releasing the read. Read-only playground measurement on 1,360 runs fell from 24.4s to 9.6s, with identical run count.

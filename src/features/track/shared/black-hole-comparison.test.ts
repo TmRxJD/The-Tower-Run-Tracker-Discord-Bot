@@ -27,28 +27,28 @@ describe('patched corrected Black Hole comparisons', () => {
     const { result } = compare([run('a', 1, { killsWithBlackHole: '600' }), run('b', 2, { killsWithBlackHole: '800' })]);
     expect(result.baseline[key]).toBe(70);
   });
-  it('does not use out-of-window Black Hole fallback while preserving other fallback metrics', () => {
+  it('uses the same out-of-window Black Hole fallback fallback as other metrics', () => {
     const { result, annotation } = compare([run('outside', 48, { killsWithBlackHole: '800', coins: '200' })]);
-    expect(result.baseline[key]).toBeUndefined();
+    expect(result.baseline[key]).toBe(80);
     expect(result.baseline.coins).toBe(200);
-    expect(annotation).toBe('(comparison unavailable)');
+    expect(annotation).toBe('(+5.00%)');
   });
   it('Last Run never skips an incompatible prior run', () => {
-    expect(compare([run('previous', 1, { enemiesHitByBlackHole: '500' }), run('older', 2, { killsWithBlackHole: '800' })], 'last').annotation).toBe('(comparison unavailable)');
+    expect(compare([run('previous', 1, { enemiesHitByBlackHole: '500' }), run('older', 2, { killsWithBlackHole: '800' })], 'last').annotation).toBe('');
     expect(compare([run('previous', 1, { killsWithBlackHole: '800' })], 'last').annotation).toBe('(+5.00%)');
   });
   it('uses only explicitly parsed raw kills and ignores obsolete stored percentages', () => {
     const { annotation } = compare([run('raw', 1, { rawParseFields: { killsWithBlackHole: '800' }, destroyedByBlackHolePercentage: 20 })]);
     expect(annotation).toBe('(+5.00%)');
-    expect(compare([run('hits', 1, { rawParseFields: { enemiesHitByBlackHole: '800' } })]).annotation).toBe('(comparison unavailable)');
+    expect(compare([run('hits', 1, { rawParseFields: { enemiesHitByBlackHole: '800' } })]).annotation).toBe('');
   });
   it('preserves zeros and refuses undefined relative comparisons', () => {
-    expect(compare([run('zero', 1, { killsWithBlackHole: '0', enemiesHitByBlackHole: '900' })]).annotation).toContain('zero baseline');
+    expect(compare([run('zero', 1, { killsWithBlackHole: '0', enemiesHitByBlackHole: '900' })]).annotation).toBe('');
     expect(compare([run('previous', 1, { killsWithBlackHole: '800' })], 'last', run('current', 0, { killsWithBlackHole: '0' })).annotation).toBe('(-100.00%)');
   });
   it('missing, empty and legacy counts never become corrected zeros', () => {
     for (const extra of [{}, { killsWithBlackHole: '' }, { enemiesHitByBlackHole: '840' }]) {
-      expect(compare([run('previous', 1, { killsWithBlackHole: '800' })], 'last', run('current', 0, extra)).annotation).toBe('(comparison unavailable)');
+      expect(compare([run('previous', 1, { killsWithBlackHole: '800' })], 'last', run('current', 0, extra)).annotation).toBe('');
     }
   });
   it('renders the comparison beside Black Hole including raw-count and zero cases', () => {
@@ -75,7 +75,7 @@ it('table/chart values recover only explicit raw corrected fields and preserve z
   expect(buildTrackerRunTableColumnValue(run('raw', 0, { rawParseFields: { killsWithBlackHole: '840', totalEnemies: '1000' }, destroyedByBlackHolePercentage: 10 }), 'Black Hole')).toBe('84%');
   expect(buildTrackerRunTableColumnValue(run('zero', 0, { killsWithBlackHole: '0', enemiesHitByBlackHole: '900', destroyedByBlackHolePercentage: 90 }), 'Black Hole')).toBe('0%');
   expect(buildTrackerRunTableColumnValue(run('invalid', 0, { killsWithBlackHole: '0', totalEnemies: '0', destroyedByBlackHolePercentage: 90 }), 'Black Hole')).toBe('N/A');
-  expect(compare([run('weapon', 1, { destroyedByBlackHole: '800' })]).annotation).toBe('(comparison unavailable)');
+  expect(compare([run('weapon', 1, { destroyedByBlackHole: '800' })]).annotation).toBe('');
 });
 it.each(['1day', '3day', '7day', 'last'] as const)('chart delta cells use compatible Black Hole references for %s', mode => {
   vi.spyOn(Date, 'now').mockReturnValue(now);
@@ -86,11 +86,19 @@ it.each(['1day', '3day', '7day', 'last'] as const)('chart delta cells use compat
   expect(cells.get(buildTrackerRunDeltaCellKey('current', key))?.annotation).toBe(mode === 'last' ? '(+5.00%)' : '(+2.44%)');
 });
 
-it('selected-run Black Hole references leave existing other-metric selection unchanged', () => {
+it('selected-run Black Hole references exclude the selected run from every metric', () => {
   vi.spyOn(Date, 'now').mockReturnValue(now);
   const previous = run('previous', 1, { killsWithBlackHole: '800', coins: '200' });
   const result = computeTrackerRunDeltaBaseline([current, previous], 'Farming', 'last', undefined, current);
-  expect(result.baseline.coins).toBe(100);
+  expect(result.baseline.coins).toBe(200);
   expect(result.baseline.destroyedByBlackHolePercentage).toBe(80);
   expect(getDeltaAnnotationForStat(current, key, result.baseline, result.coverageBasis)).toBe('(+5.00%)');
+});
+
+it.each(['last', '1day', '3day', '7day'] as const)('never compares a selected run to itself in %s', mode => {
+  vi.spyOn(Date, 'now').mockReturnValue(now);
+  const result = computeTrackerRunDeltaBaseline([current], 'Farming', mode, undefined, current);
+  expect(result.baseline).toEqual({});
+  expect(getDeltaAnnotationForStat(current, 'coins', result.baseline, result.coverageBasis)).toBe('');
+  expect(getDeltaAnnotationForStat(current, key, result.baseline, result.coverageBasis)).toBe('');
 });

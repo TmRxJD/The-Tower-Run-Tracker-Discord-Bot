@@ -25,28 +25,28 @@ describe('patched corrected Orbs comparisons', () => {
     const { result } = compare([run('a', 1, { killsWithOrbs: '600' }), run('b', 2, { killsWithOrbs: '800' })]);
     expect(result.baseline[key]).toBe(70);
   });
-  it('does not use out-of-window Orbs fallback while preserving other fallback metrics', () => {
+  it('uses the same out-of-window Orbs fallback fallback as other metrics', () => {
     const { result, annotation } = compare([run('outside', 48, { killsWithOrbs: '800', coins: '200' })]);
-    expect(result.baseline[key]).toBeUndefined();
+    expect(result.baseline[key]).toBe(80);
     expect(result.baseline.coins).toBe(200);
-    expect(annotation).toBe('(comparison unavailable)');
+    expect(annotation).toBe('(+5.00%)');
   });
   it('Last Run never skips an incompatible prior run', () => {
-    expect(compare([run('previous', 1, { enemiesHitByOrbs: '500' }), run('older', 2, { killsWithOrbs: '800' })], 'last').annotation).toBe('(comparison unavailable)');
+    expect(compare([run('previous', 1, { enemiesHitByOrbs: '500' }), run('older', 2, { killsWithOrbs: '800' })], 'last').annotation).toBe('');
     expect(compare([run('previous', 1, { killsWithOrbs: '800' })], 'last').annotation).toBe('(+5.00%)');
   });
   it('uses only explicitly parsed raw kills and ignores obsolete stored percentages', () => {
     const { annotation } = compare([run('raw', 1, { rawParseFields: { killsWithOrbs: '800' }, hitByOrbsPercentage: 20 })]);
     expect(annotation).toBe('(+5.00%)');
-    expect(compare([run('hits', 1, { rawParseFields: { enemiesHitByOrbs: '800' } })]).annotation).toBe('(comparison unavailable)');
+    expect(compare([run('hits', 1, { rawParseFields: { enemiesHitByOrbs: '800' } })]).annotation).toBe('');
   });
   it('preserves zeros and refuses undefined relative comparisons', () => {
-    expect(compare([run('zero', 1, { killsWithOrbs: '0', enemiesHitByOrbs: '900' })]).annotation).toContain('zero baseline');
+    expect(compare([run('zero', 1, { killsWithOrbs: '0', enemiesHitByOrbs: '900' })]).annotation).toBe('');
     expect(compare([run('previous', 1, { killsWithOrbs: '800' })], 'last', run('current', 0, { killsWithOrbs: '0' })).annotation).toBe('(-100.00%)');
   });
   it('missing, empty and legacy counts never become corrected zeros', () => {
     for (const extra of [{}, { killsWithOrbs: '' }, { enemiesHitByOrbs: '840' }]) {
-      expect(compare([run('previous', 1, { killsWithOrbs: '800' })], 'last', run('current', 0, extra)).annotation).toBe('(comparison unavailable)');
+      expect(compare([run('previous', 1, { killsWithOrbs: '800' })], 'last', run('current', 0, extra)).annotation).toBe('');
     }
   });
   it('renders the comparison beside Orbs including raw-count and zero cases', () => {
@@ -58,11 +58,11 @@ describe('patched corrected Orbs comparisons', () => {
   });
 });
 
-it('selected-run Orbs references leave existing other-metric selection unchanged', () => {
+it('selected-run Orbs references exclude the selected run from every metric', () => {
   vi.spyOn(Date, 'now').mockReturnValue(now);
   const previous = run('previous', 1, { killsWithOrbs: '800', coins: '200' });
   const result = computeTrackerRunDeltaBaseline([current, previous], 'Farming', 'last', undefined, current);
-  expect(result.baseline.coins).toBe(100);
+  expect(result.baseline.coins).toBe(200);
   expect(result.baseline.hitByOrbsPercentage).toBe(80);
   expect(getDeltaAnnotationForStat(current, key, result.baseline, result.coverageBasis)).toBe('(+5.00%)');
 });

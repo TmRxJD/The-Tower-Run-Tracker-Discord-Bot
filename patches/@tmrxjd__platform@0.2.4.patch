@@ -1,164 +1,17 @@
-diff --git a/dist/tools/tracker-run-delta.d.ts b/dist/tools/tracker-run-delta.d.ts
-index c66e5e4d93ba03935bb4de02e489412d638e5d10..0a5d7ce72f7a3611b76b4d241959f2cc64bf8d26 100644
---- a/dist/tools/tracker-run-delta.d.ts
-+++ b/dist/tools/tracker-run-delta.d.ts
-@@ -37,7 +37,7 @@ export type TrackerRunDeltaResult = {
-  * For 'last' mode: the most recent run before the current one.
-  * The `currentRunId` is excluded from the reference pool.
-  */
--export declare function computeTrackerRunDeltaBaseline(runs: Record<string, unknown>[], runType: string, mode: RunDeltaMode, currentRunId?: string): TrackerRunDeltaResult;
-+export declare function computeTrackerRunDeltaBaseline(runs: Record<string, unknown>[], runType: string, mode: RunDeltaMode, currentRunId?: string, orbsCurrentRun?: Record<string, unknown>): TrackerRunDeltaResult;
- export type TrackerRunDeltaCellEntry = {
-     sign: DeltaSign;
-     annotation: string;
-diff --git a/dist/tools/tracker-run-delta.js b/dist/tools/tracker-run-delta.js
-index 542df7d..7d1b06e 100644
---- a/dist/tools/tracker-run-delta.js
-+++ b/dist/tools/tracker-run-delta.js
-@@ -192,7 +192,18 @@ const COVERAGE_DELTA_BASIS_SOURCES = {
-  * Which battle-report row a run's coverage percentage came from, or null for stats that
-  * have only ever had one source.
-  */
-+function correctedCoverageCount(run, key) {
-+    const source = key === 'destroyedByBlackHolePercentage' ? 'killsWithBlackHole' : 'killsWithOrbs';
-+    return parseNumericStat(run[source], true) ?? parseNumericStat(run.rawParseFields?.[source], true);
-+}
-+function isCorrectedCoverageKey(key) { return key === 'hitByOrbsPercentage' || key === 'destroyedByBlackHolePercentage'; }
-+function correctedCoveragePercentage(run, key = 'hitByOrbsPercentage') {
-+    const count = correctedCoverageCount(run, key);
-+    const total = parseNumericStat(run.totalEnemies) ?? parseNumericStat(run.rawParseFields?.totalEnemies);
-+    return count !== null && count >= 0 && total !== null && total > 0 ? count / total * 100 : null;
-+}
- function resolveCoverageDeltaBasis(run, key) {
-+    if (isCorrectedCoverageKey(key) && correctedCoveragePercentage(run, key) !== null) return 'kills';
-     const sources = COVERAGE_DELTA_BASIS_SOURCES[key];
-     if (!sources)
-         return null;
-@@ -222,16 +233,16 @@ function parseDurationToHours(run) {
-         return (parts[0] * 60 + parts[1]) / 3600;
-     return null;
- }
--function parseNumericStat(value) {
-+function parseNumericStat(value, allowZero = false) {
-     const raw = String(value ?? '').trim();
--    if (!raw || raw === 'N/A' || raw === '0')
-+    if (!raw || raw === 'N/A' || (!allowZero && raw === '0'))
-         return null;
-     const normalized = (0, formatting_1.normalizeNumericValue)(raw);
-     if (!normalized)
-         return null;
-     const { value: parsed, unit } = (0, formatting_1.parseValueWithUnit)(normalized);
-     const num = (0, formatting_1.convertToNumericValue)(parsed, unit);
--    return Number.isFinite(num) && num > 0 ? num : null;
-+    return Number.isFinite(num) && (num > 0 || (allowZero && num === 0)) ? num : null;
- }
- function resolveRunTimestamp(run) {
-     const dateStr = String(run.date ?? run.runDate ?? '').trim();
-@@ -469,6 +480,8 @@ function readStatFromRun(run, key) {
-             return raw !== null ? (raw / tot) * 100 : null;
-         }
-         case 'destroyedByBlackHolePercentage': {
-+            const corrected = correctedCoveragePercentage(run, key);
-+            if (corrected !== null) return corrected;
-             const stored = parseNumericStat(run.destroyedByBlackHolePercentage);
-             if (stored !== null)
-                 return stored;
-@@ -499,6 +512,8 @@ function readStatFromRun(run, key) {
-             return raw !== null ? (raw / tot) * 100 : null;
-         }
-         case 'hitByOrbsPercentage': {
-+            const corrected = correctedCoveragePercentage(run, key);
-+            if (corrected !== null) return corrected;
-             const stored = parseNumericStat(run.hitByOrbsPercentage);
-             if (stored !== null)
-                 return stored;
-@@ -547,7 +562,7 @@ function readStatFromRun(run, key) {
-  * For 'last' mode: the most recent run before the current one.
-  * The `currentRunId` is excluded from the reference pool.
-  */
--function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
-+function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId, orbsCurrentRun) {
-     if (mode === 'disabled') {
-         return { mode, baseline: {}, comparisonLabel: '' };
-     }
-@@ -588,7 +603,14 @@ function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
-     if (referenceRuns.length === 0) {
-         return { mode, baseline: {}, comparisonLabel: mode === '7day' ? 'vs 7-Day Avg' : 'vs Last Run' };
-     }
--    const { baseline, coverageBasis } = buildTrackerRunDeltaBaselineWithBasis(referenceRuns);
-+    // The optional selected run changes only corrected Orbs/Black Hole references, preserving all other metric pools.
-+    const orbsCandidates = orbsCurrentRun && mode === 'last'
-+        ? sorted.filter(r => resolveRunTimestamp(r) < resolveRunTimestamp(orbsCurrentRun)).slice(0, 1)
-+        : referenceRuns;
-+    const orbsReferences = mode === 'last' ? orbsCandidates : orbsCandidates.filter(r =>
-+        (!orbsCurrentRun || !resolveRunId(orbsCurrentRun) || resolveRunId(r) !== resolveRunId(orbsCurrentRun)) &&
-+        resolveRunTimestamp(r) >= now - (mode === '1day' ? ONE_DAY_MS : mode === '3day' ? THREE_DAYS_MS : SEVEN_DAYS_MS));
-+    const { baseline, coverageBasis } = buildTrackerRunDeltaBaselineWithBasis(referenceRuns, orbsReferences);
-     return {
-         mode,
-         baseline,
-@@ -596,12 +618,13 @@ function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
-         comparisonLabel: mode === '1day' ? 'vs 1-Day Avg' : mode === '3day' ? 'vs 3-Day Avg' : mode === '7day' ? 'vs 7-Day Avg' : 'vs Last Run',
-     };
- }
--function buildTrackerRunDeltaBaselineWithBasis(referenceRuns) {
-+function buildTrackerRunDeltaBaselineWithBasis(referenceRuns, orbsReferences = referenceRuns) {
-     const baseline = {};
-     const coverageBasis = {};
-     for (const key of exports.TRACKER_DELTA_STAT_KEYS) {
--        const contributing = referenceRuns
--            .map(r => ({ run: r, value: readStatFromRun(r, key) }))
-+        const selected = isCorrectedCoverageKey(key) ? orbsReferences : referenceRuns;
-+        const contributing = selected
-+            .map(r => ({ run: r, value: isCorrectedCoverageKey(key) ? correctedCoveragePercentage(r, key) : readStatFromRun(r, key) }))
-             .filter((entry) => entry.value !== null);
-         if (contributing.length === 0)
-             continue;
-@@ -650,7 +673,9 @@ function buildRollingBaselinesByType(runs, mode) {
-         const referenceRuns = resolveRollingReferenceRuns(sorted, mode);
-         if (referenceRuns.length === 0)
-             continue;
--        baselines.set(typeKey, buildTrackerRunDeltaBaselineWithBasis(referenceRuns));
-+        const windowMs = mode === '1day' ? ONE_DAY_MS : mode === '3day' ? THREE_DAYS_MS : SEVEN_DAYS_MS;
-+        const orbsReferences = referenceRuns.filter(r => resolveRunTimestamp(r) >= Date.now() - windowMs);
-+        baselines.set(typeKey, buildTrackerRunDeltaBaselineWithBasis(referenceRuns, orbsReferences));
-     }
-     return baselines;
- }
-@@ -750,6 +775,14 @@ function formatDeltaAnnotation(delta) {
-  * Compute and format the delta annotation for a given stat key using a run and a baseline.
-  */
- function getDeltaAnnotationForStat(run, key, baseline, coverageBasis) {
-+    if (isCorrectedCoverageKey(key)) {
-+        const current = correctedCoveragePercentage(run, key);
-+        const reference = baseline[key];
-+        if (current === null || coverageBasis?.[key] !== 'kills' || !Number.isFinite(reference))
-+            return '(comparison unavailable)';
-+        if (reference === 0) return '(comparison unavailable: zero baseline)';
-+        return formatDeltaAnnotation(computeStatDelta(current, reference));
-+    }
-     if (coverageBasis) {
-         const referenceBasis = coverageBasis[key];
-         const currentBasis = resolveCoverageDeltaBasis(run, key);
-@@ -802,3 +835,4 @@ exports.TRACKER_STAT_EMBED_COLORS = {
-     utility: 0x66BB6A, // Green
-     default: 0x3b82f6, // Blue
- };
-+
-diff --git a/dist/tools/tracker-run-cloud-pair.js b/dist/tools/tracker-run-cloud-pair.js
-index f9a20c1..8ff8d3c 100644
---- a/dist/tools/tracker-run-cloud-pair.js
-+++ b/dist/tools/tracker-run-cloud-pair.js
-@@ -201,7 +201,8 @@ async function writeTrackerRunCloudDocumentPair(input) {
-             ? existingProfileId.trim()
-             : null;
-     }
--    catch {
-+    catch (error) {
-+        if (!(0, cloud_save_pipeline_1.isDocumentNotFoundError)(error)) throw error;
-         // Not found → this is a new run → it takes the requested profileId.
-     }
-     const mainPayload = {
+diff --git a/dist/tools/tracker-cloud-schemas.d.ts b/dist/tools/tracker-cloud-schemas.d.ts
+index 2f27dbd..5bfb80b 100644
+--- a/dist/tools/tracker-cloud-schemas.d.ts
++++ b/dist/tools/tracker-cloud-schemas.d.ts
+@@ -289,3 +289,9 @@ export declare function buildTrackerRunCloudWritePayload(input: {
+     screenshotUrl?: string | null;
+ }): TrackerRunCloudWrite;
+ export declare function parseTrackerLifetimeCloudWrite(input: Record<string, unknown>): TrackerLifetimeCloudWrite;
++/** Validate a new submission before applying storage defaults; never use for historical reads. */
++export declare function assertTrackerRunSubmission(input: Record<string, unknown>): void;
++/** Return a finite, nonnegative metric or null for missing/invalid/unsupported notation. */
++export declare function readTrackerMetricValue(value: unknown): number | null;
++/** An explicit total or all four valid components; incomplete totals remain unavailable. */
++export declare function readTrackerModuleShardsTotal(run: Record<string, unknown>): number | null;
 diff --git a/dist/tools/tracker-cloud-schemas.js b/dist/tools/tracker-cloud-schemas.js
 index 335d29d..13d6574 100644
 --- a/dist/tools/tracker-cloud-schemas.js
@@ -218,20 +71,20 @@ index 335d29d..13d6574 100644
  const trackerAppwriteDocumentSystemShape = {
      $id: zod_1.z.string().optional(),
      $collectionId: zod_1.z.string().optional(),
-diff --git a/dist/tools/tracker-cloud-schemas.d.ts b/dist/tools/tracker-cloud-schemas.d.ts
-index 2f27dbd..5bfb80b 100644
---- a/dist/tools/tracker-cloud-schemas.d.ts
-+++ b/dist/tools/tracker-cloud-schemas.d.ts
-@@ -289,3 +289,9 @@ export declare function buildTrackerRunCloudWritePayload(input: {
-     screenshotUrl?: string | null;
- }): TrackerRunCloudWrite;
- export declare function parseTrackerLifetimeCloudWrite(input: Record<string, unknown>): TrackerLifetimeCloudWrite;
-+/** Validate a new submission before applying storage defaults; never use for historical reads. */
-+export declare function assertTrackerRunSubmission(input: Record<string, unknown>): void;
-+/** Return a finite, nonnegative metric or null for missing/invalid/unsupported notation. */
-+export declare function readTrackerMetricValue(value: unknown): number | null;
-+/** An explicit total or all four valid components; incomplete totals remain unavailable. */
-+export declare function readTrackerModuleShardsTotal(run: Record<string, unknown>): number | null;
+diff --git a/dist/tools/tracker-run-cloud-pair.js b/dist/tools/tracker-run-cloud-pair.js
+index f9a20c1..8ff8d3c 100644
+--- a/dist/tools/tracker-run-cloud-pair.js
++++ b/dist/tools/tracker-run-cloud-pair.js
+@@ -201,7 +201,8 @@ async function writeTrackerRunCloudDocumentPair(input) {
+             ? existingProfileId.trim()
+             : null;
+     }
+-    catch {
++    catch (error) {
++        if (!(0, cloud_save_pipeline_1.isDocumentNotFoundError)(error)) throw error;
+         // Not found → this is a new run → it takes the requested profileId.
+     }
+     const mainPayload = {
 diff --git a/dist/tools/tracker-run-collection-split.js b/dist/tools/tracker-run-collection-split.js
 index 98b7536..6b9bda9 100644
 --- a/dist/tools/tracker-run-collection-split.js
@@ -278,6 +131,165 @@ index 98b7536..6b9bda9 100644
      });
  }
  function resolveTrackerRunUpdatedAtEpoch(value) {
+diff --git a/dist/tools/tracker-run-delta.d.ts b/dist/tools/tracker-run-delta.d.ts
+index c66e5e4..f8173b5 100644
+--- a/dist/tools/tracker-run-delta.d.ts
++++ b/dist/tools/tracker-run-delta.d.ts
+@@ -37,7 +37,7 @@ export type TrackerRunDeltaResult = {
+  * For 'last' mode: the most recent run before the current one.
+  * The `currentRunId` is excluded from the reference pool.
+  */
+-export declare function computeTrackerRunDeltaBaseline(runs: Record<string, unknown>[], runType: string, mode: RunDeltaMode, currentRunId?: string): TrackerRunDeltaResult;
++export declare function computeTrackerRunDeltaBaseline(runs: Record<string, unknown>[], runType: string, mode: RunDeltaMode, currentRunId?: string, selectedRun?: Record<string, unknown>): TrackerRunDeltaResult;
+ export type TrackerRunDeltaCellEntry = {
+     sign: DeltaSign;
+     annotation: string;
+diff --git a/dist/tools/tracker-run-delta.js b/dist/tools/tracker-run-delta.js
+index 542df7d..cf9cd20 100644
+--- a/dist/tools/tracker-run-delta.js
++++ b/dist/tools/tracker-run-delta.js
+@@ -192,7 +192,18 @@ const COVERAGE_DELTA_BASIS_SOURCES = {
+  * Which battle-report row a run's coverage percentage came from, or null for stats that
+  * have only ever had one source.
+  */
++function correctedCoverageCount(run, key) {
++    const source = key === 'destroyedByBlackHolePercentage' ? 'killsWithBlackHole' : 'killsWithOrbs';
++    return parseNumericStat(run[source], true) ?? parseNumericStat(run.rawParseFields?.[source], true);
++}
++function isCorrectedCoverageKey(key) { return key === 'hitByOrbsPercentage' || key === 'destroyedByBlackHolePercentage'; }
++function correctedCoveragePercentage(run, key = 'hitByOrbsPercentage') {
++    const count = correctedCoverageCount(run, key);
++    const total = parseNumericStat(run.totalEnemies) ?? parseNumericStat(run.rawParseFields?.totalEnemies);
++    return count !== null && count >= 0 && total !== null && total > 0 ? count / total * 100 : null;
++}
+ function resolveCoverageDeltaBasis(run, key) {
++    if (isCorrectedCoverageKey(key) && correctedCoveragePercentage(run, key) !== null) return 'kills';
+     const sources = COVERAGE_DELTA_BASIS_SOURCES[key];
+     if (!sources)
+         return null;
+@@ -222,16 +233,16 @@ function parseDurationToHours(run) {
+         return (parts[0] * 60 + parts[1]) / 3600;
+     return null;
+ }
+-function parseNumericStat(value) {
++function parseNumericStat(value, allowZero = false) {
+     const raw = String(value ?? '').trim();
+-    if (!raw || raw === 'N/A' || raw === '0')
++    if (!raw || raw === 'N/A' || (!allowZero && raw === '0'))
+         return null;
+     const normalized = (0, formatting_1.normalizeNumericValue)(raw);
+     if (!normalized)
+         return null;
+     const { value: parsed, unit } = (0, formatting_1.parseValueWithUnit)(normalized);
+     const num = (0, formatting_1.convertToNumericValue)(parsed, unit);
+-    return Number.isFinite(num) && num > 0 ? num : null;
++    return Number.isFinite(num) && (num > 0 || (allowZero && num === 0)) ? num : null;
+ }
+ function resolveRunTimestamp(run) {
+     const dateStr = String(run.date ?? run.runDate ?? '').trim();
+@@ -469,6 +480,8 @@ function readStatFromRun(run, key) {
+             return raw !== null ? (raw / tot) * 100 : null;
+         }
+         case 'destroyedByBlackHolePercentage': {
++            const corrected = correctedCoveragePercentage(run, key);
++            if (corrected !== null) return corrected;
+             const stored = parseNumericStat(run.destroyedByBlackHolePercentage);
+             if (stored !== null)
+                 return stored;
+@@ -499,6 +512,8 @@ function readStatFromRun(run, key) {
+             return raw !== null ? (raw / tot) * 100 : null;
+         }
+         case 'hitByOrbsPercentage': {
++            const corrected = correctedCoveragePercentage(run, key);
++            if (corrected !== null) return corrected;
+             const stored = parseNumericStat(run.hitByOrbsPercentage);
+             if (stored !== null)
+                 return stored;
+@@ -547,17 +562,20 @@ function readStatFromRun(run, key) {
+  * For 'last' mode: the most recent run before the current one.
+  * The `currentRunId` is excluded from the reference pool.
+  */
+-function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
++function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId, selectedRun) {
+     if (mode === 'disabled') {
+         return { mode, baseline: {}, comparisonLabel: '' };
+     }
+     const normalizedType = runType.trim() || 'Farming';
+     const now = Date.now();
++    // One current-run exclusion and reference pool for every metric.
++    const current = selectedRun ?? (currentRunId ? resolveRunRecordById(runs, currentRunId) : undefined);
++    const excludedId = currentRunId || (current ? resolveRunId(current) : '');
+     // Filter to same type, excluding current run
+     const sameTypeRuns = runs.filter(r => {
+         const type = resolveRunType(r);
+         const id = resolveRunId(r);
+-        if (currentRunId && id && id === currentRunId)
++        if ((excludedId && id === excludedId) || r === current)
+             return false;
+         return type.toLowerCase() === normalizedType.toLowerCase();
+     });
+@@ -565,9 +583,8 @@ function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
+     const sorted = [...sameTypeRuns].sort((a, b) => resolveRunTimestamp(b) - resolveRunTimestamp(a));
+     let referenceRuns;
+     if (mode === 'last') {
+-        if (currentRunId) {
+-            const currentRun = resolveRunRecordById(runs, currentRunId);
+-            const currentTs = currentRun ? resolveRunTimestamp(currentRun) : Number.POSITIVE_INFINITY;
++        if (current) {
++            const currentTs = resolveRunTimestamp(current);
+             referenceRuns = sorted.filter(r => resolveRunTimestamp(r) < currentTs).slice(0, 1);
+         }
+         else {
+@@ -601,7 +618,7 @@ function buildTrackerRunDeltaBaselineWithBasis(referenceRuns) {
+     const coverageBasis = {};
+     for (const key of exports.TRACKER_DELTA_STAT_KEYS) {
+         const contributing = referenceRuns
+-            .map(r => ({ run: r, value: readStatFromRun(r, key) }))
++            .map(r => ({ run: r, value: isCorrectedCoverageKey(key) ? correctedCoveragePercentage(r, key) : readStatFromRun(r, key) }))
+             .filter((entry) => entry.value !== null);
+         if (contributing.length === 0)
+             continue;
+@@ -750,6 +767,14 @@ function formatDeltaAnnotation(delta) {
+  * Compute and format the delta annotation for a given stat key using a run and a baseline.
+  */
+ function getDeltaAnnotationForStat(run, key, baseline, coverageBasis) {
++    if (isCorrectedCoverageKey(key)) {
++        const current = correctedCoveragePercentage(run, key);
++        const reference = baseline[key];
++        if (current === null || coverageBasis?.[key] !== 'kills' || !Number.isFinite(reference))
++            return '';
++        if (reference === 0) return '';
++        return formatDeltaAnnotation(computeStatDelta(current, reference));
++    }
+     if (coverageBasis) {
+         const referenceBasis = coverageBasis[key];
+         const currentBasis = resolveCoverageDeltaBasis(run, key);
+@@ -802,3 +827,4 @@ exports.TRACKER_STAT_EMBED_COLORS = {
+     utility: 0x66BB6A, // Green
+     default: 0x3b82f6, // Blue
+ };
++
+diff --git a/dist/tools/tracker-run-derived-metrics.js b/dist/tools/tracker-run-derived-metrics.js
+index 596f672..46bd9e7 100644
+--- a/dist/tools/tracker-run-derived-metrics.js
++++ b/dist/tools/tracker-run-derived-metrics.js
+@@ -99,10 +99,16 @@ function buildTrackerRunDerivedMetricFields(rawRun) {
+         }
+     }
+     const totalEnemies = parseTrackerMetricNumber(rawRun.totalEnemies);
++    const blackHoleCount = parseTrackerMetricNumber(rawRun.killsWithBlackHole) ?? parseTrackerMetricNumber(rawRun.rawParseFields?.killsWithBlackHole);
++    const blackHoleTotal = totalEnemies ?? parseTrackerMetricNumber(rawRun.rawParseFields?.totalEnemies);
++    if (blackHoleCount !== null && blackHoleCount >= 0 && blackHoleTotal !== null && blackHoleTotal > 0) {
++        fields.destroyedByBlackHolePercentage = `${Number((blackHoleCount / blackHoleTotal * 100).toFixed(2))}%`;
++    }
+     if (totalEnemies === null) {
+         return fields;
+     }
+     for (const [percentageKey, sourceKeys] of Object.entries(TRACKER_RUN_COVERAGE_PERCENTAGE_KEY_TO_SOURCES)) {
++        if (percentageKey === 'destroyedByBlackHolePercentage' && blackHoleCount !== null && blackHoleCount >= 0) continue;
+         const explicitValue = String(rawRun[percentageKey] ?? '').trim();
+         if (explicitValue) {
+             fields[percentageKey] = explicitValue;
 diff --git a/dist/tools/tracker-run-table-display.js b/dist/tools/tracker-run-table-display.js
 index 30398d2..039f75e 100644
 --- a/dist/tools/tracker-run-table-display.js
@@ -307,24 +319,3 @@ index 30398d2..039f75e 100644
      return (0, formatting_1.formatNumberForDisplay)(parsed);
  }
  function clampTrackerRunTableCellValue(value) {
-diff --git a/dist/tools/tracker-run-derived-metrics.js b/dist/tools/tracker-run-derived-metrics.js
-index 596f672..46bd9e7 100644
---- a/dist/tools/tracker-run-derived-metrics.js
-+++ b/dist/tools/tracker-run-derived-metrics.js
-@@ -99,10 +99,16 @@ function buildTrackerRunDerivedMetricFields(rawRun) {
-         }
-     }
-     const totalEnemies = parseTrackerMetricNumber(rawRun.totalEnemies);
-+    const blackHoleCount = parseTrackerMetricNumber(rawRun.killsWithBlackHole) ?? parseTrackerMetricNumber(rawRun.rawParseFields?.killsWithBlackHole);
-+    const blackHoleTotal = totalEnemies ?? parseTrackerMetricNumber(rawRun.rawParseFields?.totalEnemies);
-+    if (blackHoleCount !== null && blackHoleCount >= 0 && blackHoleTotal !== null && blackHoleTotal > 0) {
-+        fields.destroyedByBlackHolePercentage = `${Number((blackHoleCount / blackHoleTotal * 100).toFixed(2))}%`;
-+    }
-     if (totalEnemies === null) {
-         return fields;
-     }
-     for (const [percentageKey, sourceKeys] of Object.entries(TRACKER_RUN_COVERAGE_PERCENTAGE_KEY_TO_SOURCES)) {
-+        if (percentageKey === 'destroyedByBlackHolePercentage' && blackHoleCount !== null && blackHoleCount >= 0) continue;
-         const explicitValue = String(rawRun[percentageKey] ?? '').trim();
-         if (explicitValue) {
-             fields[percentageKey] = explicitValue;

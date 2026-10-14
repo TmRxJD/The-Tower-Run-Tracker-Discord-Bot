@@ -204,3 +204,13 @@ describe('upload-helpers single-line paste parsing', () => {
     expect(description).toContain('Orbs: 0%');
   });
 });
+
+it('keeps new effect-active zeros separate from old hit counts when parsing reports', () => {
+  const header = 'Battle Report\nTier\t22\nWave\t900\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1\n';
+  const older = parseRunDataFromText(header + 'Enemies Hit by Orbs\t900\nEnemies Hit By Black Hole\t950\nTotal Enemies\t1000');
+  expect(older.killsWithOrbs).toBeNull(); expect(older.killsWithBlackHole).toBeNull();
+  const newer = parseRunDataFromText(header + 'Enemies Hit By\nOrbs\t900\nBlack Hole\t950\nKilled With Effect Active\nOrbs\t0 [0%]\nBlack Hole\t0 [0%]\nEnemies Destroyed\nTotal Enemies\t1000');
+  expect(String(newer.killsWithOrbs)).toBe('0'); expect(String(newer.killsWithBlackHole)).toBe('0');
+  const coverage = generateCoverageDescription(newer);
+  expect(coverage).toContain('Orbs: 0%'); expect(coverage).toContain('Black Hole: 0%');
+});
