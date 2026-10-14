@@ -254,3 +254,9 @@ it('bounds extended concurrency and drains a failed wave before rejecting withou
   await expect(loadBotCompleteRunCloudDocuments('discord')).rejects.toThrow('fixture');
   expect(peak).toBe(4); expect(active).toBe(0); expect(extendedCalls).toBe(4);
 });
+it('duplicate review validates all main pages and final count without extended reads', async () => {
+  fixture({ discord: docs('discord', 1360) });
+  expect(await loadBotCompleteRunCloudDocuments('discord', { includeExtended: false })).toHaveLength(1360);
+  expect(mocks.list).toHaveBeenCalledTimes(4);
+  expect(mocks.list.mock.calls.every(call => call[1] !== 'runs_extended_data')).toBe(true);
+});

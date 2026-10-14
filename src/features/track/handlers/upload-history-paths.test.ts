@@ -26,14 +26,14 @@ describe('direct upload history paths', () => {
   it('direct pasted report checks all cold-cache history before review', async () => {
     await handleDirectTextPaste(interaction() as never,
       'Battle Report\nTier\t22\nWave\t900\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1', null, null, 'Farming', 'track');
-    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { readOnly: true, onStage: expect.any(Function) });
+    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { readOnly: true, mainOnly: true, onStage: expect.any(Function) });
     expect(mocks.create).toHaveBeenCalledOnce();
     expect(mocks.create.mock.calls[0][0]).toMatchObject({ isDuplicate: true, runData: { runId: 'run-0' } });
     expect(mocks.review).toHaveBeenCalledOnce();
   });
   it('direct screenshot checks the same complete history before review', async () => {
     await handleDirectAttachment(interaction() as never, { url: 'https://example.invalid/fixture.png', name: 'fixture.png' }, null, 'Farming', 'track');
-    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { readOnly: true, onStage: expect.any(Function) });
+    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { readOnly: true, mainOnly: true, onStage: expect.any(Function) });
     expect(mocks.create).toHaveBeenCalledOnce();
     expect(mocks.create.mock.calls[0][0]).toMatchObject({ isDuplicate: true, runData: { runId: 'run-0' } });
     expect(mocks.review).toHaveBeenCalledOnce();
@@ -54,4 +54,10 @@ it.each(['paste', 'screenshot'])('captures the input flow before asynchronous hi
   await vi.waitFor(() => expect(mocks.prepare).toHaveBeenCalledOnce());
   setTrackerFlowMode('fixture-owner', 'lifetime'); finish({ getRuns: mocks.runs }); await work;
   expect(mocks.create.mock.calls[0][0].flowMode).toBe('track');
+});
+
+it('skips cloud history entirely when duplicate detection is disabled', async () => {
+  mocks.settings.mockResolvedValue({ autoDetectDuplicates: false });
+  await handleDirectTextPaste(interaction() as never, 'Battle Report\nTier\t22\nWave\t900\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1', null, null, 'Farming', 'track');
+  expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.create).toHaveBeenCalledOnce(); expect(mocks.review).toHaveBeenCalledOnce();
 });

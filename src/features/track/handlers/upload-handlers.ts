@@ -322,10 +322,6 @@ function applyAutoTournament(processedData: RunDataLike, rawTierCandidates: unkn
 
 async function createPendingRunWithMetadata(params: { userId: string; username: string; flowMode: TrackerUiMode; runData: RunDataLike; screenshot?: AttachmentLike | null; canonicalRunData?: RunDataLike | null; defaultRunType?: string | null; pasteDiagnosticId?: string }) {
   const { userId, username, runData, screenshot, canonicalRunData } = params;
-  // Both paste and OCR converge here, before duplicate detection/review.
-  const history = params.flowMode === 'lifetime'
-    ? { getRuns: () => getLocalRuns(userId) }
-    : await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { readOnly: true, onStage: context.setStage }), 'upload-history');
   let hydratedRunData = { ...runData };
   const rawParseFields = hydratedRunData.rawParseFields && typeof hydratedRunData.rawParseFields === 'object' && !Array.isArray(hydratedRunData.rawParseFields)
     ? { ...(hydratedRunData.rawParseFields as Record<string, unknown>) }
@@ -337,6 +333,10 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
   if (settings?.decimalPreference) decimalPreference = settings.decimalPreference;
   const shouldCheckDuplicate = (settings?.autoDetectDuplicates ?? true) && !hydratedRunData.runId;
   if (shouldCheckDuplicate) {
+    // Review needs duplicate identity only, not full historical statistics or local rewrites.
+    const history = params.flowMode === 'lifetime'
+      ? { getRuns: () => getLocalRuns(userId) }
+      : await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { readOnly: true, mainOnly: true, onStage: context.setStage }), 'upload-history');
     const localRuns = await history.getRuns();
     const duplicateCheck = findPotentialDuplicateRun(hydratedRunData, localRuns);
     if (duplicateCheck.isDuplicate) {

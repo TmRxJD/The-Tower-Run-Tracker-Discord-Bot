@@ -216,3 +216,18 @@ describe('bounded history waits', () => {
     } finally { finish(); vi.useRealTimers(); }
   });
 });
+it('main-only snapshots cannot enter the local hydration path', async () => {
+  await expect(prepareBotRunUploadHistory('owner', { mainOnly: true })).rejects.toThrow('must remain read-only');
+  expect(mocks.cloud).not.toHaveBeenCalled(); expect(mocks.upsert).not.toHaveBeenCalled();
+});
+it('never coalesces a main-only duplicate read into a full share read', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  mocks.cloud.mockImplementation(async () => { await gate; return cloud(2); });
+  const main = prepareBotRunUploadHistory('owner', { readOnly: true, mainOnly: true });
+  const full = prepareBotRunUploadHistory('owner', { readOnly: true });
+  await vi.waitFor(() => expect(mocks.cloud).toHaveBeenCalledTimes(2));
+  release(); await Promise.all([main, full]);
+  expect(mocks.cloud).toHaveBeenCalledWith('owner', { includeExtended: false });
+  expect(mocks.cloud).toHaveBeenCalledWith('owner'); expect(mocks.upsert).not.toHaveBeenCalled();
+});

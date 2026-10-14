@@ -1,3 +1,4 @@
+import { yieldToEventLoop } from '../../utils/event-loop';
 import { hydrateTrackerCloudRun, buildTrackerResolvedRunReference } from '@tmrxjd/platform/tools';
 import { loadLocalRunsFromBotRxDB, upsertMergedRunsIntoBotRxDB } from '../../rxdb/run-rxdb-store';
 import { getLocalSettings, getQueueItems } from './local-run-store';
@@ -86,14 +87,16 @@ export async function withBotHistoryDeadline<T>(read: () => Promise<T>, timeoutM
 // Keep unresolved reads coalesced even when an interaction's bounded wait ends.
 // Retrying must not amplify outstanding cloud work; completed results are not cached.
 const cloudReads = new Map<string, Promise<Record<string, unknown>[]>>();
-function readCompleteHistory(userId: string) {
-  const existing = cloudReads.get(userId);
+function historyReadKey(userId: string, includeExtended: boolean) { return `${includeExtended ? 'full' : 'main'}:${userId}`; }
+function readCompleteHistory(userId: string, includeExtended = true) {
+  const key = historyReadKey(userId, includeExtended);
+  const existing = cloudReads.get(key);
   if (existing) return existing;
   if (cloudReads.size >= 128) return Promise.reject(historyFailureError('Run history service is busy. Please retry.', 'busy', 'cloud_history'));
-  const read = loadBotCompleteRunCloudDocuments(userId);
-  cloudReads.set(userId, read);
-  void read.then(() => { if (cloudReads.get(userId) === read) cloudReads.delete(userId); },
-    () => { if (cloudReads.get(userId) === read) cloudReads.delete(userId); });
+  const read = includeExtended ? loadBotCompleteRunCloudDocuments(userId) : loadBotCompleteRunCloudDocuments(userId, { includeExtended: false });
+  cloudReads.set(key, read);
+  void read.then(() => { if (cloudReads.get(key) === read) cloudReads.delete(key); },
+    () => { if (cloudReads.get(key) === read) cloudReads.delete(key); });
   return read;
 }
 
@@ -101,7 +104,8 @@ function reference(run: Record<string, unknown>) {
   return buildTrackerResolvedRunReference({ runId: run.runId, fallbackRunId: run.id ?? run.$id, localId: run.localId });
 }
 
-export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean; onStage?: BotRunOperationContext['setStage'] } = {}) {
+export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean; mainOnly?: boolean; onStage?: BotRunOperationContext['setStage'] } = {}) {
+  if (options.mainOnly && !options.readOnly) throw new Error('Main-only history must remain read-only.');
   const correlation = randomUUID();
   let historyStage: HistoryFailureStage = 'settings';
   try {
@@ -114,12 +118,12 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
     const started = Date.now();
     options.onStage?.('cloud-history');
     historyStage = 'cloud_history';
-    const cloudRuns = await withBotHistoryDeadline(() => readCompleteHistory(userId), 45_000,
+    const cloudRuns = await withBotHistoryDeadline(() => readCompleteHistory(userId, !options.mainOnly), 45_000,
       options.readOnly ? 'Run history lookup timed out. Please retry sharing.' : undefined).catch(error => {
         const failure = annotateHistoryFailure(error, historyStage, correlation);
         logger.warn('Run history read failed', { operation: options.readOnly ? 'share-history' : 'upload-history',
           scope: createHmac('sha256', diagnosticSalt).update(userId).digest('hex').slice(0, 16),
-          elapsedMs: Date.now() - started, pendingRead: cloudReads.has(userId), ...readHistoryFailure(failure) });
+          elapsedMs: Date.now() - started, pendingRead: cloudReads.has(historyReadKey(userId, !options.mainOnly)), ...readHistoryFailure(failure) });
         throw failure;
       });
     options.onStage?.('local-history');
@@ -162,7 +166,7 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
     for (let offset = 0; offset < toHydrate.length; offset += 25) {
       await upsertMergedRunsIntoBotRxDB(userId, toHydrate.slice(offset, offset + 25)
         .map(run => hydrateTrackerCloudRun(run, userId, String(run.username ?? 'unknown'))));
-      if (offset + 25 < toHydrate.length) await new Promise<void>(resolve => setTimeout(resolve, 0));
+      if (offset + 25 < toHydrate.length) await yieldToEventLoop();
     }
     // Preserve only explicitly submitted new references, not unrelated concurrent cache arrivals.
     const getRuns = async (submitted?: { runId?: string | null; localId?: string | null }) => {

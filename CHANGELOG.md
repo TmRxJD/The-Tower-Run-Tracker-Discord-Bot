@@ -1,3 +1,9 @@
+## 2026-10-14 - Narrow duplicate-review reads and remove timer waits
+
+- Fetch only validated main run records for review duplicate detection; skip review cloud history entirely when duplicate detection is disabled or an explicit run reference already makes the check unnecessary. Keep complete paging/count/ownership checks, separate full/main in-flight reads, and prohibit local hydration from main-only snapshots.
+- Replace repeated zero-delay hydration timers with the existing setImmediate I/O-yield helper. On this Windows host, 54 timer yields cost about 798 ms versus under 1 ms for the helper; batched writes still yield to gateway I/O.
+- Add a local parse/review/submit/share integration fixture with simulated network and in-memory saves. Verify accurate counts, repeated-submit protection, fresh remote edits and deleted-selection refusal without production submissions or messages.
+
 ## 2026-10-14 - Consistent coverage comparisons and review reads
 
 - Exclude the selected run from every comparison metric, fixing self-comparisons that displayed +0.00%. Use the same rolling-window fallback for BH/orbs as other metrics, retaining only compatible effect-active counts. Omit an unavailable relative-change annotation consistently, including zero baselines; explicit current zero coverage remains 0%.

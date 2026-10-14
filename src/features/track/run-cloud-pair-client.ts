@@ -30,11 +30,11 @@ const COMPLETE_HISTORY_EXTENDED_CONCURRENCY = 4;
  * Unlike a menu prime, a short page is not evidence of a complete history.
  * Validate before ingestion; an error never becomes an empty account.
  */
-export async function loadBotCompleteRunCloudDocuments(userId: string, options: { signal?: AbortSignal } = {}): Promise<Record<string, unknown>[]> {
+export async function loadBotCompleteRunCloudDocuments(userId: string, options: { signal?: AbortSignal; includeExtended?: boolean } = {}): Promise<Record<string, unknown>[]> {
   const correlation = randomUUID();
   const deadline = Date.now() + 45_000;
   for (let attempt = 0; ; attempt++) {
-    try { return await loadCompleteHistoryAttempt(userId, deadline, correlation, options.signal); }
+    try { return await loadCompleteHistoryAttempt(userId, deadline, correlation, options.signal, options.includeExtended !== false); }
     catch (error) {
       const failure = getKnownHistoryFailure(error);
       if (attempt !== 0 || failure?.cause !== 'count_consistency'
@@ -44,7 +44,7 @@ export async function loadBotCompleteRunCloudDocuments(userId: string, options: 
   }
 }
 
-async function loadCompleteHistoryAttempt(userId: string, deadline: number, correlation: ReturnType<typeof randomUUID>, signal?: AbortSignal): Promise<Record<string, unknown>[]> {
+async function loadCompleteHistoryAttempt(userId: string, deadline: number, correlation: ReturnType<typeof randomUUID>, signal?: AbortSignal, includeExtended = true): Promise<Record<string, unknown>[]> {
   let stage: HistoryFailureStage = 'identity';
   const failure = (cause: Parameters<typeof historyFailureError>[1], message: string) => historyFailureError(message, cause, stage, correlation);
   try {
@@ -99,6 +99,8 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
       if (check.total !== expectedTotal) throw failure('count_consistency', 'Run history changed. Please retry.');
     }
     const mainDocuments = [...documents.values()];
+    // Duplicate review uses only main-record identity fields; never fetch unused statistics.
+    if (!includeExtended) return mainDocuments;
     const extendedDocuments: Record<string, unknown>[] = [];
     // Complete bot history already verified the owning main records. Query their
     // exact IDs in bulk rather than issuing one extended GET per historical run.
