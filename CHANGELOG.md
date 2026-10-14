@@ -1,3 +1,8 @@
+## 2026-10-14 - Reduce verified history latency
+
+- Increase complete-history main pages to 500 and fetch extended pages in bounded waves of four. Preserve complete pagination, final-count, schema, ownership, profile, deadline and retry checks; drain a failed wave before releasing the read. Read-only playground measurement on 1,360 runs fell from 24.4s to 9.6s, with identical run count.
+- Log bounded, content-free operation stage durations and lock wait time so cloud reads, hydration, saves and presentation can be distinguished on natural traffic.
+
 ## 2026-10-08 - Gateway readiness monitoring
 
 - Publish atomic, process-bound gateway readiness every 30 seconds and on lifecycle events. Require all shards ready with recent heartbeat acknowledgements; fresh sessions, resumptions, disconnects and invalidation remain distinguishable without exposing credentials or user data.

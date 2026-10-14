@@ -9,7 +9,7 @@ const docs = (owner: string, n: number) => Array.from({ length: n }, (_, i) => (
   $id: `${owner}-${String(i).padStart(4, '0')}`, userId: owner, type: 'Farming', tier: '22', wave: String(i + 1),
   coins: '100', duration: '1h0m0s', runDate: '2026-10-02', runTime: '01:00',
 }));
-function fixture(groups: Record<string, Array<{ $id: string; userId: string; [key: string]: unknown }>>, chunk = 100) {
+function fixture(groups: Record<string, Array<{ $id: string; userId: string; [key: string]: unknown }>>, chunk = Infinity) {
   mocks.list.mockImplementation(async (_db, _collection, queries: string[]) => {
     const parsed = queries.map(q => JSON.parse(q));
     const owner = parsed.find(q => q.method === 'equal').values[0];
@@ -17,7 +17,7 @@ function fixture(groups: Record<string, Array<{ $id: string; userId: string; [ke
     if (parsed.some(q => q.method === 'select')) return { total: rows.length, documents: rows.slice(0, 1) };
     const cursor = parsed.find(q => q.method === 'cursorAfter')?.values[0];
     const offset = cursor ? rows.findIndex(row => row.$id === cursor) + 1 : 0;
-    return { total: rows.length, documents: rows.slice(offset, offset + chunk) };
+    return { total: rows.length, documents: rows.slice(offset, offset + Math.min(chunk, parsed.find(q => q.method === 'limit')?.values[0] ?? 100)) };
   });
 }
 beforeEach(() => {
@@ -51,7 +51,7 @@ describe('complete bot history reads', () => {
     expect(readHistoryFailure(transport)).toMatchObject({ cause: 'transport', transportCode: 'ECONNRESET', stage: 'main_page' });
     expect(JSON.stringify(readHistoryFailure(transport))).not.toContain('PRIVATE_SOCKET_BODY');
   });
-  it('completes a 1359-run, one-second-per-request lookup in 29 seconds rather than 70 seconds', async () => {
+  it('completes a 1359-run, one-second-per-request lookup in eight seconds with bounded waves', async () => {
     vi.useFakeTimers();
     fixture({ discord: docs('discord', 1359) });
     const main = mocks.list.getMockImplementation()!;
@@ -63,9 +63,9 @@ describe('complete bot history reads', () => {
     });
     try {
       const start = Date.now(); const pending = loadBotCompleteRunCloudDocuments('discord');
-      await vi.advanceTimersByTimeAsync(29_000);
-      expect(await pending).toHaveLength(1359); expect(Date.now() - start).toBe(29_000);
-      expect(mocks.list).toHaveBeenCalledTimes(29); expect(mocks.get).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await pending).toHaveLength(1359); expect(Date.now() - start).toBe(8_000);
+      expect(mocks.list).toHaveBeenCalledTimes(18); expect(mocks.get).not.toHaveBeenCalled();
       expect(15 + Math.ceil(1359 / 25)).toBe(70); // Old sequential GET batch waves plus main reads.
     } finally { vi.useRealTimers(); }
   });
@@ -112,7 +112,7 @@ describe('complete bot history reads', () => {
     const runs = await loadBotCompleteRunCloudDocuments('discord');
     expect(runs).toHaveLength(1359); expect(runs.every(run => run.shockwaveDamage === '0')).toBe(true);
     expect(mocks.get).not.toHaveBeenCalled();
-    expect(mocks.list).toHaveBeenCalledTimes(69); //15 main pages/check +54 short extended pages.
+    expect(mocks.list).toHaveBeenCalledTimes(58); //4 main pages/check +54 short extended pages.
   });
   it('rejects foreign, repeated and prematurely empty extended result pages', async () => {
     for (const pages of [
@@ -135,7 +135,7 @@ describe('complete bot history reads', () => {
     const result = await loadBotCompleteRunCloudDocuments('discord');
     expect(result).toHaveLength(132);
     expect(new Set(result.map(d => d.$id)).size).toBe(132);
-    expect(mocks.list).toHaveBeenCalledTimes(5); // Main pages/check and two bounded extended queries.
+    expect(mocks.list).toHaveBeenCalledTimes(4); // Main page/check and two bounded extended queries.
     expect(mocks.get).not.toHaveBeenCalled();
   });
   it('does not mistake a short partial page for complete history', async () => {
@@ -239,4 +239,18 @@ describe('one fresh bounded consistency retry', () => {
       expect(mocks.list).toHaveBeenCalledTimes(3);
     } finally { vi.useRealTimers(); }
   });
+});
+
+it('bounds extended concurrency and drains a failed wave before rejecting without starting another', async () => {
+  fixture({ discord: docs('discord', 900) }); const main = mocks.list.getMockImplementation()!;
+  let active = 0, peak = 0, extendedCalls = 0;
+  mocks.list.mockImplementation(async (db, collection, queries) => {
+    if (collection !== 'runs_extended_data') return main(db, collection, queries);
+    const index = extendedCalls++; active++; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, index === 0 ? 1 : 10)); active--;
+    if (index === 0) throw Object.assign(new Error('fixture'), { code: 503 });
+    return { total: 0, documents: [] };
+  });
+  await expect(loadBotCompleteRunCloudDocuments('discord')).rejects.toThrow('fixture');
+  expect(peak).toBe(4); expect(active).toBe(0); expect(extendedCalls).toBe(4);
 });

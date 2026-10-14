@@ -23,19 +23,27 @@ export async function withBotRunSubmissionLock<T>(userId: string, action: (conte
   tails.set(userId, tail);
   const waitingSince = Date.now();
   let acquired = false;
+  const waitingStarted = performance.now();
+  let acquiredAt = 0;
+  let stageStarted = 0;
+  let currentStage: OperationStage = 'action';
+  const stageMs: Partial<Record<OperationStage, number>> = {};
+  const finishStage = () => { if (acquiredAt) stageMs[currentStage] = (stageMs[currentStage] ?? 0) + performance.now() - stageStarted; };
   let slowTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     await withBotHistoryDeadline(() => previous, 60_000, operation === 'presentation'
       ? 'Another response is still being delivered. Check your latest run before retrying.'
       : 'Another run is still being saved. Please retry shortly.', 'lock_wait');
     acquired = true;
+    acquiredAt = performance.now();
+    stageStarted = acquiredAt;
     const owner = { operation, started: Date.now(), stage: 'action' as OperationStage };
     owners.set(userId, owner);
     slowTimer = setTimeout(() => logger.warn('Run operation lock held', {
       scope: createHmac('sha256', diagnosticSalt).update(userId).digest('hex').slice(0, 16),
       operation, stage: owner.stage, elapsedMs: Date.now() - owner.started,
     }), 30_000);
-    return await action({ setStage: stage => { owner.stage = stage; } });
+    return await action({ setStage: stage => { finishStage(); currentStage = stage; stageStarted = performance.now(); owner.stage = stage; } });
   }
   catch (error) {
     if (!acquired) {
@@ -51,6 +59,12 @@ export async function withBotRunSubmissionLock<T>(userId: string, action: (conte
     throw error;
   }
   finally {
+    finishStage();
+    if (acquiredAt) logger.warn('[perf] run.operation', {
+      operation, waitMs: Math.round(acquiredAt - waitingStarted),
+      durationMs: Math.round(performance.now() - acquiredAt),
+      stages: Object.fromEntries(Object.entries(stageMs).map(([stage, ms]) => [stage, Math.round(ms)])),
+    });
     if (slowTimer) clearTimeout(slowTimer);
     if (acquired) owners.delete(userId);
     release();

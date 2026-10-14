@@ -22,6 +22,9 @@ import { randomUUID } from 'node:crypto';
 import { annotateHistoryFailure, getKnownHistoryFailure, historyFailureError, type HistoryFailureStage } from './history-failure-diagnostic';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
+// Measured against a 1,360-run account: avoid 100-row round trips without unbounded requests.
+const COMPLETE_HISTORY_MAIN_PAGE_SIZE = 500;
+const COMPLETE_HISTORY_EXTENDED_CONCURRENCY = 4;
 
 /** Read-only, all-or-nothing history for upload numbering and duplicate checks.
  * Unlike a menu prime, a short page is not evidence of a complete history.
@@ -63,7 +66,7 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
         stage = 'main_page';
         checkDeadline();
         const page: Models.DocumentList<Models.Document & { userId?: unknown }> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
-          ...buildBotRunCloudUserIdQueries(ownerId, cursor, TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE),
+          ...buildBotRunCloudUserIdQueries(ownerId, cursor, COMPLETE_HISTORY_MAIN_PAGE_SIZE),
           Query.orderAsc('$id'),
         ]);
         checkDeadline();
@@ -100,7 +103,11 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
     // Complete bot history already verified the owning main records. Query their
     // exact IDs in bulk rather than issuing one extended GET per historical run.
     const ids = [...documents.keys()];
-    for (let offset = 0; offset < ids.length; offset += TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE) {
+    const offsets = Array.from({ length: Math.ceil(ids.length / TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE) }, (_, i) => i * TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE);
+    for (let wave = 0; wave < offsets.length; wave += COMPLETE_HISTORY_EXTENDED_CONCURRENCY) {
+      // Drain the current wave on failure before releasing the coalesced history read.
+      // Later waves never start after failure, cancellation, or the shared deadline.
+      const results = await Promise.allSettled(offsets.slice(wave, wave + COMPLETE_HISTORY_EXTENDED_CONCURRENCY).map(async offset => {
       const batch = ids.slice(offset, offset + TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE);
       const requested = new Set(batch);
       const seen = new Set<string>();
@@ -130,6 +137,9 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
         if (!page.documents.length || seen.size > expectedTotal) throw failure('pagination', 'Extended run history is incomplete. Please retry.');
         cursor = page.documents[page.documents.length - 1].$id;
       }
+      }));
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
     }
     stage = 'stitch';
     checkDeadline();
