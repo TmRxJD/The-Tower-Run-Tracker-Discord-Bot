@@ -102,6 +102,9 @@
     ],
     "patchedDependencies": {
       "@tmrxjd/platform@0.2.4": "patches/@tmrxjd__platform@0.2.4.patch"
+    },
+    "overrides": {
+      "thetowersdk": "0.11.3"
     }
   }
 }

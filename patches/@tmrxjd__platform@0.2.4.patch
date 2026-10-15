@@ -1,5 +1,85 @@
+diff --git a/dist/tools/tool-state/save-import/payloads/bots.js b/dist/tools/tool-state/save-import/payloads/bots.js
+index 07ac675d9160da727dac3104864d3bcd942545fe..733903f3530160d8eb851df66ce70e825a227e7d 100644
+--- a/dist/tools/tool-state/save-import/payloads/bots.js
++++ b/dist/tools/tool-state/save-import/payloads/bots.js
+@@ -40,7 +40,7 @@ function buildBotsImportPayload(extract) {
+     if (Object.keys(levels).length === 0 && !Object.values(unlocked).some(Boolean))
+         return null;
+     const synced = new Set(extract.synchronicity?.bots ?? []);
+-    const syncUnlocked = extract.synchronicity?.inSave
++    const syncUnlocked = extract.synchronicity?.inSave && !extract.synchronicity.unrecognizedSlotValues?.length
+         ? Object.fromEntries(bots.map(bot => [bot.label, synced.has(bot.label)]))
+         : undefined;
+     return {
+diff --git a/dist/tools/tool-state/save-import/payloads/labs.d.ts b/dist/tools/tool-state/save-import/payloads/labs.d.ts
+index 495cb0b5c5a0de4a7c84b10ae0f6ce4f4ef54711..057fa6ec1bbd5d8860dc0a3797cf35243d2d913e 100644
+--- a/dist/tools/tool-state/save-import/payloads/labs.d.ts
++++ b/dist/tools/tool-state/save-import/payloads/labs.d.ts
+@@ -15,7 +15,7 @@ export interface LabImportDisplayRow {
+ export declare function buildCategoryGroupedLabImportRows(researches: LabResearchSaveRow[]): LabImportDisplayRow[];
+ export interface LabsSaveImportPayload {
+     currentLabLevels: Record<string, number>;
+-    activeSlots: Array<{
++    activeSlots?: Array<{
+         name: string | null;
+         progressSeconds: number;
+         running: boolean;
+@@ -23,7 +23,7 @@ export interface LabsSaveImportPayload {
+         lastUpdated: number | null;
+         startedAt: number | null;
+     }>;
+-    labSpeedUps: Record<string, number>;
++    labSpeedUps?: Record<string, number>;
+     /**
+      * Starred labs, or null when the save has no favourites field at all.
+      *
+diff --git a/dist/tools/tool-state/save-import/payloads/labs.js b/dist/tools/tool-state/save-import/payloads/labs.js
+index a9c43b785f831f6ff410c7e4638209ba0e32e81b..c4ea398979d2d1274dda37f592e05c4bdbfe566b 100644
+--- a/dist/tools/tool-state/save-import/payloads/labs.js
++++ b/dist/tools/tool-state/save-import/payloads/labs.js
+@@ -44,7 +44,7 @@ function buildCategoryGroupedLabImportRows(researches) {
+ function buildLabsImportPayload(extract) {
+     const rawLabLevels = {};
+     for (const row of extract.researches) {
+-        if (!row.slug || row.level <= 0)
++        if (!row.slug || row.level < 0)
+             continue;
+         if (!(0, data_1.isLabsResearchLabName)(row.slug))
+             continue;
+@@ -83,8 +83,7 @@ function buildLabsImportPayload(extract) {
+     }
+     return {
+         currentLabLevels,
+-        activeSlots,
+-        labSpeedUps,
++        ...(extract.hasActiveQueueData === false ? {} : { activeSlots, labSpeedUps }),
+         favoriteLabs: extract.hasFavoriteLabs
+             ? extract.favoriteLabs.filter(slug => (0, data_1.isLabsResearchLabName)(slug))
+             : null,
+diff --git a/dist/tools/tool-state/save-import/payloads/modules.js b/dist/tools/tool-state/save-import/payloads/modules.js
+index 618a88af51f1f00f914d8b6a7e607cb10e8a7fc0..2dbfef75608becdcbe25bd41a4640c4bae017e1d 100644
+--- a/dist/tools/tool-state/save-import/payloads/modules.js
++++ b/dist/tools/tool-state/save-import/payloads/modules.js
+@@ -45,7 +45,7 @@ function buildModulesInventoryImportPreviews(extract, templates) {
+             level: item.level,
+             rarity: item.rarityLabel,
+             substats: buildModuleImportSubstatPreviews(item.category, item.effects),
+-            mapped: Boolean(moduleId && item.level && item.rarityLabel),
++            mapped: Boolean(moduleId && item.level != null && item.rarityLabel),
+         };
+     })
+         .sort((a, b) => {
+@@ -76,7 +76,7 @@ function buildModulesEquippedImportPreviews(extract, templates) {
+             level: item.level,
+             rarity: item.rarityLabel,
+             substats,
+-            importable: Boolean(moduleId && item.level && item.rarityLabel),
++            importable: Boolean(moduleId && item.level != null && item.rarityLabel),
+         };
+     });
+ }
 diff --git a/dist/tools/tracker-cloud-schemas.d.ts b/dist/tools/tracker-cloud-schemas.d.ts
-index 2f27dbd..5bfb80b 100644
+index 2f27dbde86d627254b8cc32302e88ae7c7c8d889..5bfb80b2fb4db72f3e314f9a7e60558057721860 100644
 --- a/dist/tools/tracker-cloud-schemas.d.ts
 +++ b/dist/tools/tracker-cloud-schemas.d.ts
 @@ -289,3 +289,9 @@ export declare function buildTrackerRunCloudWritePayload(input: {
@@ -13,7 +93,7 @@ index 2f27dbd..5bfb80b 100644
 +/** An explicit total or all four valid components; incomplete totals remain unavailable. */
 +export declare function readTrackerModuleShardsTotal(run: Record<string, unknown>): number | null;
 diff --git a/dist/tools/tracker-cloud-schemas.js b/dist/tools/tracker-cloud-schemas.js
-index 335d29d..13d6574 100644
+index 335d29d9ab987f8baf0c4b11e4b31d1912dee418..13d6574837676d66a4866d73cf4ea12411222a39 100644
 --- a/dist/tools/tracker-cloud-schemas.js
 +++ b/dist/tools/tracker-cloud-schemas.js
 @@ -22,6 +22,9 @@ exports.hydrateTrackerCloudRun = hydrateTrackerCloudRun;
@@ -72,7 +152,7 @@ index 335d29d..13d6574 100644
      $id: zod_1.z.string().optional(),
      $collectionId: zod_1.z.string().optional(),
 diff --git a/dist/tools/tracker-run-cloud-pair.js b/dist/tools/tracker-run-cloud-pair.js
-index f9a20c1..8ff8d3c 100644
+index f9a20c124a925e8d1e7046e3890a8f3013d411f6..8ff8d3c58a531e83d6620d6915584cb39debca9f 100644
 --- a/dist/tools/tracker-run-cloud-pair.js
 +++ b/dist/tools/tracker-run-cloud-pair.js
 @@ -201,7 +201,8 @@ async function writeTrackerRunCloudDocumentPair(input) {
@@ -86,7 +166,7 @@ index f9a20c1..8ff8d3c 100644
      }
      const mainPayload = {
 diff --git a/dist/tools/tracker-run-collection-split.js b/dist/tools/tracker-run-collection-split.js
-index 98b7536..6b9bda9 100644
+index 98b7536e17cf130f5e102fab12714618aab21fd5..6b9bda95a4c7e742e64838b724514d5c01231562 100644
 --- a/dist/tools/tracker-run-collection-split.js
 +++ b/dist/tools/tracker-run-collection-split.js
 @@ -7,6 +7,7 @@ exports.withTrackerRunUpdatedAtEpoch = withTrackerRunUpdatedAtEpoch;
@@ -132,7 +212,7 @@ index 98b7536..6b9bda9 100644
  }
  function resolveTrackerRunUpdatedAtEpoch(value) {
 diff --git a/dist/tools/tracker-run-delta.d.ts b/dist/tools/tracker-run-delta.d.ts
-index c66e5e4..f8173b5 100644
+index c66e5e4d93ba03935bb4de02e489412d638e5d10..f8173b5423d979866eaea38ae357afc297a7bbef 100644
 --- a/dist/tools/tracker-run-delta.d.ts
 +++ b/dist/tools/tracker-run-delta.d.ts
 @@ -37,7 +37,7 @@ export type TrackerRunDeltaResult = {
@@ -145,7 +225,7 @@ index c66e5e4..f8173b5 100644
      sign: DeltaSign;
      annotation: string;
 diff --git a/dist/tools/tracker-run-delta.js b/dist/tools/tracker-run-delta.js
-index 542df7d..cf9cd20 100644
+index 542df7d7a8bae224ea656a64fa38fcf2e212091c..cf9cd20c13c0b26ea79feeb567e3593d8e1ade32 100644
 --- a/dist/tools/tracker-run-delta.js
 +++ b/dist/tools/tracker-run-delta.js
 @@ -192,7 +192,18 @@ const COVERAGE_DELTA_BASIS_SOURCES = {
@@ -270,7 +350,7 @@ index 542df7d..cf9cd20 100644
  };
 +
 diff --git a/dist/tools/tracker-run-derived-metrics.js b/dist/tools/tracker-run-derived-metrics.js
-index 596f672..46bd9e7 100644
+index 596f6723137154ac008e300082644d8908827830..46bd9e7c8277412bfe48e0d0e05e1e446b22eb0e 100644
 --- a/dist/tools/tracker-run-derived-metrics.js
 +++ b/dist/tools/tracker-run-derived-metrics.js
 @@ -99,10 +99,16 @@ function buildTrackerRunDerivedMetricFields(rawRun) {
@@ -291,7 +371,7 @@ index 596f672..46bd9e7 100644
          if (explicitValue) {
              fields[percentageKey] = explicitValue;
 diff --git a/dist/tools/tracker-run-table-display.js b/dist/tools/tracker-run-table-display.js
-index 30398d2..039f75e 100644
+index 30398d207ff02d5a976808dafae1edac61e28bfe..039f75e037f23bb8617f32597d9375107be5df91 100644
 --- a/dist/tools/tracker-run-table-display.js
 +++ b/dist/tools/tracker-run-table-display.js
 @@ -6,6 +6,7 @@ exports.normalizeTrackerRunTableColumnOrder = normalizeTrackerRunTableColumnOrde

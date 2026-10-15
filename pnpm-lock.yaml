@@ -4,9 +4,12 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  thetowersdk: 0.11.3
+
 patchedDependencies:
   '@tmrxjd/platform@0.2.4':
-    hash: f5bb4e64ab6d338ab3960858be6f3bda73dd4868601cfe2b48ef9e6824d406e0
+    hash: d2012964b0073acd4638d7a4b67b9ee2258a5b509abd617a6b94702179e478c1
     path: patches/@tmrxjd__platform@0.2.4.patch
 
 importers:
@@ -24,7 +27,7 @@ importers:
         version: 0.1.97
       '@tmrxjd/platform':
         specifier: 0.2.4
-        version: 0.2.4(patch_hash=f5bb4e64ab6d338ab3960858be6f3bda73dd4868601cfe2b48ef9e6824d406e0)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)
+        version: 0.2.4(patch_hash=d2012964b0073acd4638d7a4b67b9ee2258a5b509abd617a6b94702179e478c1)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)
       dexie:
         specifier: ^4.4.4
         version: 4.4.4
@@ -2422,8 +2425,8 @@ packages:
     resolution: {integrity: sha512-tOG/7GyXpFevhXVh8jOPJrmtRpOTsYqUIkVdVooZYJS/z8WhfQUX8RJILmeuJNinGAMSu1veBr4asSHFt5/hng==}
     engines: {node: '>=18'}
 
-  thetowersdk@0.11.0:
-    resolution: {integrity: sha512-WT6cXWDangI0fkwdR1qL65OA6o/9vCJH0Vhgy+QlTlKl/6gNUg8aVaWZpp0SCMvj7yPknZ/zLPosMDWsQTzsKw==}
+  thetowersdk@0.11.3:
+    resolution: {integrity: sha512-DpcOWGw+Bnhfi6mXrswJpNyiB1JUPkod2ql6bkbFSUXsgJla/O0Vkv5pnl2eK9abgzaEUxcMVMbcl2IpoL/a+Q==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -3342,10 +3345,10 @@ snapshots:
 
   '@techstark/opencv-js@4.9.0-release.3': {}
 
-  '@tmrxjd/platform@0.2.4(patch_hash=f5bb4e64ab6d338ab3960858be6f3bda73dd4868601cfe2b48ef9e6824d406e0)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)':
+  '@tmrxjd/platform@0.2.4(patch_hash=d2012964b0073acd4638d7a4b67b9ee2258a5b509abd617a6b94702179e478c1)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)':
     dependencies:
       '@tmrxjd/tracker-languages': 0.1.23
-      thetowersdk: 0.11.0
+      thetowersdk: 0.11.3
       zod: 4.4.3
     optionalDependencies:
       '@gutenye/ocr-node': 1.4.8
@@ -5081,7 +5084,7 @@ snapshots:
       yallist: 5.0.0
     optional: true
 
-  thetowersdk@0.11.0:
+  thetowersdk@0.11.3:
     dependencies:
       zod: 4.4.3
 

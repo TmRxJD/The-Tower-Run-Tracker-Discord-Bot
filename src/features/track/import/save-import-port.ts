@@ -45,7 +45,18 @@ function mergePayloadIntoState(
   current: Record<string, unknown>,
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
-  return { ...current, ...payload };
+  const next = { ...current };
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined || (key === 'favoriteLabs' && value === null)) continue;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const previous = current[key];
+      next[key] = mergePayloadIntoState(
+        previous && typeof previous === 'object' && !Array.isArray(previous) ? asRecord(previous) : {},
+        asRecord(value),
+      );
+    } else next[key] = value;
+  }
+  return next;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -55,6 +66,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 export function createDiscordSaveImportPort(
   interaction: TrackMenuInteraction,
   uploadProfileId: string | null,
+  parsedRoot?: Record<string, unknown>,
 ): SaveImportPersistencePort {
   const userId = interaction.user.id;
   const username = interaction.user.username;
@@ -145,7 +157,10 @@ export function createDiscordSaveImportPort(
 
     persistModules: async (payload) => {
       const current = await loadDomainState(userId, 'modules');
-      await saveDomainState(userId, 'modules', mergePayloadIntoState(current, asRecord(payload)));
+      const present = { ...asRecord(payload) };
+      if (payload.equipped === null) delete present.equipped;
+      if (parsedRoot && !Object.prototype.hasOwnProperty.call(parsedRoot, 'inventory')) delete present.inventory;
+      await saveDomainState(userId, 'modules', mergePayloadIntoState(current, present));
     },
 
     persistCards: async (payload) => {

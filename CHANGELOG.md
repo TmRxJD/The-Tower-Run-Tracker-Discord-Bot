@@ -1,3 +1,9 @@
+## 2026-10-15 - Official Android save exports
+
+- Resolve TheTowerSDK 0.11.3 for the existing byte-decoding path, alongside legacy binary, gzip and encrypted saves.
+- Accept Android tool_export.json snapshots in the save upload flow and explain refreshing exports. Preserve omitted lab queues, favorites, partial level maps and module slots; retain explicit zero values.
+- Cover sanitized exports, malformed input, legacy formats and persistence without live saves or Discord messages.
+
 ## 2026-10-14 - Narrow duplicate-review reads and remove timer waits
 
 - Fetch only validated main run records for review duplicate detection; skip review cloud history entirely when duplicate detection is disabled or an explicit run reference already makes the check unnecessary. Keep complete paging/count/ownership checks, separate full/main in-flight reads, and prohibit local hydration from main-only snapshots.

@@ -108,7 +108,7 @@
     "availableOptionsHeader": "**Available Options:**",
     "options": [
       { "name": "📤 Upload", "value": "Paste or Scan your Battle Report. You can also attach a screenshot when you paste.", "inline": true },
-      { "name": "📥 Import Save File", "value": "Import battle reports, lifetime stats, and preview other tracker data from your playerInfo.dat save file.", "inline": true },
+      { "name": "📥 Import Save File", "value": "Import battle reports, lifetime stats, and preview other tracker data from playerInfo.dat or the Android tool_export.json snapshot.", "inline": true },
       { "name": "📢 Share Last Run", "value": "Share your last logged run with others in the channel.", "inline": true },
       { "name": "✏️ Edit Last", "value": "Edit the most recent run you logged. Lets you quickly fix mistakes or update notes.", "inline": true },
       { "name": "🗑️ Remove Last", "value": "Remove your most recent logged run with confirmation.", "inline": true },
@@ -160,17 +160,17 @@
     ]
   },
   "import": {
-    "modalTitle": "Import from playerInfo.dat",
-    "fileLabel": "playerInfo.dat save file",
+    "modalTitle": "Import Save File",
+    "fileLabel": "playerInfo.dat or tool_export.json",
     "processing": "Parsing save file and scanning tracker data...",
     "downloading": "Downloading save file...",
     "importing": "Importing selected tracker data...",
     "importingTrackerTemplate": "Importing **{label}** ({index}/{total})...",
     "trackerSelectPlaceholder": "Select trackers to import",
-    "noFile": "No playerInfo.dat file was attached. Please try again.",
+    "noFile": "No save file was attached. Please try again.",
     "noRunsFound": "No importable data was found in that save file.",
     "noNewRunsTemplate": "Found **{total}** battle reports in the save, but all are already in your tracker ({skipped} duplicates skipped).",
-    "decodeFailed": "Could not read that save file. Make sure you selected a valid playerInfo.dat export.",
+    "decodeFailed": "Could not read that save file. Choose a valid playerInfo.dat or tool_export.json file. Export or copy it again if incomplete.",
     "downloadFailed": "Could not download the attached save file. Please try again.",
     "timedOut": "Import timed out. Please try again.",
     "sessionExpired": "Import session expired. Please start again with /track.",
@@ -189,8 +189,8 @@
       "viewWebsite": "View Website",
       "openFilePicker": "📁 Select File"
     },
-    "instructionsTitle": "📥 Import from playerInfo.dat",
-    "instructionsDescription": "Select your **playerInfo.dat** save file to import battle reports, lifetime stats, and preview other tracker data found in the save.\n\n**Where to find it:**\n\n📱 **Android (physical device)**\n`Internal Storage/Android/data/com.TechTreeGames.TheTower/files/playerInfo.dat`\n⚠️ Android blocks direct folder access — connect to a PC via USB to browse this path.\n\n🖥️ **Android Emulator** (BlueStacks, LDPlayer, etc.)\n`/sdcard/Android/data/com.TechTreeGames.TheTower/files/playerInfo.dat`\n\n🍎 **macOS**\n`~/Library/Containers/com.TechTreeGames.TheTower/Data/Documents/playerInfo.dat`\n\n🚫 **iPhone/iOS** — save file export is not supported on iOS."
+    "instructionsTitle": "📥 Import Save File",
+    "instructionsDescription": "Select **playerInfo.dat** (existing save formats) or **tool_export.json** (official Android export).\n\nOn Android, export your save in-game, then select:\n`Internal Storage/Android/data/com.TechTreeGames.TheTower/files/tool_export.json`\nThe export is a snapshot: export again in-game to refresh it. It omits active lab queues, so your existing queues are kept.\n\nThe existing **playerInfo.dat** is in the same Android files folder; emulator paths start with `/sdcard/Android/data/`. Android folder access may require USB access from a PC.\n\nExisting macOS save: `~/Library/Containers/com.TechTreeGames.TheTower/Data/Documents/playerInfo.dat`\n\n**iPhone/iOS:** official save export is not supported yet."
   },
   "submission": {
     "title": "The Tower Run Tracker",
