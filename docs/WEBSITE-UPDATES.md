@@ -29,3 +29,16 @@ The target `1373110039669379082` was verified as `#dev-updates` in guild `134340
 Run tests from an isolated checkout with linked dependencies, never from the production working directory: unrelated tests resolve their databases relative to cwd. The new suites are under `src/features/website-updates/`. They use public/synthetic fixtures, temporary SQLite and mocked Discord; no synthetic public posts are needed.
 
 The initial read-only playground compared 1,000 release-boundary scans: regex 52.2 ms versus split-line scanning 57.8 ms for the live 47,184-byte document, with roughly 4.6-5.0 MB heap. The selected parser uses regex line boundaries with fence tracking. An isolated FULL-synchronous SQLite checkpoint took 12.5 ms. No site rendering or user request paths change.
+
+## Verified deployment: 2026-10-15
+
+- Implementation commit: `c41da2e`. Activated using `node scripts/deploy.mjs activate` on JD-OPTIPLEX. No push.
+- Full isolated regression run with process isolation: 90 files / 573 tests passed in 74.24 seconds. The initial thread-pool runs stalled; the first also lacked the compiled `dist` needed by an existing restart test. Compiling the isolated snapshot and using `--pool=forks --maxWorkers=2` completed successfully. Final focused run: five files / 34 tests passed, including separate Node processes with real temporary SQLite and the actual-feed chunk-boundary regression. Final type-check, production build and changed TypeScript lint passed.
+- Existing PM2 service restarted once to PID `15192`, restart count `25`. The repository verifier confirmed ClientReady and no further restart over its 30-second window (52 seconds online at completion).
+- At `2026-10-15T18:18:51.676Z`, the process-bound gateway heartbeat reported ready for PID `15192`. The successful mirror poll at `18:18:55.509Z` was also bound to PID `15192`. Both readiness predicates in `scripts/probe-website-updates.mjs --source` passed.
+- The first poll baselined 10 distinct published releases at `18:17:54.318Z`, with zero sends. The next poll retained the same baseline with zero sends/edits/recoveries/removals. SQLite contained 10 baseline entries, zero mirrored messages and zero pending intents.
+- A fresh public-source read matched the poll hash `86bbad15be9986d20411f1da5432b6d07b1e3cd2dd96dfccf5c6a4f0d38f1505`; latest release was Minor Update v2.3.1, dated September 15, 2026. Read-only channel history still ended at the existing September 15 post, with no new bot message.
+- Live future-release delivery remains unobserved. Send/edit/retry assertions are mocked tests; the deployed bot's readiness, permissions, source reads, baseline and later poll are real observations. No synthetic public post or private run share was sent.
+- User changes to `.npmrc` and untracked `config.json` / `package-lock.json` remained byte-for-byte unchanged.
+
+The reusable read-only probe is `node scripts/probe-website-updates.mjs --source`, run from the production repository. It exits nonzero for stale/mismatched process readiness or missing/currently failed poll state, and never initializes storage or sends messages.
