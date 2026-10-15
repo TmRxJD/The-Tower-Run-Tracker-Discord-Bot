@@ -1,3 +1,10 @@
+## 2026-10-15 - Mirror published website Updates to Discord
+
+- Poll the exact public Markdown used by the website header Updates button every minute in production and mirror new releases to dev-updates (`1373110039669379082`). Baseline existing releases without replaying history.
+- Keep full release content across Discord-sized embeds, resolve site-relative links, link the published source, and disable mentions on sends and edits. Update existing bot messages when a mirrored release changes.
+- Persist release identities, message IDs and pending send intents in the existing SQLite KV. Recover uncertain sends from bot-authored channel history before retrying with the original enforced nonce; fail closed on unreadable recovery history or corrupt checkpoints.
+- Add isolated parsing, baseline, retry, restart/durable-KV, edited-entry, message-limit, permission and lifecycle coverage. No credentials, scopes, schema changes, ports or synthetic public test posts.
+
 ## 2026-10-15 - Official Android save exports
 
 - Resolve TheTowerSDK 0.11.3 for the existing byte-decoding path, alongside legacy binary, gzip and encrypted saves.

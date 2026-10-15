@@ -19,6 +19,7 @@ import { purgeQuarantinedBotRxStorage } from './rxdb/bot-rx-storage';
 import { flushLocalOnlyRunBackups, registerLocalOnlyRunBackup, restoreLocalOnlyRuns } from './rxdb/local-only-backup';
 import { cleanupStalePendingRuns } from './features/track/pending-run-store';
 import { stopTrackerRunBackgroundSyncScheduler } from './features/track/run-background-sync-scheduler';
+import { stopWebsiteUpdatesMirror } from './features/website-updates/runtime';
 
 /** Upper bound on graceful shutdown so a hung release can never leave a zombie process. */
 const SHUTDOWN_TIMEOUT_MS = 8_000;
@@ -51,6 +52,7 @@ function registerProcessHandlers(context: ShutdownContext): void {
     stopEventLoopLagMonitor();
     stopPasteDiagnosticMaintenance();
     stopTrackerRunBackgroundSyncScheduler();
+    stopWebsiteUpdatesMirror();
     await flushLocalOnlyRunBackups().catch(() => null);
     await Promise.resolve(context.getClient()?.destroy()).catch(() => null);
     await context.releaseLocks().catch(() => null);
