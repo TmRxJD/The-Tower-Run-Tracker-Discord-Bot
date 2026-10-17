@@ -12,7 +12,9 @@ import { logger } from './logger';
  * so the streams can be correlated by timestamp.
  */
 export type DiagnosticEvent =
-  /** An interaction was acknowledged (or failed to be) — carries how old it already was. */
+  /** Discord REST queued a request behind a rate limit; contains no route or token. */
+  | 'discord.rest.rate_limit'
+  /** An interaction was acknowledged (or failed to be) - carries how old it already was. */
   | 'interaction.ack'
   /** A component interaction matched no handler and was dropped without acknowledgement. */
   | 'interaction.dropped'

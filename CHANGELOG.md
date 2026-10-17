@@ -1,3 +1,9 @@
+## 2026-10-17 - Reduce verified history and sharing waits
+
+- Overlap at most two independent linked/legacy owner histories while preserving fresh count/schema/ownership checks, deterministic order and failed-wave draining. A 1,361-run history measured 8.98-9.44 s before versus 7.50-7.63 s after; main-only review 5.68-5.79 s versus 4.36-4.46 s, with all fields equal.
+- Overlap fresh shared display settings with share history. Retain separate current-history verification across actions and website edit/deletion correctness.
+- Add content-free Discord REST wait/import-operation diagnostics and a reusable read-only stage probe. See docs/LATENCY-2026-10-17.md for validation and limits.
+
 ## 2026-10-15 - Mirror published website Updates to Discord
 
 - Poll the exact public Markdown used by the website header Updates button every minute in production and mirror new releases to dev-updates (`1373110039669379082`). Baseline existing releases without replaying history.

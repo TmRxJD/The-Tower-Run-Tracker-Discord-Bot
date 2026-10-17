@@ -368,7 +368,7 @@ export async function processPlayerInfoSaveBuffer(
     const autoImport = settings?.confirmBeforeSubmit === false;
     await renderImportReview(interaction, decoded.parsedRoot as Record<string, unknown>, discovery, autoImport);
   } catch (error) {
-    await logError(interaction.client as LogClient, interaction.user, error, 'import_playerinfo_decode');
+    await logError(interaction.client as LogClient, interaction.user, error, 'import_playerinfo_decode', null, null, 'parse');
     await interaction.editReply({ content: ui.import.decodeFailed, embeds: [], components: [], files: [] }).catch(() => {});
   }
 }
@@ -390,7 +390,7 @@ export async function handleDirectSaveImport(
       sourcePath: resolveSaveImportSourcePathFromFileName(file.name),
     });
   } catch (error) {
-    await logError(interaction.client as LogClient, interaction.user, error, 'import_direct_save');
+    await logError(interaction.client as LogClient, interaction.user, error, 'import_direct_save', null, null, 'lookup');
     await interaction.editReply({ content: ui.import.downloadFailed, embeds: [], components: [], files: [] }).catch(() => {});
   }
 }
@@ -480,7 +480,7 @@ export async function handleTrackMenuImportOpen(interaction: TrackMenuInteractio
       await interaction.editReply({ content: ui.import.timedOut, embeds: [], components: [], files: [] }).catch(() => {});
       return;
     }
-    await logError(interaction.client as LogClient, interaction.user, error, 'import_modal_flow');
+    await logError(interaction.client as LogClient, interaction.user, error, 'import_modal_flow', null, null, 'lookup');
   }
 }
 
@@ -520,7 +520,7 @@ export async function handleImportAccept(
     );
     await renderImportSuccess(interaction, session, outcomes);
   } catch (error) {
-    await logError(interaction.client as LogClient, interaction.user, error, 'import_accept');
+    await logError(interaction.client as LogClient, interaction.user, error, 'import_accept', null, null, 'submit');
     await interaction.editReply({ content: ui.import.importFailed, embeds: [], components: [], files: [] }).catch(() => {});
   }
 }

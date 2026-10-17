@@ -1,5 +1,6 @@
 import type { ClientOptions } from 'discord.js';
 import { Client } from 'discord.js';
+import { recordDiagnostic } from './diagnostics';
 import type { AppConfig } from '../config';
 import { CommandRegistry } from './command-registry';
 import { ComponentRegistry } from './component-registry';
@@ -14,5 +15,10 @@ export class TrackerBotClient extends Client {
   constructor(options: ClientOptions, appConfig: AppConfig) {
     super(options);
     this.appConfig = appConfig;
+    // Omit routes, URLs, bucket hashes and major parameters (including webhook tokens).
+    this.rest.on('rateLimited', info => recordDiagnostic('discord.rest.rate_limit', {
+      global: info.global, retryAfterMs: info.retryAfter,
+      timeToResetMs: info.timeToReset, sublimitTimeoutMs: info.sublimitTimeout,
+    }));
   }
 }

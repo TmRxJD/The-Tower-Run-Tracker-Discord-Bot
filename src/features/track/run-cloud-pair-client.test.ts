@@ -26,6 +26,47 @@ beforeEach(() => {
   mocks.get.mockRejectedValue({ code: 404 });
 });
 describe('complete bot history reads', () => {
+  it('overlaps two independent owners while preserving every field and count check', async () => {
+    vi.useFakeTimers();
+    mocks.identity.mockResolvedValue({ lookupUserIds: ['appwrite', 'discord', 'third', 'discord'] });
+    fixture({ appwrite: docs('appwrite', 2), discord: docs('discord', 1), third: docs('third', 1) });
+    const list = mocks.list.getMockImplementation()!;
+    let active = 0; let maxActive = 0;
+    mocks.list.mockImplementation(async (...args) => {
+      active++; maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      try { return await list(...args); } finally { active--; }
+    });
+    try {
+      const pending = loadBotCompleteRunCloudDocuments('discord', { includeExtended: false });
+      await vi.advanceTimersByTimeAsync(4000);
+      const rows = await pending;
+      expect(rows).toHaveLength(4);
+      expect(maxActive).toBe(2);
+      expect(mocks.list).toHaveBeenCalledTimes(6);
+      expect(rows.find(row => row.$id === 'appwrite-0000')).toMatchObject(docs('appwrite', 1)[0]);
+    } finally { vi.useRealTimers(); }
+  });
+  it('drains a failing owner wave before rejecting and never starts later owners', async () => {
+    mocks.identity.mockResolvedValue({ lookupUserIds: ['appwrite', 'discord', 'third'] });
+    let finish!: () => void;
+    const draining = new Promise<void>(resolve => { finish = resolve; });
+    mocks.list.mockImplementation(async (_db, _collection, queries: string[]) => {
+      const parsed = queries.map(q => JSON.parse(q));
+      const owner = parsed.find(q => q.method === 'equal').values[0];
+      if (owner === 'appwrite') throw Object.assign(new Error('private'), { code: 429 });
+      await draining;
+      return { total: 0, documents: [] };
+    });
+    let settled = false;
+    const pending = loadBotCompleteRunCloudDocuments('discord').catch(error => { settled = true; return error; });
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false);
+    finish();
+    expect(readHistoryFailure(await pending)).toMatchObject({ cause: 'http_status', status: 429, stage: 'main_page' });
+    expect(mocks.list).toHaveBeenCalledTimes(3);
+  });
+
   it.each([
     [{ total: 1, documents: 'PRIVATE' }, 'schema'],
     [{ total: 2, documents: [] }, 'pagination'],

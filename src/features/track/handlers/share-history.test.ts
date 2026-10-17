@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), snapshot: vi.fn(), settings: vi.fn() }));
+const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), snapshot: vi.fn(), settings: vi.fn(), sharedSettings: vi.fn() }));
 vi.mock('../run-upload-history', () => ({ prepareBotRunUploadHistory: mocks.history, withBotRunSubmissionLock: async (_user: string, action: (context: { setStage: () => void }) => Promise<unknown>) => action({ setStage: vi.fn() }) }));
 vi.mock('../tracker-api-client', async importOriginal => ({ ...await importOriginal<object>(), getUserSettings: mocks.settings }));
 vi.mock('../share/share-snapshot-store', () => ({ saveShareSnapshot: mocks.snapshot }));
 vi.mock('../share/share-embed-delivery', () => ({ resolveShareEmbedChannelPayload: async (input: object) => input }));
-vi.mock('../../../services/user-shared-settings-db', () => ({ getEffectiveUserSharedSettings: async () => ({ runDeltaMode: 'disabled' }) }));
+vi.mock('../../../services/user-shared-settings-db', () => ({ getEffectiveUserSharedSettings: mocks.sharedSettings }));
 vi.mock('./error-handlers', () => ({ logError: vi.fn() }));
 import { handleTrackMenuShareLast } from './share-handlers';
 import { logError } from './error-handlers';
@@ -15,6 +15,7 @@ const rows = Array.from({ length: 132 }, (_, i) => ({ runId: `run-${i}`, localId
 function interaction() { return { user: { id: 'share-owner', username: 'fixture', displayAvatarURL: () => '' }, client: {}, guildId: null, deferUpdate: vi.fn().mockResolvedValue(undefined), followUp: vi.fn().mockResolvedValue(undefined), channel: { send: vi.fn().mockResolvedValue({}) }, message: { components: [] } }; }
 beforeEach(() => {
   vi.clearAllMocks(); setTrackerFlowMode('share-owner', 'track');
+  mocks.sharedSettings.mockResolvedValue({ runDeltaMode: 'disabled' });
   mocks.settings.mockResolvedValue({ shareChart: false }); mocks.runs.mockResolvedValue(rows);
   mocks.history.mockResolvedValue({ getRuns: mocks.runs }); mocks.snapshot.mockResolvedValue(true);
 });
@@ -102,4 +103,26 @@ it('uses an existing acknowledgement without attempting a second one', async () 
   await handleTrackMenuShareLast(owner as never);
   expect(owner.deferUpdate).not.toHaveBeenCalled();
   expect(owner.channel.send).toHaveBeenCalledOnce();
+});
+
+it('overlaps fresh history and shared settings without publishing before both complete', async () => {
+  vi.useFakeTimers();
+  const owner = interaction();
+  setShareableRun('share-owner', { run: rows[0], runTypeCounts: {} });
+  mocks.history.mockImplementation(async () => {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    return { getRuns: mocks.runs };
+  });
+  mocks.sharedSettings.mockImplementation(async () => {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return { runDeltaMode: 'disabled' };
+  });
+  try {
+    const pending = handleTrackMenuShareLast(owner as never);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(owner.channel.send).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(500);
+    await pending;
+    expect(owner.channel.send).toHaveBeenCalledOnce();
+  } finally { vi.useRealTimers(); }
 });

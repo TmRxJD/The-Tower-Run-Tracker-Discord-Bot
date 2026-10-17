@@ -22,3 +22,8 @@ it('bounds stack scanning and accepts only known symbolic error codes', () => {
   expect(safeErrorDiagnostic(error, 'share_embed_expand', 'lookup').frames).toHaveLength(6);
   expect(safeErrorDiagnostic(error, 'share_embed_expand').code).toBe('ETIMEDOUT');
 });
+it('keeps import operation and parse stage identifiable without exposing save content', () => {
+  const result = safeErrorDiagnostic(new Error('PRIVATE_SAVE_CONTENT'), 'import_playerinfo_decode', 'parse');
+  expect(result).toMatchObject({ operation: 'import_playerinfo_decode', stage: 'parse' });
+  expect(JSON.stringify(result)).not.toContain('PRIVATE_SAVE_CONTENT');
+});

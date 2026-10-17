@@ -58,45 +58,65 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
     checkDeadline();
     if (!identity.lookupUserIds.length) throw failure('identity', 'Run history identity is unavailable. Please retry.');
     const documents = new Map<string, Record<string, unknown>>();
-    for (const ownerId of new Set(identity.lookupUserIds)) {
-      let cursor: string | null = null;
-      let expectedTotal: number | null = null;
-      const ownerIds = new Set<string>();
-      for (;;) {
-        stage = 'main_page';
-        checkDeadline();
-        const page: Models.DocumentList<Models.Document & { userId?: unknown }> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
-          ...buildBotRunCloudUserIdQueries(ownerId, cursor, COMPLETE_HISTORY_MAIN_PAGE_SIZE),
-          Query.orderAsc('$id'),
-        ]);
-        checkDeadline();
-        if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0
-          || (expectedTotal !== null && expectedTotal !== page.total)) {
-          throw failure(!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 ? 'schema' : 'count_consistency', 'Run history changed or could not be verified. Please retry.');
-        }
-        expectedTotal = page.total;
-        for (const raw of page.documents) {
-          const parsed = trackerRunCloudDocumentReadSchema.safeParse(raw);
-          if (!parsed.success || raw.userId !== ownerId || !raw.$id || ownerIds.has(raw.$id)) {
-            throw failure(!parsed.success || !raw.$id ? 'schema' : raw.userId !== ownerId ? 'ownership' : 'pagination', 'Run history contains an unreadable or repeated record. Please retry.');
+    const ownerIdsToRead = [...new Set(identity.lookupUserIds)];
+    // Linked and legacy owners are independent. Keep at most two requests active,
+    // and drain a failed wave before retrying the whole verified observation.
+    for (let wave = 0; wave < ownerIdsToRead.length; wave += 2) {
+      const ownerResults = await Promise.allSettled(ownerIdsToRead.slice(wave, wave + 2).map(async ownerId => {
+        const ownerDocuments = new Map<string, Record<string, unknown>>();
+        let ownerStage: HistoryFailureStage = 'main_page';
+        const failure = (cause: Parameters<typeof historyFailureError>[1], message: string) => historyFailureError(message, cause, ownerStage, correlation);
+        const checkDeadline = () => {
+          if (signal?.aborted) throw failure('unknown', 'Run history lookup cancelled.');
+          if (Date.now() >= deadline) throw failure('timeout', 'Run history lookup timed out. Please retry.');
+        };
+        try {
+          let cursor: string | null = null;
+          let expectedTotal: number | null = null;
+          const ownerIds = new Set<string>();
+          for (;;) {
+            ownerStage = 'main_page';
+            checkDeadline();
+            const page: Models.DocumentList<Models.Document & { userId?: unknown }> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
+              ...buildBotRunCloudUserIdQueries(ownerId, cursor, COMPLETE_HISTORY_MAIN_PAGE_SIZE),
+              Query.orderAsc('$id'),
+            ]);
+            checkDeadline();
+            if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0
+              || (expectedTotal !== null && expectedTotal !== page.total)) {
+              throw failure(!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 ? 'schema' : 'count_consistency', 'Run history changed or could not be verified. Please retry.');
+            }
+            expectedTotal = page.total;
+            for (const raw of page.documents) {
+              const parsed = trackerRunCloudDocumentReadSchema.safeParse(raw);
+              if (!parsed.success || raw.userId !== ownerId || !raw.$id || ownerIds.has(raw.$id)) {
+                throw failure(!parsed.success || !raw.$id ? 'schema' : raw.userId !== ownerId ? 'ownership' : 'pagination', 'Run history contains an unreadable or repeated record. Please retry.');
+              }
+              ownerIds.add(raw.$id);
+              ownerDocuments.set(raw.$id, parsed.data);
+            }
+            if (ownerIds.size === expectedTotal) break;
+            if (!page.documents.length || ownerIds.size > expectedTotal) {
+              throw failure('pagination', 'Run history is incomplete. Please retry.');
+            }
+            cursor = page.documents[page.documents.length - 1].$id;
           }
-          ownerIds.add(raw.$id);
-          documents.set(raw.$id, parsed.data);
-        }
-        if (ownerIds.size === expectedTotal) break;
-        if (!page.documents.length || ownerIds.size > expectedTotal) {
-          throw failure('pagination', 'Run history is incomplete. Please retry.');
-        }
-        cursor = page.documents[page.documents.length - 1].$id;
+          // Detect concurrent additions/deletions after the last page, before trusting counts.
+          ownerStage = 'main_count';
+          checkDeadline();
+          const check = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
+            Query.equal('userId', ownerId), Query.limit(1), Query.select(['$id']),
+          ]);
+          checkDeadline();
+          if (check.total !== expectedTotal) throw failure('count_consistency', 'Run history changed. Please retry.');
+          return ownerDocuments;
+        } catch (error) { throw annotateHistoryFailure(error, ownerStage, correlation); }
+      }));
+      const failedOwner = ownerResults.find(result => result.status === 'rejected');
+      if (failedOwner?.status === 'rejected') throw failedOwner.reason;
+      for (const result of ownerResults) {
+        if (result.status === 'fulfilled') for (const [id, document] of result.value) documents.set(id, document);
       }
-      // Detect concurrent additions/deletions after the last page, before trusting counts.
-      stage = 'main_count';
-      checkDeadline();
-      const check = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
-        Query.equal('userId', ownerId), Query.limit(1), Query.select(['$id']),
-      ]);
-      checkDeadline();
-      if (check.total !== expectedTotal) throw failure('count_consistency', 'Run history changed. Please retry.');
     }
     const mainDocuments = [...documents.values()];
     // Duplicate review uses only main-record identity fields; never fetch unused statistics.

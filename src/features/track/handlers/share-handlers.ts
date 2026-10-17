@@ -181,7 +181,11 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       await disableShareButtonOnOriginalMessage(interaction);
     } else {
       setStage('history');
-      const history = await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { readOnly: true, onStage: context.setStage }), 'share-history');
+      // Both reads use fresh settings/history and neither depends on the other.
+      const [history, sharedSettings] = await Promise.all([
+        withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { readOnly: true, onStage: context.setStage }), 'share-history'),
+        getEffectiveUserSharedSettings(userId),
+      ]);
       const verifiedRuns = await history.getRuns();
       const cached = getShareableRun(userId);
       let run = cached?.run ?? null;
@@ -205,7 +209,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         return;
       }
 
-      const sharedSettings = await getEffectiveUserSharedSettings(userId);
+
 
       // Compact only where required (this server) or where the user opted in; otherwise expanded.
       const compact = shouldCompactShare({ guildId: interaction.guildId, shareCompact: settings?.shareCompact });
