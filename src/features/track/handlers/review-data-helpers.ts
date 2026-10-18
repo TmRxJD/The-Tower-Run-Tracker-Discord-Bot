@@ -305,6 +305,7 @@ function isUpdatedBattleReportShape(data: RunDataRecord, normalizedData: Record<
 }
 
 export type BattleReportStat = {
+  key: string;
   label: string;
   /** `null` means the stat was scanned but carried no value. */
   value: string | null;
@@ -321,10 +322,10 @@ function resolveRawParseStat(field: UpdatedRawParseField, rawField: RawParseFiel
   }
 
   if (rawField.fromRawParseFields && rawField.value === '') {
-    return { label: field.label, value: null };
+    return { key: field.key, label: field.label, value: null };
   }
 
-  return rawField.value === null ? null : { label: field.label, value: rawField.value };
+  return rawField.value === null ? null : { key: field.key, label: field.label, value: rawField.value };
 }
 
 function resolveRawParseLayout(data: RunDataRecord, normalizedData: Record<string, unknown>): UpdatedRawParseSection[] {

@@ -30,9 +30,11 @@ import {
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
-import { buildEmbedUserFromInteraction } from '../discord-display-name';
+import { buildEmbedUserFromInteraction, resolveInteractionDisplayName } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
 import { resolveShareEmbedChannelPayload } from '../share/share-embed-delivery';
+import { buildShareSnapshotRef } from '../share/share-run-ref';
+import { saveShareSnapshot } from '../share/share-snapshot-store';
 import { buildTrackerDocumentEntryReference, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 import type { TrackReplyInteractionLike } from '../interaction-types';
@@ -664,9 +666,13 @@ export async function handleTrackMenuShareRunsConfirm(interaction: TrackMenuInte
     const channel = interaction.channel;
     if (channel && 'send' in channel && typeof channel.send === 'function') {
       try {
+        let shareRunRef = session.mode === 'track' ? buildShareSnapshotRef(session.userId, run, session.runTypeCounts) : null;
+        if (shareRunRef && !await saveShareSnapshot({ ref: shareRunRef, userId: session.userId, run,
+          runTypeCounts: session.runTypeCounts, sharerName: resolveInteractionDisplayName(interaction) })) shareRunRef = null;
         const payload = await resolveShareEmbedChannelPayload({
           userId: session.userId,
           embed,
+          shareRunRef,
         });
         await channel.send(payload);
       } catch (error) {

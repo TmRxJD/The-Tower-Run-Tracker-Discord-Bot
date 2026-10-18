@@ -48,6 +48,15 @@ export function buildShareEmbedActionRows(options: ShareEmbedActionOptions = {})
     );
   }
 
+  if (shareRunRef && fitsShareCustomId(TRACKER_IDS.share.comparePrefix, shareRunRef)) {
+    primaryRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${TRACKER_IDS.share.comparePrefix}${shareRunRef}`)
+        .setLabel('Compare')
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+
   primaryRow.addComponents(
     new ButtonBuilder()
       .setCustomId(TRACKER_IDS.share.trackRun)

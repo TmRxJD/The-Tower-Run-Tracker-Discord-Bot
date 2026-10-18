@@ -30,6 +30,9 @@ describe('share embed actions', () => {
     const components = (rows[0]?.toJSON().components ?? []) as SerializedShareButton[]
     expect(components.some(component => component.custom_id === 'tracker_share_expand:123:abc')).toBe(true)
     expect(components.some(component => component.custom_id === 'tracker_share_report:123:abc')).toBe(true)
+    expect(components.some(component => component.custom_id === 'tracker_share_compare:123:abc' && component.label === 'Compare')).toBe(true)
+    expect(components.some(component => component.label === 'Compare with mine')).toBe(false)
+    expect(components).toHaveLength(5)
   })
 
   it('omits Expand on an already expanded share but keeps Battle Report', () => {

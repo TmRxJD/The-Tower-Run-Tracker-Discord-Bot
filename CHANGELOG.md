@@ -14,6 +14,24 @@
 - Overlap fresh shared display settings with share history. Retain separate current-history verification across actions and website edit/deletion correctness.
 - Add content-free Discord REST wait/import-operation diagnostics and a reusable read-only stage probe. See docs/LATENCY-2026-10-17.md for validation and limits.
 
+## 2026-10-15 - Expanded private run and battle-report comparisons
+
+- Label the public control Compare. Compare all enabled details accessible through the source share's Expand action, including coverage and notes, and provide a separate Compare battle reports control when the source exposes Battle Report.
+- Keep both run values together on each metric row, with relative differences where valid. Replace stacking inline embed columns with paginated paired rows; preserve long text, genuine zeroes and missing data without inventing hourly zeroes or percentages from missing/zero baselines. Derive scalar differences from the displayed values so stale saved hourly rates cannot contradict them.
+- Reuse canonical expanded/report formatting and platform calculations. Revalidate the selected owned run before opening reports, cache selected page models for read-free navigation, and preserve private ownership/message/expiry/revision and cancellation guards. Ignore unrelated save properties and report uncaptured legacy fields explicitly.
+
+## 2026-10-15 - Observe private Compare outcomes
+
+- Record one content-free Compare outcome with process ID, action, stage, duration and an optional numeric Discord error code. Mark a comparison delivered only after its private edit succeeds; retain explicit acknowledgement failure, rejection, cancellation/expiry and unavailable-data outcomes.
+- Exclude run contents, user/message/run/session IDs, names, URLs, raw exceptions and arbitrary error-code strings. Logging retains the existing rate limit; samples are evidence of observed events, not complete usage counts.
+
+## 2026-10-15 - Private run-share comparisons
+
+- Add Compare with mine to snapshot-backed run shares. Each clicker gets a private, owner-bound run picker with pagination, cancellation and a five-minute expiry; the shared message is never edited by the comparison flow.
+- Reuse the canonical share formatter and platform deltas for side-by-side columns, limited to metrics visible in the public source share. Preserve missing/zero values and suppress percentages for missing or zero baselines. Never include private notes, screenshots or full report data.
+- Revalidate the selected run's owner, identity, profile and deletion state; use local choices or bounded main-record queries and fetch only the selected cloud pair. Reject foreign, stale, repeated and mismatched-message controls; cancellation blocks late read completion.
+- Preserve existing actions and changelog mirroring. New/reshared single-run posts gain the button; existing public messages are not backfilled. Add durable snapshots to the View Runs single-run share path so its new controls refer to the captured version.
+
 ## 2026-10-15 - Mirror published website Updates to Discord
 
 - Poll the exact public Markdown used by the website header Updates button every minute in production and mirror new releases to dev-updates (`1373110039669379082`). Baseline existing releases without replaying history.

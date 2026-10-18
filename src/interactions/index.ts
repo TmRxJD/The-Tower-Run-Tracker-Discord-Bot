@@ -79,6 +79,14 @@ import {
   handleShareEmbedViewBuild,
   handleShareEmbedExpand,
   handleShareEmbedBattleReport,
+  handleShareCompareOpen,
+  handleShareCompareSelect,
+  handleShareComparePrevious,
+  handleShareCompareNext,
+  handleShareCompareBack,
+  handleShareCompareCancel,
+  handleShareCompareReports,
+  handleShareCompareDetails,
 } from '../features/track/handlers';
 import {
   handleTrackMenuAnalysis,
@@ -178,5 +186,13 @@ export function registerComponentHandlers(client: TrackerBotClient) {
     { prefix: TRACKER_IDS.share.viewBuildPrefix, handler: handleShareEmbedViewBuild },
     { prefix: TRACKER_IDS.share.expandPrefix, handler: handleShareEmbedExpand },
     { prefix: TRACKER_IDS.share.reportPrefix, handler: handleShareEmbedBattleReport },
+    { prefix: TRACKER_IDS.share.comparePrefix, handler: handleShareCompareOpen },
+    { prefix: TRACKER_IDS.share.compareSelectPrefix, handler: handleShareCompareSelect },
+    { prefix: TRACKER_IDS.share.comparePrevPrefix, handler: handleShareComparePrevious },
+    { prefix: TRACKER_IDS.share.compareNextPrefix, handler: handleShareCompareNext },
+    { prefix: TRACKER_IDS.share.compareBackPrefix, handler: handleShareCompareBack },
+    { prefix: TRACKER_IDS.share.compareCancelPrefix, handler: handleShareCompareCancel },
+    { prefix: TRACKER_IDS.share.compareReportsPrefix, handler: handleShareCompareReports },
+    { prefix: TRACKER_IDS.share.compareDetailsPrefix, handler: handleShareCompareDetails },
   ]);
 }

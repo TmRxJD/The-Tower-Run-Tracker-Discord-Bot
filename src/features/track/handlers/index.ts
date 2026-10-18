@@ -7,3 +7,4 @@ export * from './remove-handlers';
 export * from './manual-handlers';
 export * from './import-handlers';
 export * from './share-embed-action-handlers';
+export * from './share-compare-handlers';

@@ -147,6 +147,14 @@ export const TRACKER_IDS = {
     viewBuildPrefix: 'tracker_share_view_build:',
     expandPrefix: 'tracker_share_expand:',
     reportPrefix: 'tracker_share_report:',
+    comparePrefix: 'tracker_share_compare:',
+    compareSelectPrefix: 'tracker_compare_select:',
+    comparePrevPrefix: 'tracker_compare_prev:',
+    compareNextPrefix: 'tracker_compare_next:',
+    compareBackPrefix: 'tracker_compare_back:',
+    compareCancelPrefix: 'tracker_compare_cancel:',
+    compareReportsPrefix: 'tracker_compare_reports:',
+    compareDetailsPrefix: 'tracker_compare_details:',
   },
 } as const;
 
@@ -195,4 +203,14 @@ export function parseViewRunsOrientationTarget(customId: string): 'landscape' | 
     return target;
   }
   return null;
+}
+
+export function withShareCompareControl(prefix: string, token: string, revision: number): string {
+  return withTokenAndField(prefix, token, String(revision));
+}
+
+export function parseShareCompareControl(prefix: string, customId: string): { token: string; revision: number } | null {
+  const value = parsePrefixedTrackerToken(prefix, customId);
+  const match = value ? /^([a-f0-9]{24}):(\d{1,6})$/.exec(value) : null;
+  return match ? { token: match[1], revision: Number(match[2]) } : null;
 }
