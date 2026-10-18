@@ -3,7 +3,8 @@ import type { TrackerBotClient } from '../../core/tracker-bot-client';
 import { logger } from '../../core/logger';
 import { releaseBotRunTrackerRxDatabase } from '../../rxdb/database-manager';
 import { listTrackerUserIdsSeenSince } from '../../services/idb';
-import { listCloudSyncEnabledUserIds } from './local-run-store';
+import { listCloudSyncEnabledUserIds, getQueueItems } from './local-run-store';
+import { retryPendingRunSync } from './tracker-api-client';
 import { runBackgroundAuthoritySync } from './run-background-authority-sync';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,7 +42,9 @@ async function listUsersForBackgroundPass(): Promise<string[]> {
 
   const seenSince = new Date(Date.now() - resolveActiveWindowMs()).toISOString();
   const recentlySeen = new Set(await listTrackerUserIdsSeenSince(seenSince));
-  return cloudSyncUserIds.filter((userId) => recentlySeen.has(userId));
+  const futurePending = new Set((await getQueueItems()).filter(item => item.automaticRecovery && !item.blockedReason
+    && item.uploadProfileId !== undefined).map(item => item.userId));
+  return cloudSyncUserIds.filter((userId) => recentlySeen.has(userId) || futurePending.has(userId));
 }
 
 export interface BackgroundSyncPassResult {
@@ -67,6 +70,7 @@ export async function runBackgroundSyncPass(): Promise<BackgroundSyncPassResult 
     let consecutiveCloudFailures = 0;
     for (const userId of userIds) {
       try {
+        await retryPendingRunSync(userId);
         const { cloudReachable } = await runBackgroundAuthoritySync(userId);
         if (cloudReachable) {
           consecutiveCloudFailures = 0;

@@ -336,7 +336,7 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
     // Review needs duplicate identity only, not full historical statistics or local rewrites.
     const history = params.flowMode === 'lifetime'
       ? { getRuns: () => getLocalRuns(userId) }
-      : await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { readOnly: true, mainOnly: true, onStage: context.setStage }), 'upload-history');
+      : await withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { localFirst: true, readOnly: true, mainOnly: true, onStage: context.setStage }), 'upload-history');
     const localRuns = await history.getRuns();
     const duplicateCheck = findPotentialDuplicateRun(hydratedRunData, localRuns);
     if (duplicateCheck.isDuplicate) {
@@ -349,12 +349,12 @@ async function createPendingRunWithMetadata(params: { userId: string; username: 
   // already stashed a per-user upload target (alt: option, else stored default); prefer
   // that as the pre-selected value so the review select and the eventual write agree.
   let profileOptions: Awaited<ReturnType<typeof listBotUserProfiles>> = [];
-  let uploadProfileId: string | null = null;
+  let uploadProfileId: string | null = peekPendingUploadProfile(userId) ?? null;
   try {
-    profileOptions = await listBotUserProfiles(userId);
+    profileOptions = await listBotUserProfiles(userId, { localOnly: true });
     if (profileOptions.length > 1) {
       const pending = peekPendingUploadProfile(userId);
-      uploadProfileId = pending ?? (await resolveDefaultUploadProfileId(userId));
+      uploadProfileId = pending ?? (await resolveDefaultUploadProfileId(userId, { localOnly: true }));
       // Keep the pending target consistent with the shown default (covers the
       // confirm-before-submit=off path, which skips the review selector).
       setPendingUploadProfile(userId, uploadProfileId);
@@ -875,7 +875,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
           throw error;
         });
 
-    const sharedSettings = await getEffectiveUserSharedSettings(userId);
+    const sharedSettings = await getEffectiveUserSharedSettings(userId, { localOnly: true });
     const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
     const lastRunType = typeof summary?.lastRun?.type === 'string' && summary.lastRun.type.trim() ? summary.lastRun.type : 'Farming';
     const analyticsRuns = summary.recentRunsForAnalytics ?? [];
@@ -891,6 +891,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
       runTypeCounts: summary?.runTypeCounts ?? {},
       deltaResult,
     });
+    if (resolvedMode !== 'lifetime') embed.setFooter({ text: 'Local saved history; cloud changes may not yet be reflected.' });
     const rows = createMainMenuButtons(resolvedMode);
     let chartFiles: AttachmentBuilder[] = [];
     if (resolvedMode !== 'lifetime' && summary?.lastRun && analyticsRuns.length > 0) {
@@ -1162,8 +1163,8 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
 
   // Fetch the caller's profiles BEFORE showing the modal so we can embed a profile picker
   // (only when they have more than one profile). showModal must still be the first response.
-  const profiles = await listBotUserProfiles(userId);
-  const defaultProfileId = profiles.length > 1 ? await resolveDefaultUploadProfileId(userId) : null;
+  const profiles = await listBotUserProfiles(userId, { localOnly: true });
+  const defaultProfileId = profiles.length > 1 ? await resolveDefaultUploadProfileId(userId, { localOnly: true }) : null;
 
   const Builders = Discord as unknown as BuildersLike;
   const modal = new ModalBuilder().setCustomId(TRACKER_IDS.flow.pasteModal).setTitle(uploadUi.pasteModalTitle);
@@ -1284,8 +1285,8 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
   // Profile picker inside the add-run modal (only when the user has more than one
   // profile). Fetched before showModal so the options are ready; showModal is still the
   // first response to the interaction.
-  const profiles = await listBotUserProfiles(userId);
-  const defaultProfileId = profiles.length > 1 ? await resolveDefaultUploadProfileId(userId) : null;
+  const profiles = await listBotUserProfiles(userId, { localOnly: true });
+  const defaultProfileId = profiles.length > 1 ? await resolveDefaultUploadProfileId(userId, { localOnly: true }) : null;
   const profileMenu = buildProfileSelectMenu({
     customId: TRACKER_IDS.flow.addRunProfile,
     options: profiles,

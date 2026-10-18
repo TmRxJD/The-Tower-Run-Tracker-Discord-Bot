@@ -37,6 +37,7 @@ export const TRACKER_IDS = {
     mainMenu: 'tracker_main_menu',
     mainMenuAfterRemove: 'tracker_main_menu_after_remove',
     shareLast: 'tracker_share',
+    shareLastVerified: 'tracker_share_verified',
     upload: 'tracker_upload',
     paste: 'tracker_paste',
     addRun: 'tracker_addrun',

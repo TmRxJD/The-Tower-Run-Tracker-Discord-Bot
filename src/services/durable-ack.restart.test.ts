@@ -20,7 +20,7 @@ it('retains acknowledged queue, original target and share after abrupt process t
       await require('./dist/features/track/tracker-api-client').logRun({userId:'fixture-offline-crash',username:'fixture',uploadProfileId:'alt-crash-original',runData:{localId:'offline-crash-local',tier:'5',wave:'321',totalCoins:'2B',totalCells:'3K',totalDice:0,roundDuration:'1h'}});
       await p.rememberOriginalRunTarget('fixture-durable','local-1','alt-original');
       await p.rememberOriginalRunTarget('fixture-durable','local-1','alt-later');
-      await q.queueCloudUpsert({userId:'fixture-durable',username:'fixture',localId:'local-1',runData:{localId:'local-1',totalCoins:0},uploadProfileId:'alt-original'});
+      await q.queueCloudUpsert({automaticRecovery:true,duplicateCheckPending:true,userId:'fixture-durable',username:'fixture',localId:'local-1',runData:{localId:'local-1',totalCoins:0},uploadProfileId:'alt-original'});
       if(!await s.saveShareSnapshot({ref:'fixture-snapshot',userId:'fixture-durable',run:{totalCoins:0},runTypeCounts:{Farming:7},sharerName:'fixture'})) throw Error('snapshot failed');
       ui.setShareableRun('fixture-durable',{run:{totalCoins:0},runTypeCounts:{Farming:7}});
       for(let i=0;i<1100;i++)ui.setShareableRun('churn-'+i,{run:{},runTypeCounts:{}});
@@ -42,11 +42,14 @@ it('retains acknowledged queue, original target and share after abrupt process t
       const q=await require('./dist/features/track/local-run-store').getQueueItems('fixture-durable');
       const p=await require('./dist/features/track/run-local-provenance').getOriginalRunTarget('fixture-durable','local-1');
       const s=await require('./dist/features/track/share/share-snapshot-store').readShareSnapshot('fixture-snapshot');
-      if(q.length!==1||q[0].uploadProfileId!=='alt-original'||p.profileId!=='alt-original'||s.run.totalCoins!==0||s.runTypeCounts.Farming!==7)throw Error('restart mismatch');
+      if(q.length!==1||q[0].duplicateCheckPending!==true||q[0].automaticRecovery!==true||q[0].uploadProfileId!=='alt-original'||p.profileId!=='alt-original'||s.run.totalCoins!==0||s.runTypeCounts.Farming!==7)throw Error('restart mismatch');
       await require('./dist/rxdb/local-only-backup').restoreLocalOnlyRuns();
       const offline=await require('./dist/features/track/local-run-store').getLocalRuns('fixture-offline-crash');
       const target=await require('./dist/features/track/run-local-provenance').getOriginalRunTarget('fixture-offline-crash','offline-crash-local');
       if(offline.length!==1||offline[0].localId!=='offline-crash-local'||offline[0].runId||offline[0].totalCoins!=='2B'||offline[0].totalCells!=='3K'||Number(offline[0].totalDice)!==0||target.profileId!=='alt-crash-original')throw Error('offline restart mismatch');
+      const view=await require('./dist/features/track/run-upload-history').prepareBotRunUploadHistory('fixture-durable',{localFirst:true});
+      const pendingRows=await view.getRuns();
+      if(view.verified!==false||pendingRows.length!==1||pendingRows[0].localId!=='local-1'||Number(pendingRows[0].totalCoins)!==0)throw Error('pending offline view lost');
       process.stdout.write('VERIFIED');process.exit(0);
     })().catch(()=>process.exit(3));
   `], { cwd: process.cwd(), env, timeout: 10_000 });

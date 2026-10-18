@@ -1,3 +1,9 @@
+## 2026-10-18 - Restore local-first reporting during backend outages
+
+- Remove live identity/history/settings/profile gates from ordinary report review, durable submission and local sharing. Show local/pending state and unverified cloud counts/comparisons honestly; retain an explicit Verify & Share option.
+- Commit new queue intents and original targets before success. Resolve remote duplicates in background with a durable stable id, bounded reads/circuit breaking and future-only automatic recovery. Reconstruct new pending local views after process restart without replaying historical unknown targets.
+- Validate 641 isolated tests, type checking, build and full lint. See docs/OFFLINE-2026-10-18.md for measured timings, safeguards and deployment evidence.
+
 ## 2026-10-17 - Reduce verified history and sharing waits
 
 - Verified production deployment: PID 2924 reached Discord readiness and stayed online without restarts during the 30-second check.

@@ -178,7 +178,7 @@ describe('tracker-api-client settings sync', () => {
     await queueCloudUpsert({userId,username:'fixture',localId:'fixture-blocked',runData:{localId:'fixture-blocked',wave:'123'}});
     await forceSyncQueuedRuns(userId);await forceSyncQueuedRuns(userId);
     const q=await getQueueItems(userId);
-    expect(q).toHaveLength(1);expect(q[0].blockedReason).toBe('target-profile-required');
+    expect(q).toHaveLength(1);expect(q[0].uploadProfileId).toBeUndefined();
     expect(q[0].retryCount).toBe(0);expect(q[0].runData?.wave).toBe('123');
     expect(createDocumentMock).not.toHaveBeenCalled();
   });

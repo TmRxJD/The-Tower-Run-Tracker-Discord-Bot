@@ -28,6 +28,8 @@ export interface CloudQueueItem {
   runData?: Record<string, unknown>;
   /** Undefined identifies a legacy queue entry with an unknown target; null means Main. */
   uploadProfileId?: string | null;
+  automaticRecovery?: boolean;
+  duplicateCheckPending?: boolean;
   blockedReason?: 'target-profile-required';
   canonicalRunData?: Record<string, unknown>;
   settingsData?: TrackerSettings & { updatedAt?: number };
@@ -214,6 +216,8 @@ function parseCloudQueueItem(item: unknown): CloudQueueItem | null {
     localId: typeof record.localId === 'string' && record.localId.trim().length > 0 ? record.localId : undefined,
     runData,
     uploadProfileId,
+    ...(record.automaticRecovery === true ? { automaticRecovery: true } : {}),
+    ...(typeof record.duplicateCheckPending === 'boolean' ? { duplicateCheckPending: record.duplicateCheckPending } : {}),
     blockedReason: record.blockedReason === 'target-profile-required' ? 'target-profile-required' : undefined,
     canonicalRunData,
     screenshot: screenshotRecord
@@ -577,6 +581,8 @@ export async function mergeCloudRuns(userId: string, runs: Array<Record<string, 
 }
 
 export type QueueCloudUpsertInput = {
+  automaticRecovery?: boolean;
+  duplicateCheckPending?: boolean;
   userId: string;
   username: string;
   runData: Record<string, unknown>;
@@ -629,6 +635,8 @@ async function applyQueueUpsertInMemory(input: QueueCloudUpsertInput) {
       runId,
       runData: runId ? { ...normalizedRunData, runId } : normalizedRunData,
       uploadProfileId,
+      automaticRecovery: previousItem?.automaticRecovery ?? input.automaticRecovery,
+      duplicateCheckPending: previousItem?.duplicateCheckPending ?? input.duplicateCheckPending,
       canonicalRunData: normalizedCanonicalRunData,
       screenshot: input.screenshot ?? null,
       createdAt: previousItem?.createdAt ?? Date.now(),
@@ -841,3 +849,20 @@ export async function markQueueItemFailed(id: string, error: string): Promise<vo
 export async function markQueueItemTargetBlocked(id: string): Promise<void> { await mutateQueue(() => markQueueItemTargetBlockedUnsafe(id)); }
 export async function releaseQueuedItemsForImmediateRetry(userId: string): Promise<void> { await mutateQueue(() => releaseQueuedItemsForImmediateRetryUnsafe(userId)); }
 export async function removeQueueItem(id: string): Promise<void> { await mutateQueue(() => removeQueueItemUnsafe(id)); }
+
+/** Bind remote duplicate resolution durably before either cloud document is written. */
+export async function resolveQueuedRunDuplicate(id: string, runId: string): Promise<CloudQueueItem | null> {
+  let resolved: CloudQueueItem | null = null;
+  await mutateQueue(async () => {
+    await ensureLoaded();
+    const item = cache?.queue.find(item => item.id === id);
+    if (!item) return;
+    item.runId = runId;
+    item.runData = { ...item.runData, runId };
+    if (item.canonicalRunData) item.canonicalRunData = { ...item.canonicalRunData, runId };
+    item.duplicateCheckPending = false;
+    await persist();
+    resolved = { ...item };
+  });
+  return resolved;
+}

@@ -47,7 +47,7 @@ export async function renderDataReview(interaction: TrackReplyInteractionLike, t
     taggedByDeathWave: pending.runData?.taggedByDeathWave,
     totalEnemies: pending.runData?.totalEnemies,
   });
-  await renderDataReviewOrSubmit(interaction, token, pending, label, getUserSettings, submitPendingRun);
+  await renderDataReviewOrSubmit(interaction, token, pending, label, userId => getUserSettings(userId, { localOnly: true }), submitPendingRun);
 }
 
 export async function handleReviewProfileSelect(interaction: ReviewInteraction) {
@@ -204,7 +204,7 @@ async function submitPendingRun(interaction: ReviewInteraction, token: string, p
   if (!await getPendingRun(token)) return;
   await interaction.editReply({ embeds: [createLoadingEmbed(reviewUi().messages.processingSubmission)], components: [] }).catch(() => {});
   const settingsForDuplicate = getTrackerFlowMode(pending.userId) === 'lifetime'
-    ? null : await getUserSettings(pending.userId);
+    ? null : await getUserSettings(pending.userId, { localOnly: true });
   const present = await withBotRunSubmissionLock(pending.userId, async context => {
     const current = await getPendingRun(token);
     if (!current) return; // Same Submit button clicked twice while the first write ran.
@@ -309,7 +309,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
       return async () => { try { await presentLifetime(); } catch (error) { await reportFailure(error); } };
     }
 
-    const history = await prepareBotRunUploadHistory(userId, { onStage: context.setStage });
+    const history = await prepareBotRunUploadHistory(userId, { localFirst: true, onStage: context.setStage });
     if (!await draftIsCurrent()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
     context.setStage('duplicate-check');
     const existingRuns = await history.getRuns();
@@ -365,7 +365,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         userId,
         username,
         runData: dispatchPlan.runData,
-        uploadProfileId: pending.uploadProfileId,
+        uploadProfileId: pending.uploadProfileId ?? null,
         canonicalRunData,
         deferredScreenshotSource,
         skipLeaderboardRefresh: true,
@@ -407,16 +407,17 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     return async () => {
       try {
         const hasScreenshot = Boolean(pending.screenshot?.url);
-        const settings = await getUserSettings(userId).catch(() => null);
+        const settings = await getUserSettings(userId, { localOnly: true }).catch(() => null);
 
-        const sharedSettings = await getEffectiveUserSharedSettings(userId).catch(() => ({ runDeltaMode: 'disabled' as const }));
+        const sharedSettings = await getEffectiveUserSharedSettings(userId, { localOnly: true }).catch(() => ({ runDeltaMode: 'disabled' as const }));
         const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
         const runTypeForDelta = String(canonicalRunData.type ?? 'Farming').trim() || 'Farming';
-        const deltaResult = deltaMode !== 'disabled' && allRunsArr.length > 1
+        const deltaResult = history.verified !== false && deltaMode !== 'disabled' && allRunsArr.length > 1
           ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode, undefined, { ...coverageSource, runId: resolvedRunId }) ?? undefined
           : undefined;
 
-        const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts, hasScreenshot, screenshotUrl, deltaResult });
+        const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts: history.verified === false ? {} : runTypeCounts, hasScreenshot, screenshotUrl, deltaResult });
+        if (history.verified === false) embed.setFooter({ text: syncResult?.queuedForCloud ? 'Saved locally; cloud sync pending. Cloud counts and comparisons are unavailable.' : 'Saved locally. Cloud counts and comparisons are unavailable.' });
 
         const shouldAttachChart = settings?.shareChart !== false;
         let chartAttachment = null;
@@ -430,7 +431,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         }
 
         if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
-        await interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: chartAttachment ? [chartAttachment] : [] });
+        await interaction.editReply({ content: syncResult?.queuedForCloud ? 'Saved locally; queued for cloud sync.' : undefined, embeds: [embed], components: createSuccessButtons(), files: chartAttachment ? [chartAttachment] : [] });
 
         if (syncResult?.backgroundSync) {
           void syncResult.backgroundSync
@@ -448,7 +449,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
           interaction,
           userId,
           run: shareableRun,
-          runTypeCounts,
+          runTypeCounts: history.verified === false ? {} : runTypeCounts,
           deltaResult,
           allRuns: allRunsArr,
         });

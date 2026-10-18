@@ -1,13 +1,14 @@
+vi.mock('./tracker-api-client', () => ({ retryPendingRunSync: async () => {} }));
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  listCloudSyncEnabledUserIds: vi.fn(),
+  listCloudSyncEnabledUserIds: vi.fn(), getQueueItems: vi.fn(),
   listTrackerUserIdsSeenSince: vi.fn(),
   runBackgroundAuthoritySync: vi.fn(),
   releaseBotRunTrackerRxDatabase: vi.fn(),
 }));
 
-vi.mock('./local-run-store', () => ({ listCloudSyncEnabledUserIds: mocks.listCloudSyncEnabledUserIds }));
+vi.mock('./local-run-store', () => ({ listCloudSyncEnabledUserIds: mocks.listCloudSyncEnabledUserIds, getQueueItems: mocks.getQueueItems }));
 vi.mock('../../services/idb', () => ({ listTrackerUserIdsSeenSince: mocks.listTrackerUserIdsSeenSince }));
 vi.mock('./run-background-authority-sync', () => ({ runBackgroundAuthoritySync: mocks.runBackgroundAuthoritySync }));
 vi.mock('../../rxdb/database-manager', () => ({ releaseBotRunTrackerRxDatabase: mocks.releaseBotRunTrackerRxDatabase }));
@@ -18,7 +19,7 @@ const users = (count: number) => Array.from({ length: count }, (_, index) => `us
 
 describe('runBackgroundSyncPass', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.clearAllMocks(); mocks.getQueueItems.mockResolvedValue([]);
     delete process.env.TRACKER_BACKGROUND_SYNC_ACTIVE_DAYS;
     mocks.releaseBotRunTrackerRxDatabase.mockResolvedValue(undefined);
     mocks.runBackgroundAuthoritySync.mockResolvedValue({ cloudReachable: true });
@@ -118,4 +119,15 @@ describe('runBackgroundSyncPass', () => {
     release();
     await first;
   });
+});
+
+it('includes future pending intents outside the activity window without enrolling unknown legacy targets', async () => {
+  mocks.listCloudSyncEnabledUserIds.mockResolvedValue(['future', 'legacy']);
+  mocks.listTrackerUserIdsSeenSince.mockResolvedValue([]);
+  mocks.getQueueItems.mockResolvedValue([
+    { userId: 'future', automaticRecovery: true, uploadProfileId: null },
+    { userId: 'legacy', uploadProfileId: undefined },
+  ]);
+  mocks.runBackgroundAuthoritySync.mockResolvedValue({ cloudReachable: true });
+  expect(await runBackgroundSyncPass()).toMatchObject({ users: 1, synced: 1 });
 });

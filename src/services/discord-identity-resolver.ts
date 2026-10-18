@@ -20,6 +20,12 @@ type CachedEntry = {
   cachedAt: number;
 };
 
+/** Local display/recovery hint only; never authorizes cloud writes. */
+export async function getStoredAppwriteIdForDiscordUser(discordId: string): Promise<string | null> {
+  const entry = await getTrackerKv<CachedEntry>(KV_PREFIX + discordId.trim());
+  return typeof entry?.appwriteId === 'string' && entry.appwriteId.trim() ? entry.appwriteId : null;
+}
+
 export async function resolveAppwriteIdForDiscordUser(
   discordId: string,
   options: { requireLinked?: boolean; failOnLookupError?: boolean } = {},

@@ -8,7 +8,7 @@ import {
 import { logger } from '../core/logger';
 import { getTrackerKv, setTrackerKv } from './idb';
 import { loadUserSharedSettingsCloud, saveUserSharedSettingsCloud } from './user-shared-settings-cloud';
-import { resolveAppwriteIdForDiscordUser } from './discord-identity-resolver';
+import { resolveAppwriteIdForDiscordUser, getStoredAppwriteIdForDiscordUser } from './discord-identity-resolver';
 const SHARED_SETTINGS_PREFIX = 'tracker-shared-settings:';
 
 type LocalSharedSettingsRecord = {
@@ -72,9 +72,9 @@ export async function getUserSharedSettings(userId: string): Promise<SharedUserT
   }
 }
 
-export async function getEffectiveUserSharedSettings(discordUserId: string): Promise<SharedUserToolSettings> {
+export async function getEffectiveUserSharedSettings(discordUserId: string, options: { localOnly?: boolean } = {}): Promise<SharedUserToolSettings> {
   const primary = await getUserSharedSettings(discordUserId);
-  const appwriteId = await resolveAppwriteIdForDiscordUser(discordUserId);
+  const appwriteId = await (options.localOnly ? getStoredAppwriteIdForDiscordUser(discordUserId) : resolveAppwriteIdForDiscordUser(discordUserId));
 
   if (!appwriteId) {
     return primary;
@@ -89,6 +89,7 @@ export async function getEffectiveUserSharedSettings(discordUserId: string): Pro
     return canonical;
   }
 
+  if (options.localOnly) return primary;
   const cloud = await loadUserSharedSettingsCloud(discordUserId);
   if (cloud?.state.cloudSyncEnabled) {
     return cloud.state;

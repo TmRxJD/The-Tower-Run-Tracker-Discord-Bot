@@ -1,3 +1,4 @@
+import { getTrackerFlowMode } from '../flow-mode-store';
 import { ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { TRACKER_IDS, withToken, withTokenAndField } from '../track-custom-ids';
 import { toPendingRecord, type PendingRecordLike, type RunDataRecord } from '../shared/track-review-records';
@@ -186,7 +187,7 @@ export async function renderDataReviewOrSubmit(
   submitPendingRun: (interaction: ReviewInteraction, token: string, pending: PendingRecordLike) => Promise<void>,
 ): Promise<void> {
   const settings = await getUserSettings(pending.userId).catch(() => null);
-  const shouldConfirmBeforeSubmit = settings?.confirmBeforeSubmit !== false;
+  const shouldConfirmBeforeSubmit = settings?.confirmBeforeSubmit !== false || pending.profileOptions?.length === 0;
   if (!shouldConfirmBeforeSubmit) {
     await submitPendingRun(interaction as ReviewInteraction, token, pending);
     return;
@@ -194,6 +195,7 @@ export async function renderDataReviewOrSubmit(
 
   await interaction.editReply({
     ...buildCurrentReviewReplyPayload(token, pending, label),
+    ...(getTrackerFlowMode(pending.userId) !== 'lifetime' ? { content: `Reviewing local saved data. Cloud history has not been verified. Upload target: ${pending.uploadProfileId ? 'selected Alt' : 'Main'}. Select Submit to confirm.` } : {}),
     files: [],
   }).catch(() => {});
 }

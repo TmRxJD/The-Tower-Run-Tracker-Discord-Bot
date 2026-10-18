@@ -23,22 +23,22 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }));
 });
 describe('direct upload history paths', () => {
-  it('direct pasted report checks all cold-cache history before review', async () => {
+  it('direct pasted report checks local saved history before review', async () => {
     await handleDirectTextPaste(interaction() as never,
       'Battle Report\nTier\t22\nWave\t900\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1', null, null, 'Farming', 'track');
-    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { readOnly: true, mainOnly: true, onStage: expect.any(Function) });
+    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { localFirst: true, readOnly: true, mainOnly: true, onStage: expect.any(Function) });
     expect(mocks.create).toHaveBeenCalledOnce();
     expect(mocks.create.mock.calls[0][0]).toMatchObject({ isDuplicate: true, runData: { runId: 'run-0' } });
     expect(mocks.review).toHaveBeenCalledOnce();
   });
-  it('direct screenshot checks the same complete history before review', async () => {
+  it('direct screenshot checks the same local history before review', async () => {
     await handleDirectAttachment(interaction() as never, { url: 'https://example.invalid/fixture.png', name: 'fixture.png' }, null, 'Farming', 'track');
-    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { readOnly: true, mainOnly: true, onStage: expect.any(Function) });
+    expect(mocks.prepare).toHaveBeenCalledWith('fixture-owner', { localFirst: true, readOnly: true, mainOnly: true, onStage: expect.any(Function) });
     expect(mocks.create).toHaveBeenCalledOnce();
     expect(mocks.create.mock.calls[0][0]).toMatchObject({ isDuplicate: true, runData: { runId: 'run-0' } });
     expect(mocks.review).toHaveBeenCalledOnce();
   });
-  it('a history failure in either upload path creates no pending run or success review', async () => {
+  it('a local-storage failure in either upload path creates no pending run or success review', async () => {
     mocks.prepare.mockRejectedValue(new Error('fixture cloud unavailable'));
     await handleDirectTextPaste(interaction() as never, 'Tier\t22\nWave\t900', null, null, 'Farming', 'track');
     await handleDirectAttachment(interaction() as never, { url: 'https://example.invalid/fixture.png', name: 'fixture.png' }, null, 'Farming', 'track');

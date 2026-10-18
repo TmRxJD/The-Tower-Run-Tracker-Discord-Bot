@@ -1,3 +1,5 @@
+const historyMock = vi.hoisted(() => vi.fn());
+vi.mock('./run-cloud-pair-client', async original => ({ ...await original<object>(), loadBotCompleteRunCloudDocuments: historyMock }));
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -88,8 +90,8 @@ vi.mock('./vision-ocr-client', () => ({
 }));
 
 
-import { logRun, editRun, editUserSettings, forceSyncQueuedRuns, removeLastRun } from './tracker-api-client';
-import { getLocalRuns, getQueueItems, removeLocalRun, updateLocalSettings } from './local-run-store';
+import { logRun, editRun, editUserSettings, forceSyncQueuedRuns, removeLastRun, retryPendingRunSync } from './tracker-api-client';
+import { getLocalRuns, getQueueItems, removeLocalRun, updateLocalSettings, queueCloudUpsert } from './local-run-store';
 import { getOriginalRunTarget } from './run-local-provenance';
 import { restoreLocalOnlyRuns, LOCAL_ONLY_BACKUP_KEY_PREFIX } from '../../rxdb/local-only-backup';
 import * as kv from '../../services/idb';
@@ -98,7 +100,7 @@ const complete = { tier: '5', wave: '321', totalCoins: '2B', totalCells: '3K', t
 const main = new Map<string, Record<string, unknown>>();
 beforeAll(() => { const dir=join(tmpdir(), 'tracker-offline-acceptance-'+Date.now()); mkdirSync(dir,{recursive:true});process.env.TRACKER_BOT_DATA_DIR=dir; });
 beforeEach(() => {
-  vi.clearAllMocks(); main.clear();
+  vi.clearAllMocks(); historyMock.mockResolvedValue([]); main.clear();
   getDocumentMock.mockImplementation(async (_db, collection, id) => { const doc=collection==='runs'?main.get(id):undefined;if(!doc)throw {code:404};return {...doc,$id:id}; });
   createDocumentMock.mockImplementation(async (_db,collection,id,data) => {if(collection==='runs')main.set(id,{...data,$id:id});return {$id:id};});
   updateDocumentMock.mockImplementation(async (_db,collection,id,data) => {if(collection!=='runs'||!main.has(id))throw {code:404};main.set(id,{...main.get(id),...data});return {$id:id};});
@@ -158,4 +160,73 @@ describe('actual offline save/edit/import/re-enable acceptance',()=>{
   await kv.setTrackerKv(LOCAL_ONLY_BACKUP_KEY_PREFIX+userId,snapshot,{requirePersistent:true});
   await restoreLocalOnlyRuns();expect(await getLocalRuns(userId)).toHaveLength(0);
  });
+});
+
+it('accepts cloud-enabled submissions durably during an outage, then syncs exactly once without releasing legacy targets', async () => {
+  const userId = 'fixture-future-offline';
+  await updateLocalSettings(userId, { cloudSyncEnabled: true });
+  await queueCloudUpsert({ userId, username: 'fixture', localId: 'legacy-unknown', runData: { ...complete, wave: '111' } });
+  const legacy = structuredClone((await getQueueItems(userId))[0]);
+  let recover!: (rows: object[]) => void;
+  historyMock.mockImplementationOnce(() => new Promise(resolve => { recover = resolve; }));
+  const started = performance.now();
+  const accepted = await logRun({ userId, username: 'fixture', uploadProfileId: 'alt-original', runData: { ...complete, localId: 'new-offline-run' }, deferCloudSync: true });
+  expect(performance.now() - started).toBeLessThan(2000);
+  expect(accepted).toMatchObject({ ok: true, queuedForCloud: true, cloudSyncDeferred: true });
+  const queued = (await getQueueItems(userId)).find(item => item.localId === 'new-offline-run')!;
+  expect(queued).toMatchObject({ uploadProfileId: 'alt-original', duplicateCheckPending: true });
+  expect(await getOriginalRunTarget(userId, 'new-offline-run')).toEqual({ profileId: 'alt-original' });
+  expect(createDocumentMock).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(historyMock).toHaveBeenCalled());
+  recover([]); await accepted.backgroundSync;
+  expect(main.size).toBe(1);
+  expect([...main.keys()]).toEqual([queued.runId]);
+  expect(await getQueueItems(userId)).toEqual([legacy]);
+  await retryPendingRunSync(userId);
+  expect(main.size).toBe(1); expect(await getQueueItems(userId)).toEqual([legacy]);
+});
+it('resolves a matching website report before writing and persists that identity through recovery', async () => {
+  const userId = 'fixture-cloud-duplicate'; await updateLocalSettings(userId, { cloudSyncEnabled: true });
+  const remote = { ...complete, $id: 'website-existing', runId: 'website-existing', userId, profileId: null };
+  main.set('website-existing', remote); historyMock.mockResolvedValue([remote]);
+  const accepted = await logRun({ userId, username: 'fixture', uploadProfileId: null, runData: { ...complete, localId: 'duplicate-local' }, deferCloudSync: true });
+  await accepted.backgroundSync;
+  expect([...main.keys()]).toEqual(['website-existing']);
+  expect(await getQueueItems(userId)).toHaveLength(0);
+  expect((await getLocalRuns(userId))[0].runId).toBe('website-existing');
+});
+it('does not acknowledge a cloud-enabled submission when the durable queue write fails', async () => {
+  const userId = 'fixture-queue-disk-failure'; await updateLocalSettings(userId, { cloudSyncEnabled: true });
+  const original = kv.setTrackerKv;
+  const spy = vi.spyOn(kv, 'setTrackerKv').mockImplementation(async (key, value, options) => {
+    if (key === 'tracker-local-store:v1' && (value as { queue: unknown[] }).queue.length) throw Error('fixture queue disk failure');
+    return original(key, value, options);
+  });
+  try {
+    await expect(logRun({ userId, username: 'fixture', uploadProfileId: null, runData: { ...complete, localId: 'failed-queue-local' }, deferCloudSync: true })).rejects.toThrow('queue disk failure');
+    expect(createDocumentMock).not.toHaveBeenCalled();
+    expect((await getQueueItems(userId)).some(item => item.localId === 'failed-queue-local')).toBe(false);
+  } finally { spy.mockRestore(); }
+});
+
+it('automatically recovers future intents after a long outage without releasing exhausted legacy entries', async () => {
+  const userId = 'fixture-auto-recovery'; await updateLocalSettings(userId, { cloudSyncEnabled: true });
+  await queueCloudUpsert({ userId, username: 'fixture', uploadProfileId: null, localId: 'future-long-outage', runData: { ...complete, localId: 'future-long-outage' }, automaticRecovery: true });
+  const pending = (await getQueueItems(userId))[0];
+  // Isolated restored-queue fixture after more failures than the legacy retry cap.
+  pending.retryCount = 12; pending.nextRetryAt = 0;
+  await retryPendingRunSync(userId);
+  expect(await getQueueItems(userId)).toHaveLength(0); expect(main.size).toBe(1);
+});
+
+it('coalesces duplicate history only within a recovery pass and verifies again on the next pass', async () => {
+  const userId = 'fixture-recovery-coalescing'; await updateLocalSettings(userId, { cloudSyncEnabled: true });
+  for (const wave of ['401', '402']) await queueCloudUpsert({ userId, username: 'fixture', uploadProfileId: null, localId: 'coalesce-' + wave,
+    runData: { ...complete, wave, localId: 'coalesce-' + wave }, automaticRecovery: true, duplicateCheckPending: true });
+  await retryPendingRunSync(userId);
+  expect(historyMock).toHaveBeenCalledTimes(1); expect(main.size).toBe(2);
+  await queueCloudUpsert({ userId, username: 'fixture', uploadProfileId: null, localId: 'coalesce-403',
+    runData: { ...complete, wave: '403', localId: 'coalesce-403' }, automaticRecovery: true, duplicateCheckPending: true });
+  await retryPendingRunSync(userId);
+  expect(historyMock).toHaveBeenCalledTimes(2); expect(main.size).toBe(3);
 });

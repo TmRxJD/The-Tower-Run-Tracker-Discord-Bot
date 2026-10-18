@@ -65,13 +65,13 @@ export async function buildExpandedSharePayload(
   context: SharedRunContext,
 ): Promise<{ embed: EmbedBuilder; files: AttachmentBuilder[] }> {
   const discordUser = await client.users.fetch(userId).catch(() => null);
-  const settings = await getUserSettings(userId).catch(() => null);
+  const settings = await getUserSettings(userId, { localOnly: true }).catch(() => null);
   const summary = await getLastRun(userId, { cloudSyncMode: 'none' }).catch(() => null);
   const allRuns = (summary?.allRuns ?? []) as Record<string, unknown>[];
   const runType = readTrimmedString(context.run.type) || 'Farming';
 
-  const sharedSettings = await getEffectiveUserSharedSettings(userId).catch(() => ({ runDeltaMode: 'disabled' as const }));
-  const deltaResult = sharedSettings.runDeltaMode !== 'disabled' && allRuns.length > 1
+  const sharedSettings = await getEffectiveUserSharedSettings(userId, { localOnly: true }).catch(() => ({ runDeltaMode: 'disabled' as const }));
+  const deltaResult = Object.keys(context.runTypeCounts ?? {}).length > 0 && sharedSettings.runDeltaMode !== 'disabled' && allRuns.length > 1
     ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode, undefined, context.run) ?? undefined
     : undefined;
 
@@ -87,6 +87,7 @@ export async function buildExpandedSharePayload(
     options: resolveShareEmbedOptions(settings),
   });
 
+  if (context.runTypeCounts && !Object.keys(context.runTypeCounts).length) embed.setFooter({ text: 'Local saved copy; cloud changes have not been verified. Counts and comparisons are unavailable.' });
   const chartAttachment = settings?.shareChart !== false && allRuns.length >= 2
     ? await buildPerHourChartAttachment(allRuns, runType).catch(() => null)
     : null;

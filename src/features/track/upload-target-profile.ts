@@ -1,3 +1,4 @@
+import { getTrackerKv, setTrackerKv } from '../../services/idb';
 import { TransientCache } from '../../core/transient-cache';
 import { Query } from 'node-appwrite';
 import {
@@ -76,6 +77,7 @@ async function fetchProfileDocs(discordUserId: string): Promise<{
     isDefault: (doc as { isDefault?: unknown }).isDefault === true,
     createdAt: String((doc as { createdAt?: unknown }).createdAt ?? ''),
   }));
+  await setTrackerKv('tracker-profiles:v1:' + discordUserId.trim(), profiles);
   return { appwriteUserId, profiles };
 }
 
@@ -84,9 +86,9 @@ async function fetchProfileDocs(discordUserId: string): Promise<{
  * same creation order the site and the `/track alt:N` option use (index 1..4).
  * Returns an empty list when the account is unlinked or the lookup fails.
  */
-export async function listBotUserProfiles(discordUserId: string): Promise<BotProfileOption[]> {
+export async function listBotUserProfiles(discordUserId: string, readOptions: { localOnly?: boolean } = {}): Promise<BotProfileOption[]> {
   try {
-    const { profiles } = await fetchProfileDocs(discordUserId);
+    const profiles = readOptions.localOnly ? await getTrackerKv<ProfileDoc[]>('tracker-profiles:v1:' + discordUserId.trim()) ?? [] : (await fetchProfileDocs(discordUserId)).profiles;
     if (!profiles.length) return [];
     const primary = profiles.find(profile => profile.isPrimary) ?? null;
     const alts = orderedAltProfiles(profiles);
@@ -109,9 +111,9 @@ export async function listBotUserProfiles(discordUserId: string): Promise<BotPro
  * it) as the `isDefault` flag on the account-profiles collection — only ever set on an
  * alt, so "no alt flagged" transparently means Main.
  */
-export async function resolveDefaultUploadProfileId(discordUserId: string): Promise<string | null> {
+export async function resolveDefaultUploadProfileId(discordUserId: string, options: { localOnly?: boolean } = {}): Promise<string | null> {
   try {
-    const { profiles } = await fetchProfileDocs(discordUserId);
+    const profiles = options.localOnly ? await getTrackerKv<ProfileDoc[]>('tracker-profiles:v1:' + discordUserId.trim()) ?? [] : (await fetchProfileDocs(discordUserId)).profiles;
     const flagged = profiles.find(profile => profile.isDefault && !profile.isPrimary);
     return flagged ? flagged.id : null;
   } catch {
@@ -168,14 +170,17 @@ export type UploadProfileResolution = { profileId: string | null; error?: string
 export async function resolveBotUploadProfileId(
   discordUserId: string,
   altIndex: number | null,
+  options: { localOnly?: boolean } = {},
 ): Promise<UploadProfileResolution> {
   if (altIndex == null) {
     // No explicit alt on the command → honour the stored default (validated; Main if unset).
-    const defaultProfileId = await resolveDefaultUploadProfileId(discordUserId);
+    const defaultProfileId = await resolveDefaultUploadProfileId(discordUserId, options);
     return { profileId: defaultProfileId };
   }
 
-  const { profiles, error } = await fetchProfileDocs(discordUserId);
+  const { profiles, error } = options.localOnly
+    ? { profiles: await getTrackerKv<ProfileDoc[]>('tracker-profiles:v1:' + discordUserId.trim()) ?? [], error: undefined }
+    : await fetchProfileDocs(discordUserId);
   if (error) {
     return { profileId: null, error };
   }

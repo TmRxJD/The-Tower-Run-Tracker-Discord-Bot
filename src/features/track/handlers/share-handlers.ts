@@ -64,6 +64,7 @@ async function disableShareButtonOnOriginalMessage(interaction: MessageComponent
 }
 
 export async function handleTrackMenuShareLast(interaction: MessageComponentInteraction | ModalSubmitInteraction) {
+  const verifyCloud = interaction.customId === TRACKER_IDS.flow.shareLastVerified;
   const mode = getTrackerFlowMode(interaction.user.id);
   const shareUiConfig = getTrackerUiConfig(mode).share;
   let stage: DiagnosticStage = 'acknowledge';
@@ -101,7 +102,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
 
     const userId = interaction.user.id;
     setStage('settings');
-    const settings = await getUserSettings(userId).catch(() => null);
+    const settings = await getUserSettings(userId, { localOnly: true }).catch(() => null);
     const includeNotes = settings?.shareNotes !== false;
     const includeCoverage = settings?.shareCoverage !== false;
     const includeScreenshot = settings?.shareScreenshot !== false;
@@ -183,8 +184,8 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       setStage('history');
       // Both reads use fresh settings/history and neither depends on the other.
       const [history, sharedSettings] = await Promise.all([
-        withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { readOnly: true, onStage: context.setStage }), 'share-history'),
-        getEffectiveUserSharedSettings(userId),
+        withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { localFirst: !verifyCloud, readOnly: true, onStage: context.setStage }), 'share-history'),
+        getEffectiveUserSharedSettings(userId, { localOnly: !verifyCloud }),
       ]);
       const verifiedRuns = await history.getRuns();
       const cached = getShareableRun(userId);
@@ -218,7 +219,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       const allRuns = verifiedRuns;
       const runType = String(run.type ?? 'Farming').trim() || 'Farming';
 
-      const deltaResult = sharedSettings.runDeltaMode !== 'disabled'
+      const deltaResult = history.verified !== false && sharedSettings.runDeltaMode !== 'disabled'
         ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode, undefined, run)
         : undefined;
 
@@ -227,7 +228,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       embed = buildShareEmbed({
         user: embedUser,
         run,
-        runTypeCounts,
+        runTypeCounts: history.verified === false ? {} : runTypeCounts,
         options: {
           includeTier,
           includeWave,
@@ -260,6 +261,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         collapsed: compact,
       });
 
+      if (history.verified === false) embed.setFooter({ text: 'Local saved copy; cloud changes have not been verified. Counts and comparisons are unavailable.' });
       const channelWithSend = interaction.channel as { send?: (payload: ShareEmbedChannelPayload) => Promise<unknown> } | null;
       if (embed) {
         if (!channelWithSend?.send) {
@@ -278,9 +280,9 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         }
 
         setStage('snapshot');
-        let shareRunRef = buildShareSnapshotRef(userId, run, runTypeCounts);
+        let shareRunRef = buildShareSnapshotRef(userId, run, history.verified === false ? {} : runTypeCounts);
         if (shareRunRef) {
-          const saved = await saveShareSnapshot({ ref: shareRunRef, userId, run, runTypeCounts, sharerName: embedUser.displayName }).catch(() => false);
+          const saved = await saveShareSnapshot({ ref: shareRunRef, userId, run, runTypeCounts: history.verified === false ? {} : runTypeCounts, sharerName: embedUser.displayName }).catch(() => false);
           if (!saved) shareRunRef = null;
         }
 

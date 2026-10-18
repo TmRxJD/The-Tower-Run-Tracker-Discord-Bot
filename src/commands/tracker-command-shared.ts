@@ -4,7 +4,7 @@ import type { TrackerBotClient } from '../core/tracker-bot-client';
 import { logger } from '../core/logger';
 import { resolveInteractionDisplayName } from '../features/track/discord-display-name';
 import { resolveBotRunCloudIdentity } from '../features/track/run-cloud-identity';
-import { resolveBotUploadProfileId, setPendingUploadProfile } from '../features/track/upload-target-profile';
+import { resolveBotUploadProfileId, setPendingUploadProfile, listBotUserProfiles } from '../features/track/upload-target-profile';
 import { syncBotsTrackerState } from '../services/bots-tracker-db';
 import { handleTrackWorkflow } from '../features/track/track-workflow';
 import { ensureDeferredEphemeralReply } from '../features/track/interaction-ack';
@@ -109,28 +109,15 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
     ? interaction.options.getInteger(options.alt.name) ?? null
     : null;
 
-  await client.persistence?.users.touch(interaction.user.id, resolveInteractionDisplayName(interaction)).catch(() => {});
-
-  try {
-    const identity = await resolveBotRunCloudIdentity(interaction.user.id);
-    if (!identity.cloudWriteUserId) {
-      await interaction.editReply({
-        content: 'Link your Discord account on the Tower Run Tracker website before using cloud-backed tracker commands.',
-      }).catch(() => {});
-      return;
-    }
-  } catch (error) {
-    logger.warn('Tracker identity resolution failed', error);
-    await interaction.editReply({
-      content: 'Link your Discord account on the Tower Run Tracker website before using cloud-backed tracker commands.',
-    }).catch(() => {});
-    return;
-  }
+  // Local ingestion must remain available before identity/cloud recovery completes.
+  void client.persistence?.users.touch(interaction.user.id, resolveInteractionDisplayName(interaction)).catch(() => {});
+  void resolveBotRunCloudIdentity(interaction.user.id).catch(() => {});
+  void listBotUserProfiles(interaction.user.id).catch(() => {});
 
   // Resolve which profile this upload targets (alt 1-4, else Main) and stash it for the
   // run-write choke point. Always set (even to null/Main) so it is never stale.
   try {
-    const uploadTarget = await resolveBotUploadProfileId(interaction.user.id, altIndex);
+    const uploadTarget = await resolveBotUploadProfileId(interaction.user.id, altIndex, { localOnly: true });
     if (uploadTarget.error) {
       await interaction.editReply({ content: uploadTarget.error }).catch(() => {});
       return;

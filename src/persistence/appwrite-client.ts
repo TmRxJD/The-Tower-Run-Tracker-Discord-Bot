@@ -1,3 +1,4 @@
+import { withCloudReadBudget } from './cloud-read-budget';
 import { Client, Databases, Storage } from 'node-appwrite';
 import { buildAppwriteClientBundle, resolveAppwriteCredential } from '@tmrxjd/platform/node';
 import { getAppConfig } from '../config';
@@ -45,6 +46,9 @@ export function createAppwriteClient() {
     createStorage: client => new Storage(client),
   });
 
+  const call = bundle.client.call.bind(bundle.client);
+  bundle.client.call = (...args: Parameters<Client['call']>) => args[0].toLowerCase() === 'get'
+    ? withCloudReadBudget(() => call(...args)) : call(...args);
   cachedBundle = {
     client: bundle.client,
     databases: bundle.databases,

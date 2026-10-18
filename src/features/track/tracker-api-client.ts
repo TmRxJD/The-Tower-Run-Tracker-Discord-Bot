@@ -1,3 +1,5 @@
+import { resolveQueuedRunDuplicate } from './local-run-store';
+import { loadBotCompleteRunCloudDocuments } from './run-cloud-pair-client';
 import { downloadBoundedBuffer } from '../../core/bounded-download';
 import { backupLocalOnlyRunsNow, refreshExistingLocalOnlyBackup } from '../../rxdb/local-only-backup';
 import { getOriginalRunTarget, rememberOriginalRunTarget } from './run-local-provenance';
@@ -89,7 +91,6 @@ import {
   getLocalSettingsRecord,
   getQueueItems,
   markQueueItemFailed,
-  markQueueItemTargetBlocked,
   mergeCloudRuns,
   queueCloudDelete,
   queueCloudSettings,
@@ -179,6 +180,7 @@ const MAX_QUEUE_RETRY_COUNT = 8;
 const RUN_CLOUD_UPSERT_CONCURRENCY = 5;
 
 const duplicateLookupDocsByUser = new Map<string, RunRecord[]>();
+const deferredDuplicateReads = new Map<string, Promise<Record<string, unknown>[]>>();
 
 type GetLastRunOptions = {
   cloudSyncMode?: 'full' | 'latest' | 'none';
@@ -2203,6 +2205,22 @@ async function processQueuedUpsertItem(
   item: CloudQueueItem,
   syncState: QueueUpsertSyncState,
 ): Promise<{ key: string; status: 'succeeded' | 'failed'; error?: string }> {
+  if (item.duplicateCheckPending) {
+    // Only newly accepted intents carry this marker; legacy ambiguous items stay blocked.
+    let read = deferredDuplicateReads.get(item.userId);
+    if (!read) {
+      read = loadBotCompleteRunCloudDocuments(item.userId, { includeExtended: false });
+      deferredDuplicateReads.set(item.userId, read);
+    }
+    const docs = await read;
+    const match = docs.find(doc => (doc.profileId ?? null) === (item.uploadProfileId ?? null)
+      && trackerRunsShareDuplicateIdentity(doc, item.canonicalRunData ?? item.runData ?? {}));
+    const runId = match ? String(match.$id) : item.runId;
+    if (!runId) throw new Error('Queued run identity is unavailable');
+    const resolved = await resolveQueuedRunDuplicate(item.id, runId);
+    if (!resolved) return { key: item.id, status: 'succeeded' };
+    item = resolved;
+  }
   const queuedReference = buildTrackerQueuedRunReferenceIdentity(item);
   const localRunStillExists = await hasLocalRunReference({
     userId: item.userId,
@@ -2274,14 +2292,10 @@ async function syncQueuedRunsOnce(userId: string) {
   await pruneQueuedUpsertsShadowedByDeletes(userId);
 
   const queue = await getQueueItems(userId);
-  for (const item of queue) {
-    if (item.op === 'upsert' && item.uploadProfileId === undefined && !buildTrackerQueuedRunReferenceIdentity(item).runId) {
-      await markQueueItemTargetBlocked(item.id);
-    }
-  }
+  if (!queue.some(item => !item.blockedReason && (item.op !== 'upsert' || item.uploadProfileId !== undefined || buildTrackerQueuedRunReferenceIdentity(item).runId))) return;
   const hasCloudIdentity = await resolveCloudOperationUserId(userId, 'queue replay');
   const replayQueue = hasCloudIdentity
-    ? queue.filter(item => !item.blockedReason)
+    ? queue.filter(item => !item.blockedReason && !(item.op === 'upsert' && item.uploadProfileId === undefined && !buildTrackerQueuedRunReferenceIdentity(item).runId))
     : queue.filter(item => item.op === 'delete' && Boolean(item.runId));
   if (!replayQueue.length) return;
 
@@ -2292,7 +2306,7 @@ async function syncQueuedRunsOnce(userId: string) {
     const settlement = await settleRetryQueueItems({
       items: replayQueue,
       getKey: item => item.id,
-      getAttemptCount: item => item.retryCount,
+      getAttemptCount: item => item.automaticRecovery ? Math.min(item.retryCount, MAX_QUEUE_RETRY_COUNT - 1) : item.retryCount,
       getNextRetryAt: item => item.nextRetryAt,
       maxRetryCount: MAX_QUEUE_RETRY_COUNT,
       processReadyItems: async readyItems => {
@@ -2382,6 +2396,7 @@ async function syncQueuedRunsOnce(userId: string) {
     }
   } finally {
     duplicateLookupDocsByUser.delete(userId);
+    deferredDuplicateReads.delete(userId);
   }
 }
 
@@ -2627,7 +2642,10 @@ export async function logRun(params: {
 
     const source = params.screenshot ?? await loadDeferredScreenshotPayload(params.deferredScreenshotSource ?? null);
     const screenshot = await storeQueuedScreenshot(params.userId, source);
-    await queueCloudUpsert({ userId: params.userId, username: params.username, runData: deferredRunData, canonicalRunData: params.canonicalRunData ?? undefined, uploadProfileId: params.uploadProfileId, localId: local.localId, screenshot });
+    await rememberOriginalRunTarget(params.userId, local.localId, params.uploadProfileId);
+    await queueCloudUpsert({ userId: params.userId, username: params.username, runData: deferredRunData, canonicalRunData: params.canonicalRunData ?? undefined, uploadProfileId: params.uploadProfileId, localId: local.localId, screenshot,
+      automaticRecovery: true,
+      duplicateCheckPending: settings.autoDetectDuplicates !== false && !deferredReference.runId });
     return {
       ok: true,
       queuedForCloud: true,
@@ -2715,7 +2733,7 @@ export async function logRun(params: {
 }
 
 export async function getMenuRunSummary(userId: string) {
-  await ensureMenuRunDataBeforeRender(userId);
+  void ensureMenuRunDataBeforeRender(userId).catch(() => {});
 
   const primed = peekMenuPrimedSummary(userId);
   let localSummary: Awaited<ReturnType<typeof loadBotMenuRunSummary>> | null = null;
@@ -3192,11 +3210,11 @@ export async function submitRunSummary(params: { userId: string; username: strin
   return cloudSubmitRunSummary(params);
 }
 
-export async function getUserSettings(userId: string): Promise<TrackerSettings | null> {
+export async function getUserSettings(userId: string, options: { localOnly?: boolean } = {}): Promise<TrackerSettings | null> {
   const localRecord = await getLocalSettingsRecord(userId);
   const local = normalizeShareSettingsDefaults(forceWebDefaultTrackerSettings(localRecord.state));
   const cloudEnabled = local.cloudSyncEnabled !== false;
-  if (!cloudEnabled) return local;
+  if (!cloudEnabled || options.localOnly) return local;
   if (!canUseCloudForUserId(userId, 'settings fetch')) return local;
 
   try {
@@ -3219,4 +3237,11 @@ export async function getUserSettings(userId: string): Promise<TrackerSettings |
     logger.warn('tracker settings fetch failed', error);
     return local;
   }
+}
+
+/** Background retry honors existing backoff and never releases ambiguous target entries. */
+export async function retryPendingRunSync(userId: string): Promise<void> {
+  const queue = await getQueueItems(userId);
+  if (!queue.some(item => !item.blockedReason && (item.op !== 'upsert' || item.uploadProfileId !== undefined))) return;
+  await syncQueuedRuns(userId);
 }

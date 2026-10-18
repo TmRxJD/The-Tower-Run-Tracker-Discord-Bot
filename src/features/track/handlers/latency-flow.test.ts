@@ -9,7 +9,7 @@ vi.mock('../local-run-store', async original => ({ ...await original<object>(), 
 vi.mock('../run-deletion-tombstones', () => ({ getPermanentlyDeletedRunIds: async () => new Set() }));
 vi.mock('../run-upload-history', async original => {
   const actual = await original<typeof HistoryModule>();
-  return { ...actual, prepareBotRunUploadHistory: (user: string, options: Parameters<typeof actual.prepareBotRunUploadHistory>[1]) => actual.prepareBotRunUploadHistory(user, io.forceFullReview && options?.mainOnly ? { ...options, mainOnly: false } : options) };
+  return { ...actual, prepareBotRunUploadHistory: (user: string, options: Parameters<typeof actual.prepareBotRunUploadHistory>[1]) => actual.prepareBotRunUploadHistory(user, io.forceFullReview ? { ...options, localFirst: false, mainOnly: false } : options) };
 });
 vi.mock('../paste-diagnostics', () => ({ beginPasteDiagnostic: async () => 'P-fixture', updatePasteDiagnostic: async () => true }));
 vi.mock('../pending-run-store', async original => ({ ...await original<object>(), createPendingRun: io.create, getPendingRun: io.pending, markPendingRunWriteIntent: io.intent, deletePendingRun: io.remove }));
@@ -33,12 +33,12 @@ function interaction() {
   return { customId: 'tracker_accept:flow-fixture', user: { id: 'fixture-owner', username: 'fixture', displayAvatarURL: () => '' }, client: {}, guildId: null,
     deferred: true, replied: false, deferUpdate: vi.fn(async () => { await delay(2); }),
     editReply: vi.fn(async () => { await delay(2); return {}; }), followUp: vi.fn(async (payload: unknown) => { void payload; }),
-    channel: { send: vi.fn(async () => { await delay(2); return {}; }) }, message: { components: [] } };
+    channel: { send: vi.fn(async (payload: unknown) => { void payload; await delay(2); return {}; }) }, message: { components: [] } };
 }
 beforeEach(() => {
   vi.clearAllMocks(); io.forceFullReview = false; setTrackerFlowMode('fixture-owner', 'track');
   cloud = Array.from({ length: 1360 }, (_, i) => ({ $id: `run-${String(i).padStart(4, '0')}`, userId: 'fixture-owner', type: 'Farming', tier: '22', wave: String(i + 1), coins: '100', duration: '1h0m0s', runDate: '2026-10-13', runTime: '01:00', totalEnemies: '1000' }));
-  local = []; drafts = new Map();
+  local = cloud.map(row => ({ ...row, runId: row.$id, localId: row.$id })); drafts = new Map();
   io.settings.mockResolvedValue({ cloudSyncEnabled: true, autoDetectDuplicates: true, confirmBeforeSubmit: true, shareChart: false });
   io.local.mockImplementation(async () => local);
   io.upsert.mockImplementation(async (_user: string, rows: Row[]) => { for (const row of rows) { const found = local.findIndex(r => r.runId === row.runId); const next = { ...row, localId: row.runId }; if (found < 0) local.push(next); else local[found] = next; } });
@@ -56,7 +56,7 @@ beforeEach(() => {
   io.pending.mockImplementation(async (token: string) => drafts.get(token) ?? null);
   io.intent.mockImplementation(async (token: string) => { const record = drafts.get(token); if (!record || record.submissionWriteIntent) return null; const next = { ...record, submissionWriteIntent: true }; drafts.set(token, next); return next; });
   io.remove.mockImplementation(async (token: string) => { drafts.delete(token); });
-  io.save.mockImplementation(async (input: { runData: Row }) => { await delay(3); const row = { ...input.runData, userId: 'fixture-owner', $id: 'run-new', runId: 'run-new', localId: 'local-new' }; local.push(row); cloud.push(row); return { runId: 'run-new', localId: 'local-new' }; });
+  io.save.mockImplementation(async (input: { runData: Row }) => { await delay(3); const row = { ...input.runData, userId: 'fixture-owner', $id: 'run-new', runId: 'run-new', localId: 'local-new' }; local.push(row); cloud.push({ ...row }); return { runId: 'run-new', localId: 'local-new' }; });
   io.snapshot.mockResolvedValue(true);
 });
 
@@ -73,21 +73,26 @@ it.each(['previous-full-review', 'main-only-review', 'duplicate-check-disabled']
   await measure('review', () => handleDirectTextPaste(owner as never, 'Battle Report\nBattle Date\tOct 14, 2026 01:00\nTier\t22\nWave\t2000\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1\nTotal Enemies\t1000', null, null, 'Farming', 'track'));
   expect(drafts.size).toBe(1); expect(io.upsert).not.toHaveBeenCalled();
   expect(phases[0].extendedRequests).toBe(mode === 'previous-full-review' ? 14 : 0);
-  expect(phases[0].mainRequests).toBe(mode === 'duplicate-check-disabled' ? 0 : 6);
+  expect(phases[0].mainRequests).toBe(mode === 'previous-full-review' ? 6 : 0);
   await measure('submit', () => handleDataSubmission(owner as never));
   expect(io.errors).not.toHaveBeenCalled(); expect(io.save).toHaveBeenCalledOnce(); expect(drafts.size).toBe(0);
-  expect(local).toHaveLength(1361); expect(phases[1].extendedRequests).toBe(14);
+  expect(local).toHaveLength(1361); expect(phases[1].extendedRequests).toBe(mode === 'previous-full-review' ? 14 : 0);
   await handleDataSubmission(owner as never); expect(io.save).toHaveBeenCalledOnce();
   // A website/other instance edits the selected run after the submission snapshot.
   cloud.find(row => row.$id === 'run-new')!.tier = '23';
   await measure('share', () => handleTrackMenuShareLast(owner as never));
-  expect(io.errors).not.toHaveBeenCalled(); expect(owner.channel.send).toHaveBeenCalledOnce(); expect(phases[2].extendedRequests).toBe(14);
-  expect(io.snapshot.mock.calls[0][0].runTypeCounts.Farming).toBe(1361);
-  expect(io.snapshot.mock.calls[0][0].run.tier).toBe('23');
+  expect(io.errors).not.toHaveBeenCalled(); expect(owner.channel.send).toHaveBeenCalledOnce(); expect(phases[2].extendedRequests).toBe(mode === 'previous-full-review' ? 14 : 0);
+  expect(io.snapshot.mock.calls[0][0].runTypeCounts).toEqual(mode === 'previous-full-review' ? { Farming: 1361 } : {});
+  expect(io.snapshot.mock.calls[0][0].run.tier).toBe(mode === 'previous-full-review' ? '23' : '22');
   // A later deletion must invalidate the cached selection instead of posting it again.
   cloud = cloud.filter(row => row.$id !== 'run-new');
   await handleTrackMenuShareLast(owner as never);
-  expect(owner.channel.send).toHaveBeenCalledOnce();
-  expect(owner.followUp.mock.calls.at(-1)?.[0]).toMatchObject({ content: expect.stringContaining('no longer in your current history') });
+  if (mode === 'previous-full-review') {
+    expect(owner.channel.send).toHaveBeenCalledOnce();
+    expect(owner.followUp.mock.calls.at(-1)?.[0]).toMatchObject({ content: expect.stringContaining('no longer in your current history') });
+  } else {
+    expect(owner.channel.send).toHaveBeenCalledTimes(2);
+    expect((owner.channel.send.mock.calls.at(-1)?.[0] as { embed: { data: { footer: { text: string } } } }).embed.data.footer.text).toContain('cloud changes have not been verified');
+  }
   console.log(JSON.stringify({ fixture: mode, simulatedAppwriteRequestMs: 15, simulatedDiscordCallMs: 2, realCloudWrites: 0, publicMessages: 0, phases }));
 });

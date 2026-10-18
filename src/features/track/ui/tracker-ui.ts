@@ -198,12 +198,17 @@ export function createSuccessButtons() {
     return customId ? builder.setCustomId(customId) : null;
   };
 
-  return ui.success.rows
+  const rows = ui.success.rows
     .map(row => {
       const components = row.map(buildBtn).filter((b): b is ButtonBuilder => b !== null);
       return components.length ? new ActionRowBuilder<ButtonBuilder>().addComponents(...components) : null;
     })
     .filter((row): row is ActionRowBuilder<ButtonBuilder> => row !== null);
+  const verify = new ButtonBuilder().setCustomId(TRACKER_IDS.flow.shareLastVerified).setLabel('Verify & Share').setStyle(ButtonStyle.Secondary);
+  const available = rows.find(row => row.components.length < 5);
+  if (available) available.addComponents(verify);
+  else if (rows.length < 5) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(verify));
+  return rows;
 }
 
 export function createInitialEmbed(params: {

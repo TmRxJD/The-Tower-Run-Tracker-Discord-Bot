@@ -29,7 +29,7 @@ export async function autoShareToConfiguredLogChannel(params: {
   deltaResult?: TrackerRunDeltaResult;
   allRuns?: Record<string, unknown>[];
 }) {
-  const settings = await getUserSettings(params.userId).catch(() => null);
+  const settings = await getUserSettings(params.userId, { localOnly: true }).catch(() => null);
   const logChannelId = typeof settings?.logChannelId === 'string' ? settings.logChannelId.trim() : '';
   const logChannelGuildId = typeof settings?.logChannelGuildId === 'string' ? settings.logChannelGuildId.trim() : '';
   if (!logChannelId) return;
@@ -44,6 +44,7 @@ export async function autoShareToConfiguredLogChannel(params: {
     deltaResult: params.deltaResult,
     options: resolveShareEmbedOptions(settings),
   });
+  if (!Object.keys(params.runTypeCounts).length) embed.setFooter({ text: 'Local saved copy; cloud counts and comparisons are unavailable.' });
   let shareRunRef = buildShareSnapshotRef(params.userId, params.run, params.runTypeCounts);
   if (shareRunRef) {
     const saved = await saveShareSnapshot({ ref: shareRunRef, userId: params.userId, run: params.run, runTypeCounts: params.runTypeCounts, sharerName: embedUser.displayName }).catch(() => false);

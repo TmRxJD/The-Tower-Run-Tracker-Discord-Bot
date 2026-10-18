@@ -110,7 +110,7 @@ export function buildSubmissionResultEmbed(params: {
   const totalRuns = Object.values(runTypeCounts || {}).reduce((a, b) => a + b, 0)
 
   const descriptionTemplate = isUpdate ? submissionUi.descriptionUpdated : submissionUi.descriptionLogged
-  const descriptionHeader = descriptionTemplate.replace('{totalRuns}', String(totalRuns))
+  const descriptionHeader = Object.keys(runTypeCounts).length ? descriptionTemplate.replace('{totalRuns}', String(totalRuns)) : (isUpdate ? 'Updated your local saved run.' : 'Saved your run locally.')
 
   const durationRaw = String(coverageData?.roundDuration ?? coverageData?.duration ?? '')
   const duration = formatDurationForEmbed(durationRaw)

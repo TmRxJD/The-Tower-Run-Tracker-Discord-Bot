@@ -104,7 +104,25 @@ function reference(run: Record<string, unknown>) {
   return buildTrackerResolvedRunReference({ runId: run.runId, fallbackRunId: run.id ?? run.$id, localId: run.localId });
 }
 
-export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean; mainOnly?: boolean; onStage?: BotRunOperationContext['setStage'] } = {}) {
+export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean; mainOnly?: boolean; localFirst?: boolean; onStage?: BotRunOperationContext['setStage'] } = {}) {
+  if (options.localFirst) {
+    const tombstones = await getPermanentlyDeletedRunIds(userId);
+    const settings = await getLocalSettings(userId);
+    return { verified: settings.cloudSyncEnabled === false, getRuns: async () => {
+      const rows: Record<string, unknown>[] = [...await loadLocalRunsFromBotRxDB(userId)];
+      // The normal RxDB cache is memory-backed. Newly accepted durable intents remain
+      // visible after restart without cloud access or replaying historical unknowns.
+      for (const item of await getQueueItems(userId)) {
+        if (item.op !== 'upsert' || !item.automaticRecovery || item.uploadProfileId === undefined || !item.runData) continue;
+        const restored = { ...item.runData, ...item.canonicalRunData, localId: item.localId, runId: item.runId };
+        const index = rows.findIndex(row => Boolean(item.localId && row.localId === item.localId)
+          || Boolean(item.runId && reference(row).runId === item.runId));
+        if (index >= 0) rows[index] = { ...rows[index], ...restored };
+        else rows.push(restored);
+      }
+      return rows.filter(run => !run.deletedAt && !tombstones.has(reference(run).runId ?? '') && !tombstones.has(String(run.localId ?? '')));
+    } };
+  }
   if (options.mainOnly && !options.readOnly) throw new Error('Main-only history must remain read-only.');
   const correlation = randomUUID();
   let historyStage: HistoryFailureStage = 'settings';
