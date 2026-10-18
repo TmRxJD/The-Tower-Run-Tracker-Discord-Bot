@@ -1,4 +1,3 @@
-import { getTrackerFlowMode } from '../flow-mode-store';
 import { ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { TRACKER_IDS, withToken, withTokenAndField } from '../track-custom-ids';
 import { toPendingRecord, type PendingRecordLike, type RunDataRecord } from '../shared/track-review-records';
@@ -195,7 +194,6 @@ export async function renderDataReviewOrSubmit(
 
   await interaction.editReply({
     ...buildCurrentReviewReplyPayload(token, pending, label),
-    ...(getTrackerFlowMode(pending.userId) !== 'lifetime' ? { content: `Reviewing local saved data. Cloud history has not been verified. Upload target: ${pending.uploadProfileId ? 'selected Alt' : 'Main'}. Select Submit to confirm.` } : {}),
     files: [],
   }).catch(() => {});
 }

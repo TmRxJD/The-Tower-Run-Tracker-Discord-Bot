@@ -2,7 +2,7 @@ import type { AttachmentBuilder, Client, EmbedBuilder } from 'discord.js';
 import { getLastRun, getUserSettings } from '../tracker-api-client';
 import { getLocalRuns } from '../local-run-store';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
-import { computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { type TrackerRunDeltaResult, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { buildShareEmbed } from './share-embed';
 import { resolveShareEmbedOptions } from './share-embed-options';
@@ -12,6 +12,8 @@ export type SharedRunContext = {
   run: Record<string, unknown>;
   sharerName: string;
   runTypeCounts?: Record<string, number>;
+  historyVerified?: boolean;
+  deltaResult?: TrackerRunDeltaResult | null;
 };
 
 function readTrimmedString(value: unknown): string {
@@ -40,7 +42,7 @@ export async function resolveSharedRunContext(client: Client, userId: string, ru
   if (/^S-[a-f0-9]{32}$/.test(runRef)) {
     const snapshot = await readShareSnapshot(`${userId}:${runRef}`);
     if (!snapshot || snapshot.userId !== userId || snapshot.ref !== `${userId}:${runRef}`) return null;
-    return { run: { ...snapshot.run }, sharerName: snapshot.sharerName || 'Unknown', runTypeCounts: snapshot.runTypeCounts };
+    return { run: { ...snapshot.run }, sharerName: snapshot.sharerName || 'Unknown', runTypeCounts: snapshot.runTypeCounts, historyVerified: snapshot.historyVerified, deltaResult: snapshot.deltaResult };
   }
   // Legacy posted buttons retain their existing lookup semantics; do not rewrite old posts.
   let run = await findSharedRun(userId, runRef);
@@ -71,10 +73,11 @@ export async function buildExpandedSharePayload(
   const runType = readTrimmedString(context.run.type) || 'Farming';
 
   const sharedSettings = await getEffectiveUserSharedSettings(userId, { localOnly: true }).catch(() => ({ runDeltaMode: 'disabled' as const }));
-  const deltaResult = Object.keys(context.runTypeCounts ?? {}).length > 0 && sharedSettings.runDeltaMode !== 'disabled' && allRuns.length > 1
+  const calculatedDelta = Object.keys(context.runTypeCounts ?? {}).length > 0 && sharedSettings.runDeltaMode !== 'disabled' && allRuns.length > 1
     ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode, undefined, context.run) ?? undefined
     : undefined;
 
+  const deltaResult = context.deltaResult !== undefined ? context.deltaResult ?? undefined : calculatedDelta;
   const embed = buildShareEmbed({
     user: {
       username: discordUser?.username ?? context.sharerName,
@@ -87,7 +90,10 @@ export async function buildExpandedSharePayload(
     options: resolveShareEmbedOptions(settings),
   });
 
-  if (context.runTypeCounts && !Object.keys(context.runTypeCounts).length) embed.setFooter({ text: 'Local saved copy; cloud changes have not been verified. Counts and comparisons are unavailable.' });
+  if (context.historyVerified === false) {
+    embed.setTitle(embed.data.title + ' (locally saved)');
+    embed.setFooter({ text: 'Offline fallback: counts and comparisons use saved history and pending runs.' });
+  }
   const chartAttachment = settings?.shareChart !== false && allRuns.length >= 2
     ? await buildPerHourChartAttachment(allRuns, runType).catch(() => null)
     : null;

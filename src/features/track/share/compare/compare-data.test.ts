@@ -40,6 +40,14 @@ describe('comparison data ownership and bounded reads', () => {
     mock.snapshot.mockResolvedValue({ ref, userId: 'sharer', sharerName: 'Alice', run: { ...run, wave: '200' }, runTypeCounts });
     expect(await loadSharedCompareSnapshot(ref)).toBeNull();
   });
+  it('validates captured freshness and comparison metadata without dropping the Compare control', async () => {
+    const run = { runId: 'run-1', wave: '100' }, runTypeCounts = { Farming: 5 };
+    const ref = buildShareSnapshotRef('sharer', run, runTypeCounts, false, null)!;
+    mock.snapshot.mockResolvedValue({ ref, userId: 'sharer', sharerName: 'Alice', run, runTypeCounts, historyVerified: false, deltaResult: null });
+    expect(await loadSharedCompareSnapshot(ref)).toMatchObject({ run: { wave: '100' } });
+    mock.snapshot.mockResolvedValue({ ref, userId: 'sharer', sharerName: 'Alice', run, runTypeCounts, historyVerified: true, deltaResult: null });
+    expect(await loadSharedCompareSnapshot(ref)).toBeNull();
+  });
   it('returns a useful unlinked/no-runs state and bounds the cloud chooser to main records', async () => {
     mock.identity.mockResolvedValue({ lookupUserIds: ['viewer'], cloudWriteUserId: null });
     expect(await loadCompareChoices('viewer')).toMatchObject({ choices: [], unlinked: true, recentOnly: true });

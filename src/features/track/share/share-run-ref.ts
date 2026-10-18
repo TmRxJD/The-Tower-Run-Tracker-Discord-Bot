@@ -1,3 +1,4 @@
+import type { TrackerRunDeltaResult } from '@tmrxjd/platform/tools';
 import { createHash } from 'node:crypto';
 /**
  * Share buttons must survive bot restarts, so they carry the sharer + run identity in
@@ -35,8 +36,8 @@ export function fitsShareCustomId(prefix: string, ref: string): boolean {
 }
 
 /** Immutable version reference; repeat shares of identical data reuse their snapshot. */
-export function buildShareSnapshotRef(userId: string, run: Record<string, unknown>, runTypeCounts: Record<string, number>): string | null {
+export function buildShareSnapshotRef(userId: string, run: Record<string, unknown>, runTypeCounts: Record<string, number>, historyVerified = true, deltaResult?: TrackerRunDeltaResult | null): string | null {
   if (!buildShareRunRef(userId, run)) return null;
-  const version = createHash('sha256').update(JSON.stringify({ userId, run, runTypeCounts })).digest('hex').slice(0, 32);
+  const version = createHash('sha256').update(JSON.stringify({ userId, run, runTypeCounts, ...(historyVerified ? {} : { historyVerified: false }), ...(deltaResult !== undefined ? { deltaResult } : {}) })).digest('hex').slice(0, 32);
   return `${userId}:S-${version}`;
 }

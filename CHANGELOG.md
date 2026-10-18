@@ -1,3 +1,9 @@
+## 2026-10-18 - Restore automatic fresh-cloud counts and safe fallback
+
+- Fix normal parallel reads being rejected as an outage. Restore automatic fresh quantities and configured comparisons on standard Share; retain explicitly labeled durable fallback when cloud reads fail. Preserve snapshot comparison metadata and existing private Compare features.
+- Require runner-only production entrypoints, clean correct-origin main matching the triggering pushed SHA, and a compiled artifact receipt. Platform dispatch cannot deploy unpublished dependency changes.
+- Isolated validation and deployment evidence: docs/CLOUD-2026-10-18.md.
+
 ## 2026-10-18 - Restore local-first reporting during backend outages
 
 - Verified deployment: PID 21312 reached Discord readiness, stayed online during the 30-second stability check, and preserved the exact fingerprint of all 97 protected historical uploads.

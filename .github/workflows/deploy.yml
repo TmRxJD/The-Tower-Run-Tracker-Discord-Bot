@@ -11,7 +11,7 @@ on:
     types: [platform-updated]
 
 concurrency:
-  group: trackerbot-deploy-${{ github.event_name == 'repository_dispatch' && 'dispatch' || github.ref_name }}
+  group: trackerbot-production
   # Queue rather than cancel: killing a deploy halfway (mid-install, mid-restart) is worse than
   # waiting. A newer push waits, and only the newest waiting run is kept.
   cancel-in-progress: false
@@ -30,7 +30,7 @@ env:
 jobs:
   deploy:
     runs-on: self-hosted
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+    if: github.event_name == 'push'
     environment: production
     timeout-minutes: 30
     env:
@@ -40,11 +40,23 @@ jobs:
         working-directory: C:/bots/trackerbot/the-tower-run-tracker-discord-bot
 
     steps:
-      - name: Fast-forward the production checkout
-        # ff-only: a checkout with diverging local commits fails loudly instead of being merged.
+      - name: Pull and require the exact pushed revision
+        shell: node {0}
         run: |
-          git pull --ff-only origin main
-          git log -1 --format="Deploying %h %s"
+          const { execFileSync } = require('child_process')
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+          const fail = reason => { throw new Error('Deployment refused: ' + reason) }
+          if (process.env.GITHUB_REPOSITORY !== 'TmRxJD/The-Tower-Run-Tracker-Discord-Bot' || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_EVENT_NAME !== 'push' || process.env.RUNNER_ENVIRONMENT !== 'self-hosted') fail('unexpected runner or trigger')
+          if (!/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA || '')) fail('missing pushed SHA')
+          if (!/^(https:\/\/github\.com\/|git@github\.com:)TmRxJD\/The-Tower-Run-Tracker-Discord-Bot(?:\.git)?$/i.test(git('remote', 'get-url', 'origin'))) fail('unexpected origin')
+          if (git('branch', '--show-current') !== 'main' || git('status', '--porcelain', '--untracked-files=normal')) fail('production source must be clean main')
+          git('fetch', 'origin', 'main')
+          if (git('rev-parse', 'refs/remotes/origin/main') !== process.env.GITHUB_SHA) fail('main changed after this push; use the newer run')
+          git('pull', '--ff-only', 'origin', 'main')
+          if (git('rev-parse', 'HEAD') !== process.env.GITHUB_SHA) fail('checkout does not match pushed SHA')
+
+      - name: Enforce deployment guard
+        run: pnpm run deploy:guard
 
       - name: Resolve deployment metadata
         shell: node {0}
@@ -64,10 +76,6 @@ jobs:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           CLIENT_ID: ${{ vars.CLIENT_ID }}
         run: pnpm run deploy:preflight
-
-      - name: Update platform dependency
-        if: github.event_name == 'repository_dispatch'
-        run: pnpm run deploy:platform:update
 
       - name: Install dependencies
         run: pnpm run deploy:install
@@ -98,6 +106,9 @@ jobs:
         # working directory, so running in place would let tests read and write production state.
         run: pnpm run deploy:test
 
+      - name: Recheck clean pushed source before production changes
+        run: pnpm run deploy:guard
+
       - name: Register slash commands
         # Skips itself (in about a second) when the command definitions are unchanged since the
         # last successful registration; only a real change pays for the per-server work.
@@ -111,19 +122,11 @@ jobs:
         # Fails the job (with the error log tail) if the new build crash-loops or drops offline.
         run: pnpm run deploy:verify
 
-      - name: Commit platform dependency bump
-        if: github.event_name == 'repository_dispatch'
+  require-pushed-platform-update:
+    if: github.event_name == 'repository_dispatch'
+    runs-on: self-hosted
+    steps:
+      - name: Refuse deployment of unpublished dependency changes
         shell: node {0}
         run: |
-          const { execSync } = require('child_process')
-          const run = cmd => execSync(cmd, { stdio: 'inherit' })
-          const dirty = execSync('git status --porcelain -- package.json pnpm-lock.yaml').toString().trim()
-          if (!dirty) process.exit(0)
-          run('git config user.name "github-actions[bot]"')
-          run('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"')
-          run('git add package.json pnpm-lock.yaml')
-          run(`git commit -m "chore: bump @tmrxjd/platform to ${process.env.PLATFORM_VERSION}"`)
-          // No checkout step ran, so there are no persisted credentials: authenticate this one push
-          // with the job token the same way actions/checkout does.
-          const basic = Buffer.from(`x-access-token:${process.env.NODE_AUTH_TOKEN}`).toString('base64')
-          run(`git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${basic}" push origin HEAD:main`)
+          throw new Error('Platform changes must be committed and pushed to main. This dispatch does not deploy or mutate production.')

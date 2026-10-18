@@ -891,7 +891,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
       runTypeCounts: summary?.runTypeCounts ?? {},
       deltaResult,
     });
-    if (resolvedMode !== 'lifetime') embed.setFooter({ text: 'Local saved history; cloud changes may not yet be reflected.' });
+    if (resolvedMode !== 'lifetime' && summary && 'historyVerified' in summary && summary.historyVerified === false) embed.setFooter({ text: 'Offline fallback: showing locally saved history.' });
     const rows = createMainMenuButtons(resolvedMode);
     let chartFiles: AttachmentBuilder[] = [];
     if (resolvedMode !== 'lifetime' && summary?.lastRun && analyticsRuns.length > 0) {

@@ -2213,7 +2213,7 @@ async function processQueuedUpsertItem(
       deferredDuplicateReads.set(item.userId, read);
     }
     const docs = await read;
-    const match = docs.find(doc => (doc.profileId ?? null) === (item.uploadProfileId ?? null)
+    const match = docs.find(doc => (doc.profileId || null) === (item.uploadProfileId || null)
       && trackerRunsShareDuplicateIdentity(doc, item.canonicalRunData ?? item.runData ?? {}));
     const runId = match ? String(match.$id) : item.runId;
     if (!runId) throw new Error('Queued run identity is unavailable');
@@ -2733,7 +2733,10 @@ export async function logRun(params: {
 }
 
 export async function getMenuRunSummary(userId: string) {
-  void ensureMenuRunDataBeforeRender(userId).catch(() => {});
+  let historyVerified = (await getLocalSettings(userId)).cloudSyncEnabled === false;
+  await runWithCloudSyncTimeout('menu refresh', async () => {
+    await ensureMenuRunDataBeforeRender(userId); historyVerified = true;
+  });
 
   const primed = peekMenuPrimedSummary(userId);
   let localSummary: Awaited<ReturnType<typeof loadBotMenuRunSummary>> | null = null;
@@ -2743,6 +2746,7 @@ export async function getMenuRunSummary(userId: string) {
     if (summary.totalRuns > 0 && summary.lastRun) {
       clearMenuPrimedSummary(userId);
       return {
+        historyVerified,
         lastRun: summary.lastRun,
         totalRuns: summary.totalRuns,
         runTypeCounts: summary.runTypeCounts,
@@ -2754,7 +2758,7 @@ export async function getMenuRunSummary(userId: string) {
   }
 
   if (primed) {
-    return primed;
+    return { ...primed, historyVerified };
   }
 
   // The read above already loaded this; a second synchronous pass over the same documents
@@ -2765,6 +2769,7 @@ export async function getMenuRunSummary(userId: string) {
     ? cloudTotalOverride
     : summary.totalRuns;
   return {
+    historyVerified,
     lastRun: summary.lastRun,
     totalRuns,
     runTypeCounts: summary.runTypeCounts,

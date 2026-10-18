@@ -1,3 +1,4 @@
+import { getLocalSettings } from '../features/track/local-run-store';
 import { SlashCommandBuilder, type ChatInputCommandInteraction, MessageFlagsBitField } from 'discord.js';
 import { getBotConfig } from '../config/bot-config';
 import type { TrackerBotClient } from '../core/tracker-bot-client';
@@ -111,8 +112,10 @@ export async function executeTrackerCommand(commandKey: TrackerCommandKey, inter
 
   // Local ingestion must remain available before identity/cloud recovery completes.
   void client.persistence?.users.touch(interaction.user.id, resolveInteractionDisplayName(interaction)).catch(() => {});
-  void resolveBotRunCloudIdentity(interaction.user.id).catch(() => {});
-  void listBotUserProfiles(interaction.user.id).catch(() => {});
+  if ((await getLocalSettings(interaction.user.id)).cloudSyncEnabled !== false) {
+    void resolveBotRunCloudIdentity(interaction.user.id).catch(() => {});
+    void listBotUserProfiles(interaction.user.id).catch(() => {});
+  }
 
   // Resolve which profile this upload targets (alt 1-4, else Main) and stash it for the
   // run-write choke point. Always set (even to null/Main) so it is never stale.

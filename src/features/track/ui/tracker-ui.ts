@@ -177,7 +177,7 @@ export function createConfirmationButtons(token: string) {
   ];
 }
 
-export function createSuccessButtons(options: { includeCloudVerification?: boolean } = {}) {
+export function createSuccessButtons() {
   const ui = getTrackUiConfig();
   const idByKey: Record<string, string> = {
     shareLast: TRACKER_IDS.flow.shareLast,
@@ -204,12 +204,6 @@ export function createSuccessButtons(options: { includeCloudVerification?: boole
       return components.length ? new ActionRowBuilder<ButtonBuilder>().addComponents(...components) : null;
     })
     .filter((row): row is ActionRowBuilder<ButtonBuilder> => row !== null);
-  if (options.includeCloudVerification) {
-    const verify = new ButtonBuilder().setCustomId(TRACKER_IDS.flow.shareLastVerified).setLabel('Verify & Share').setStyle(ButtonStyle.Secondary);
-    const available = rows.find(row => row.components.length < 5);
-    if (available) available.addComponents(verify);
-    else if (rows.length < 5) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(verify));
-  }
   return rows;
 }
 

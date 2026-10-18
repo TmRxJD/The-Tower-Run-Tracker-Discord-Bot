@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import sqlite3 from 'sqlite3'
+import { assertDeployment } from './deployment-guard.mjs'
 
 const action = process.argv[2]
 const serviceName = 'trackerbot'
@@ -81,14 +82,16 @@ function writeEnvFile() {
  * A restart only picks up new code if dist/ was rebuilt first, and `pm2 restart --update-env`
  * does not re-read ecosystem.config.cjs, so changes there (e.g. UV_THREADPOOL_SIZE) never
  * applied. A running bot once kept a weeks-old build in memory after a "deploy".
- * DEPLOY_SKIP_BUILD=true skips the rebuild for callers that just ran it.
+ * Always compile the exact guarded source before activation.
  */
 function activateService() {
-  if (getEnv('DEPLOY_SKIP_BUILD') !== 'true') {
+  const previousPid = readPm2Service()?.pid ?? null
+  {
     // In-place compile rather than `build` (which rimrafs dist first): the running bot
     // lazy-loads some modules and must not find dist/ missing mid-deploy.
     run('pnpm run build:refresh')
   }
+  writeFileSync(resolve('dist/tracker-build-receipt.json'), JSON.stringify({ sha: getEnv('GITHUB_SHA'), builtAt: new Date().toISOString(), runId: getEnv('GITHUB_RUN_ID'), previousPid }) + '\n')
   run(`pm2 startOrRestart ecosystem.config.cjs --only ${serviceName} --env production --update-env`)
 }
 
@@ -108,6 +111,8 @@ function runIsolatedTests() {
   try {
     run(`git worktree add --detach "${checkout}" HEAD`)
     symlinkSync(resolve('node_modules'), linkedModules, 'junction')
+    run('node node_modules/typescript/bin/tsc -p tsconfig.build.json', { cwd: checkout })
+    run('node --test scripts/deployment-guard.test.mjs', { cwd: checkout })
     run('node node_modules/vitest/vitest.mjs run', { cwd: checkout })
   } finally {
     try {
@@ -159,6 +164,9 @@ function tailFile(path, bytes = 6000) {
  * stay online and not restart. Fails the deploy (with the error log tail) if it does not.
  */
 async function verifyService() {
+  assertDeployment()
+  const artifact = JSON.parse(readFileSync(resolve('dist/tracker-build-receipt.json'), 'utf8'))
+  if (artifact.sha !== getEnv('GITHUB_SHA') || artifact.runId !== getEnv('GITHUB_RUN_ID')) throw new Error('Production artifact does not match this pushed deployment')
   const seconds = Number(getEnv('DEPLOY_VERIFY_SECONDS', '30'))
   const first = readPm2Service()
   if (!first) {
@@ -184,12 +192,13 @@ async function verifyService() {
   }
 
   const finalState = readPm2Service()
+  if (artifact.previousPid && finalState.pid === artifact.previousPid) throw new Error('Deployment did not activate a fresh process')
   const ready = await readRuntimeReadyReceipt()
   if (ready?.pid !== finalState.pid || ready.readyAt < finalState.pm2_env.pm_uptime) {
     throw new Error(`${serviceName} is online but has no current Discord ClientReady receipt`)
   }
   const uptimeSeconds = Math.round((Date.now() - finalState.pm2_env.pm_uptime) / 1000)
-  process.stdout.write(`${serviceName} healthy: Discord ready, online for ${uptimeSeconds}s with no restarts over a ${seconds}s check\n`)
+  process.stdout.write(`${serviceName} healthy: pid=${finalState.pid} sha=${artifact.sha} Discord ready, online for ${uptimeSeconds}s with no restarts over a ${seconds}s check\n`)
 }
 
 function readRuntimeReadyReceipt() {
@@ -285,6 +294,8 @@ function report() {
     process.stdout.write(`pm2_status=unavailable:${serviceName}\n`)
   }
 }
+
+if (['preflight', 'write-env', 'activate', 'update-platform'].includes(action)) assertDeployment()
 
 switch (action) {
   case 'preflight':

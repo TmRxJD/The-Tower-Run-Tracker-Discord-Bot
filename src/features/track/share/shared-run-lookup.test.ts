@@ -24,3 +24,10 @@ it('preserves legacy live lookup without editing old posted references', async (
   const context = await resolveSharedRunContext(client as never,'owner','run-9');
   expect(context?.run.totalCoins).toBe('0'); expect(mocks.snapshot).not.toHaveBeenCalled();
 });
+it('preserves the captured cloud comparison when expansion has no complete local cache', async () => {
+  const captured = { mode: 'last' as const, baseline: { wave: 100 }, comparisonLabel: 'vs Last Run' };
+  mocks.snapshot.mockResolvedValue({ ref: 'owner:'+token, userId: 'owner', run: {runId:'run-9', wave:'200'}, sharerName:'fixture',runTypeCounts:{Farming:132},deltaResult:captured });
+  const context = await resolveSharedRunContext(client as never, 'owner', token);
+  await buildExpandedSharePayload(client as never, 'owner', context!);
+  expect(mocks.embed.mock.calls.at(-1)?.[0].deltaResult).toEqual(captured);
+});

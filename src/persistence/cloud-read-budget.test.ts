@@ -27,5 +27,33 @@ it('caps unresolved SDK reads across circuit reopenings', async () => {
     await vi.advanceTimersByTimeAsync(1); await rejected; await vi.advanceTimersByTimeAsync(30000);
   }
   const read = vi.fn(async () => 'must not start');
-  await expect(withCloudReadBudget(read)).rejects.toThrow('temporarily unavailable'); expect(read).not.toHaveBeenCalled();
+  const waiting = expect(withCloudReadBudget(read)).rejects.toMatchObject({ code: 'EBUSY' });
+  await vi.advanceTimersByTimeAsync(15000); await waiting; expect(read).not.toHaveBeenCalled();
+});
+
+it('queues normal bulk-import fan-out rather than reporting a false backend outage', async () => {
+  vi.resetModules(); vi.useFakeTimers(); const { withCloudReadBudget } = await import('./cloud-read-budget.js');
+  let active = 0; let maximum = 0;
+  const work = Array.from({ length: 250 }, (_, index) => withCloudReadBudget(async () => {
+    active++; maximum = Math.max(maximum, active);
+    await new Promise(resolve => setTimeout(resolve, 20)); active--; return index;
+  }));
+  const results = Promise.allSettled(work);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await results).every(result => result.status === 'fulfilled')).toBe(true);
+  expect(maximum).toBe(16);
+  await expect(withCloudReadBudget(async () => 'healthy identity lookup')).resolves.toBe('healthy identity lookup');
+});
+it('cancels a queued read without running it or starving subsequent healthy work', async () => {
+  vi.resetModules(); const { withCloudReadBudget } = await import('./cloud-read-budget.js');
+  const finish: Array<() => void> = [];
+  const active = Array.from({ length: 16 }, () => withCloudReadBudget(() => new Promise<void>(resolve => { finish.push(resolve); })));
+  await vi.waitFor(() => expect(finish).toHaveLength(16));
+  const controller = new AbortController(); const cancelledRead = vi.fn(async () => 'must not start');
+  const rejected = expect(withCloudReadBudget(cancelledRead, 5000, controller.signal)).rejects.toMatchObject({ code: 'ABORT_ERR' });
+  const healthyRead = vi.fn(async () => 'recovered'); const queued = withCloudReadBudget(healthyRead);
+  controller.abort(); await rejected; expect(cancelledRead).not.toHaveBeenCalled();
+  for (const resolve of finish) resolve();
+  await Promise.all(active); await expect(queued).resolves.toBe('recovered');
+  expect(healthyRead).toHaveBeenCalledOnce();
 });

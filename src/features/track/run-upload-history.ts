@@ -1,3 +1,5 @@
+import { readVerifiedHistorySnapshot, saveVerifiedHistorySnapshot } from './run-history-snapshot';
+import { trackerRunsShareDuplicateIdentity } from '@tmrxjd/platform/tools';
 import { yieldToEventLoop } from '../../utils/event-loop';
 import { hydrateTrackerCloudRun, buildTrackerResolvedRunReference } from '@tmrxjd/platform/tools';
 import { loadLocalRunsFromBotRxDB, upsertMergedRunsIntoBotRxDB } from '../../rxdb/run-rxdb-store';
@@ -6,7 +8,7 @@ import { getPermanentlyDeletedRunIds } from './run-deletion-tombstones';
 import { loadBotCompleteRunCloudDocuments } from './run-cloud-pair-client';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { logger } from '../../core/logger';
-import { annotateHistoryFailure, historyFailureError, readHistoryFailure, type HistoryFailureStage } from './history-failure-diagnostic';
+import { annotateHistoryFailure, historyFailureError, readHistoryFailure, getKnownHistoryFailure, type HistoryFailureStage } from './history-failure-diagnostic';
 const diagnosticSalt = randomBytes(32);
 
 // Bot interaction coordination only; parsing, hydration and reference semantics remain shared.
@@ -104,19 +106,38 @@ function reference(run: Record<string, unknown>) {
   return buildTrackerResolvedRunReference({ runId: run.runId, fallbackRunId: run.id ?? run.$id, localId: run.localId });
 }
 
-export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean; mainOnly?: boolean; localFirst?: boolean; onStage?: BotRunOperationContext['setStage'] } = {}) {
+export type BotRunHistory = { verified?: boolean; completeLocal?: boolean; getRuns: (submitted?: { runId?: string | null; localId?: string | null }) => Promise<Record<string, unknown>[]> };
+export async function prepareBotRunUploadHistory(userId: string, options: { readOnly?: boolean; mainOnly?: boolean; localFirst?: boolean; localOnly?: boolean; onStage?: BotRunOperationContext['setStage'] } = {}): Promise<BotRunHistory> {
   if (options.localFirst) {
     const tombstones = await getPermanentlyDeletedRunIds(userId);
     const settings = await getLocalSettings(userId);
-    return { verified: settings.cloudSyncEnabled === false, getRuns: async () => {
-      const rows: Record<string, unknown>[] = [...await loadLocalRunsFromBotRxDB(userId)];
+    if (settings.cloudSyncEnabled !== false && !options.localOnly) {
+      try {
+        const online = await withBotHistoryDeadline(() => prepareBotRunUploadHistory(userId, { ...options, localFirst: false, readOnly: true }), 15000);
+        return { ...online, verified: true, completeLocal: !options.mainOnly };
+      } catch (error) {
+        const failure = getKnownHistoryFailure(error);
+        if (failure && ['schema', 'ownership', 'pagination'].includes(failure.cause)) throw error;
+        logger.warn('Cloud history unavailable; continuing with durable local data', { stage: failure?.stage ?? 'cloud_history', cause: failure?.cause ?? 'unavailable' });
+      }
+    }
+    const snapshot = settings.cloudSyncEnabled === false ? null : await readVerifiedHistorySnapshot(userId);
+    return { verified: settings.cloudSyncEnabled === false, completeLocal: settings.cloudSyncEnabled === false || Boolean(snapshot), getRuns: async () => {
+      const local = await loadLocalRunsFromBotRxDB(userId);
+      const rows: Record<string, unknown>[] = snapshot ? snapshot.documents.map(run => {
+        const existing = local.find(row => reference(row).runId === reference(run).runId);
+        return { ...hydrateTrackerCloudRun(run, userId, String(run.username ?? 'unknown')), ...(existing?.localId ? { localId: existing.localId } : {}) };
+      }) : [...local];
       // The normal RxDB cache is memory-backed. Newly accepted durable intents remain
       // visible after restart without cloud access or replaying historical unknowns.
-      for (const item of await getQueueItems(userId)) {
+      const queued = await getQueueItems(userId);
+      for (const item of queued) if (item.op === 'delete' && item.runId) tombstones.add(item.runId);
+      for (const item of queued) {
         if (item.op !== 'upsert' || !item.automaticRecovery || item.uploadProfileId === undefined || !item.runData) continue;
-        const restored = { ...item.runData, ...item.canonicalRunData, localId: item.localId, runId: item.runId };
+        const restored = { ...item.runData, ...item.canonicalRunData, localId: item.localId, runId: item.runId, profileId: item.uploadProfileId };
         const index = rows.findIndex(row => Boolean(item.localId && row.localId === item.localId)
-          || Boolean(item.runId && reference(row).runId === item.runId));
+          || Boolean(item.runId && reference(row).runId === item.runId)
+          || Boolean(item.duplicateCheckPending && (row.profileId || null) === (item.uploadProfileId || null) && trackerRunsShareDuplicateIdentity(row, restored)));
         if (index >= 0) rows[index] = { ...rows[index], ...restored };
         else rows.push(restored);
       }
@@ -144,16 +165,25 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
           elapsedMs: Date.now() - started, pendingRead: cloudReads.has(historyReadKey(userId, !options.mainOnly)), ...readHistoryFailure(failure) });
         throw failure;
       });
+    if (!options.mainOnly) await saveVerifiedHistorySnapshot(userId, cloudRuns).catch(() => logger.warn('Verified history fallback snapshot could not be persisted'));
     options.onStage?.('local-history');
     historyStage = 'local_history';
     const tombstones = await getPermanentlyDeletedRunIds(userId);
+    const queue = await getQueueItems(userId);
+    for (const item of queue) if (item.op === 'delete' && item.runId) tombstones.add(item.runId);
     const active = cloudRuns.filter(run => !run.deletedAt && !tombstones.has(reference(run).runId ?? ''));
     const cloudIds = new Set(active.map(run => reference(run).runId).filter(Boolean));
-    const queue = await getQueueItems(userId);
+    const pendingByLocalId = new Map(queue.filter(item => item.op === 'upsert').map(item => [item.localId, item]));
     const pendingRunIds = new Set(queue.filter(item => item.op === 'upsert').map(item => item.runId).filter(Boolean));
     const pendingLocalIds = new Set(queue.filter(item => item.op === 'upsert').map(item => item.localId).filter(Boolean));
     if (options.readOnly) {
-      const local = await loadLocalRunsFromBotRxDB(userId);
+      const local = [...await loadLocalRunsFromBotRxDB(userId)];
+      for (const item of queue) {
+        if (item.op !== 'upsert' || !item.automaticRecovery || item.uploadProfileId === undefined || !item.runData
+          || local.some(row => Boolean(item.localId && row.localId === item.localId))) continue;
+        local.push({ ...item.runData, ...item.canonicalRunData, localId: item.localId, runId: item.runId,
+          userId, username: item.username, createdAt: item.createdAt, updatedAt: item.createdAt } as typeof local[number]);
+      }
       const localByCloudId = new Map(local.map(run => [reference(run).runId, run]));
       const rows: Record<string, unknown>[] = active.filter(run => !pendingRunIds.has(reference(run).runId ?? ''))
         .map(run => {
@@ -165,9 +195,11 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
         const ref = reference(run);
         if (run.deletedAt || (ref.runId && tombstones.has(ref.runId))) continue;
         if (!ref.runId || pendingRunIds.has(ref.runId) || pendingLocalIds.has(run.localId)) {
+          const pending = pendingByLocalId.get(run.localId);
           const index = rows.findIndex(existing => reference(existing).runId && reference(existing).runId === ref.runId
-            || Boolean(existing.localId && existing.localId === run.localId));
-          if (index >= 0) rows[index] = run;
+            || Boolean(existing.localId && existing.localId === run.localId)
+            || Boolean(pending?.duplicateCheckPending && (existing.profileId || null) === (pending.uploadProfileId || null) && trackerRunsShareDuplicateIdentity(existing, run)));
+          if (index >= 0) rows[index] = { ...run, runId: reference(rows[index]).runId ?? ref.runId };
           else rows.push(run);
         }
       }
@@ -175,7 +207,18 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
       if (active.some(run => !visibleIds.has(reference(run).runId))) {
         throw historyFailureError('Run history could not be loaded completely. Please retry.', 'count_consistency', 'visibility', correlation);
       }
-      return { getRuns: async () => rows };
+      return { getRuns: async submitted => {
+        if (!submitted?.runId && !submitted?.localId) return rows;
+        const saved = (await loadLocalRunsFromBotRxDB(userId)).find(run => Boolean(submitted.localId && run.localId === submitted.localId)
+          || Boolean(submitted.runId && reference(run).runId === submitted.runId));
+        if (!saved || saved.deletedAt || tombstones.has(reference(saved).runId ?? '')) return rows;
+        const current = [...rows];
+        const index = current.findIndex(run => Boolean(saved.localId && run.localId === saved.localId)
+          || Boolean(reference(saved).runId && reference(run).runId === reference(saved).runId));
+        if (index < 0) current.push(saved); else current[index] = saved;
+        return current;
+      } };
+
     }
     // Preserve queued local edits. Hydrate in small chunks to keep gateway acknowledgments responsive.
     const toHydrate = active.filter(run => !pendingRunIds.has(reference(run).runId ?? ''));

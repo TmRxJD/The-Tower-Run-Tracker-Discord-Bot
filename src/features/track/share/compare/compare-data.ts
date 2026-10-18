@@ -11,7 +11,8 @@ import { buildShareSnapshotRef, parseShareRunRef } from '../share-run-ref';
 
 const runSchema = z.record(z.string(), z.unknown());
 const snapshotSchema = z.object({ ref: z.string(), userId: z.string(), sharerName: z.string(), run: runSchema,
-  runTypeCounts: z.record(z.string(), z.number()).optional() });
+  runTypeCounts: z.record(z.string(), z.number()).optional(), historyVerified: z.boolean().optional(),
+  deltaResult: z.unknown().optional() });
 export type CompareRun = Record<string, unknown>;
 export interface CompareChoice {
   source: 'local' | 'cloud'; id: string; runId?: string; profileId: string | null;
@@ -28,7 +29,8 @@ export async function loadSharedCompareSnapshot(ref: string): Promise<CompareSha
   const snapshot = snapshotSchema.safeParse(await readShareSnapshot(ref));
   if (!snapshot.success || snapshot.data.userId !== parsed.userId || snapshot.data.ref !== ref) return null;
   if (/^S-[a-f0-9]{32}$/.test(parsed.runRef)
-    && buildShareSnapshotRef(parsed.userId, snapshot.data.run, snapshot.data.runTypeCounts ?? {}) !== ref) return null;
+    && buildShareSnapshotRef(parsed.userId, snapshot.data.run, snapshot.data.runTypeCounts ?? {}, snapshot.data.historyVerified !== false,
+      snapshot.data.deltaResult as Parameters<typeof buildShareSnapshotRef>[4]) !== ref) return null;
   return { run: structuredClone(snapshot.data.run), sharerName: snapshot.data.sharerName };
 }
 

@@ -1,3 +1,4 @@
+import type { TrackerRunDeltaResult } from '@tmrxjd/platform/tools';
 import { getTrackerKv, setTrackerKv } from '../../../services/idb';
 import { logger } from '../../../core/logger';
 
@@ -16,6 +17,8 @@ export type ShareSnapshot = {
   run: Record<string, unknown>;
   sharerName: string;
   updatedAt: number;
+  historyVerified?: boolean;
+  deltaResult?: TrackerRunDeltaResult | null;
   runTypeCounts?: Record<string, number>;
 };
 
@@ -23,13 +26,15 @@ function snapshotKey(ref: string): string {
   return `${SHARE_SNAPSHOT_KEY_PREFIX}${ref}`;
 }
 
-export async function saveShareSnapshot(params: { ref: string; userId: string; run: Record<string, unknown>; sharerName: string; runTypeCounts?: Record<string, number> }): Promise<boolean> {
+export async function saveShareSnapshot(params: { ref: string; userId: string; run: Record<string, unknown>; sharerName: string; runTypeCounts?: Record<string, number>; historyVerified?: boolean; deltaResult?: TrackerRunDeltaResult | null }): Promise<boolean> {
   const snapshot: ShareSnapshot = {
     ref: params.ref,
     userId: params.userId,
     run: params.run,
     sharerName: params.sharerName,
     updatedAt: Date.now(),
+    ...(params.deltaResult !== undefined ? { deltaResult: params.deltaResult } : {}),
+    ...(params.historyVerified === false ? { historyVerified: false } : {}),
     ...(params.runTypeCounts ? { runTypeCounts: params.runTypeCounts } : {}),
   };
   try {

@@ -25,6 +25,7 @@ it('retains acknowledged queue, original target and share after abrupt process t
       ui.setShareableRun('fixture-durable',{run:{totalCoins:0},runTypeCounts:{Farming:7}});
       for(let i=0;i<1100;i++)ui.setShareableRun('churn-'+i,{run:{},runTypeCounts:{}});
       if(ui.getShareableRun('fixture-durable')!==null)throw Error('UI cache not evicted');
+      await require('./dist/features/track/run-history-snapshot').saveVerifiedHistorySnapshot('fixture-durable',[{$id:'cloud-1',userId:'fixture-durable',type:'Farming',tier:'5',wave:'123',coins:'100',duration:'1h',runDate:'2026-10-18',runTime:'01:00'}]);
       process.stdout.write('ACK\\n');setInterval(()=>{},1000);
     })().catch(()=>process.exit(2));
   `], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -47,9 +48,9 @@ it('retains acknowledged queue, original target and share after abrupt process t
       const offline=await require('./dist/features/track/local-run-store').getLocalRuns('fixture-offline-crash');
       const target=await require('./dist/features/track/run-local-provenance').getOriginalRunTarget('fixture-offline-crash','offline-crash-local');
       if(offline.length!==1||offline[0].localId!=='offline-crash-local'||offline[0].runId||offline[0].totalCoins!=='2B'||offline[0].totalCells!=='3K'||Number(offline[0].totalDice)!==0||target.profileId!=='alt-crash-original')throw Error('offline restart mismatch');
-      const view=await require('./dist/features/track/run-upload-history').prepareBotRunUploadHistory('fixture-durable',{localFirst:true});
+      const view=await require('./dist/features/track/run-upload-history').prepareBotRunUploadHistory('fixture-durable',{localFirst:true,localOnly:true});
       const pendingRows=await view.getRuns();
-      if(view.verified!==false||pendingRows.length!==1||pendingRows[0].localId!=='local-1'||Number(pendingRows[0].totalCoins)!==0)throw Error('pending offline view lost');
+      if(view.verified!==false||view.completeLocal!==true||pendingRows.length!==2||!pendingRows.some(row=>row.localId==='local-1'&&Number(row.totalCoins)===0)||!pendingRows.some(row=>row.runId==='cloud-1'))throw Error('pending offline view lost');
       process.stdout.write('VERIFIED');process.exit(0);
     })().catch(()=>process.exit(3));
   `], { cwd: process.cwd(), env, timeout: 10_000 });

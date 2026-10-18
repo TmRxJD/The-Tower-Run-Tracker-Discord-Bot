@@ -28,6 +28,7 @@ export async function autoShareToConfiguredLogChannel(params: {
   runTypeCounts: Record<string, number>;
   deltaResult?: TrackerRunDeltaResult;
   allRuns?: Record<string, unknown>[];
+  historyVerified?: boolean;
 }) {
   const settings = await getUserSettings(params.userId, { localOnly: true }).catch(() => null);
   const logChannelId = typeof settings?.logChannelId === 'string' ? settings.logChannelId.trim() : '';
@@ -44,10 +45,13 @@ export async function autoShareToConfiguredLogChannel(params: {
     deltaResult: params.deltaResult,
     options: resolveShareEmbedOptions(settings),
   });
-  if (!Object.keys(params.runTypeCounts).length) embed.setFooter({ text: 'Local saved copy; cloud counts and comparisons are unavailable.' });
-  let shareRunRef = buildShareSnapshotRef(params.userId, params.run, params.runTypeCounts);
+  if (params.historyVerified === false) {
+    embed.setTitle(embed.data.title + ' (locally saved)');
+    embed.setFooter({ text: 'Offline fallback: counts and comparisons use saved history and pending runs.' });
+  }
+  let shareRunRef = buildShareSnapshotRef(params.userId, params.run, params.runTypeCounts, params.historyVerified !== false, params.deltaResult ?? null);
   if (shareRunRef) {
-    const saved = await saveShareSnapshot({ ref: shareRunRef, userId: params.userId, run: params.run, runTypeCounts: params.runTypeCounts, sharerName: embedUser.displayName }).catch(() => false);
+    const saved = await saveShareSnapshot({ ref: shareRunRef, userId: params.userId, run: params.run, runTypeCounts: params.runTypeCounts, sharerName: embedUser.displayName, historyVerified: params.historyVerified, deltaResult: params.deltaResult ?? null }).catch(() => false);
     if (!saved) shareRunRef = null;
   }
 

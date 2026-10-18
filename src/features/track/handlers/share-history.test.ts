@@ -131,7 +131,7 @@ it('keeps explicit verified sharing on the fresh history path', async () => {
   setShareableRun('share-owner', { run: rows[0], runTypeCounts: {} });
   const owner = { ...interaction(), customId: 'tracker_share_verified' };
   await handleTrackMenuShareLast(owner as never);
-  expect(mocks.history).toHaveBeenCalledWith('share-owner', expect.objectContaining({ localFirst: false, readOnly: true }));
+  expect(mocks.history).toHaveBeenCalledWith('share-owner', expect.objectContaining({ localFirst: true, readOnly: true }));
   expect(owner.channel.send).toHaveBeenCalledOnce();
 });
 it('does not publish an explicit verified share if cloud verification fails', async () => {
