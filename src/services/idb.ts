@@ -33,6 +33,11 @@ function formatStorageError(error: unknown): string {
   return 'Unknown storage error';
 }
 
+function isTransientSqliteContention(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^(SQLITE_BUSY|SQLITE_LOCKED)(_|$)/.test(code);
+}
+
 function runSql(db: sqlite3.Database, sql: string, params: unknown[] = []): Promise<void> {
   return new Promise((resolve, reject) => {
     db.run(sql, params, (error) => {
@@ -108,6 +113,9 @@ async function getTrackerBotDb(): Promise<sqlite3.Database | null> {
         });
       });
 
+      // A competing reader/writer may release its lock shortly; wait off the event loop.
+      db.configure('busyTimeout', 5000);
+
       // Successful persistent writes wait for SQLite's full disk sync.
       await runSql(db, 'PRAGMA synchronous = FULL');
 
@@ -165,6 +173,12 @@ export async function getTrackerKv<T>(key: string): Promise<T | null> {
     }
     return JSON.parse(row.value) as T;
   } catch (error) {
+    // Lock contention is not database loss. Reject this operation without acknowledging
+    // an in-memory substitute, while allowing later durable operations to recover.
+    if (isTransientSqliteContention(error)) {
+      logger.warn('SQLite KV operation blocked by temporary lock contention; persistent operation not acknowledged');
+      throw error;
+    }
     storageUnavailable = true;
     const detail = formatStorageError(error);
     if (!allowMemoryFallback) {
@@ -200,6 +214,10 @@ export async function setTrackerKv(key: string, value: unknown, options: { requi
       [record.key, JSON.stringify(record.value), record.updatedAt]
     );
   } catch (error) {
+    if (isTransientSqliteContention(error)) {
+      logger.warn('SQLite KV write blocked by temporary lock contention; durable write not acknowledged');
+      throw error;
+    }
     storageUnavailable = true;
     const detail = formatStorageError(error);
     if (!allowMemoryFallback || options.requirePersistent) {

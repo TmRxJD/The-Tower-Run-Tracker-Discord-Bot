@@ -1,3 +1,8 @@
+## 2026-10-18 - Recover durable storage after temporary lock contention
+
+- Wait up to five seconds for SQLite locks, then reject a still-blocked operation without acknowledging an in-memory substitute. A temporary lock no longer permanently disables subsequent persistent reads/writes. Disk-full/corruption and other storage failures still fail closed.
+- Real isolated lock tests verify rejected writes, unchanged stored data and recovery with memory fallback both disabled and enabled. Deployment remains push/pull/runner only.
+
 ## 2026-10-18 - Restore automatic fresh-cloud counts and safe fallback
 
 - Fix normal parallel reads being rejected as an outage. Restore automatic fresh quantities and configured comparisons on standard Share; retain explicitly labeled durable fallback when cloud reads fail. Preserve snapshot comparison metadata and existing private Compare features.
