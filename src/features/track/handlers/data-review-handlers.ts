@@ -431,7 +431,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         }
 
         if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
-        await interaction.editReply({ content: syncResult?.queuedForCloud ? 'Saved locally; queued for cloud sync.' : undefined, embeds: [embed], components: createSuccessButtons(), files: chartAttachment ? [chartAttachment] : [] });
+        await interaction.editReply({ content: syncResult?.queuedForCloud ? 'Saved locally; queued for cloud sync.' : undefined, embeds: [embed], components: createSuccessButtons({ includeCloudVerification: true }), files: chartAttachment ? [chartAttachment] : [] });
 
         if (syncResult?.backgroundSync) {
           void syncResult.backgroundSync
