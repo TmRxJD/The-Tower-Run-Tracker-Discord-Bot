@@ -18,3 +18,9 @@ scripts/.run-pair-boundary-baseline.json
 
 # Scratchpad for experiments and one-off scripts
 temp/
+
+# Machine-local package authentication/configuration and npm fallback output.
+# Keep real values local; .npmrc.example is the safe tracked template.
+/.npmrc
+/config.json
+/package-lock.json

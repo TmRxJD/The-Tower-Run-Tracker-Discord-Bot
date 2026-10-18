@@ -180,3 +180,5 @@
 - Compare only explicit killsWithBlackHole (Killed With Effect Active) measurements; legacy hits/weapon kills/stored percentages cannot masquerade as corrected comparison data. Compatible rolling windows and actual prior-run selection match established Orbs correctness without changing other metrics.
 - Recover explicit corrected raw fields, preserve genuine zero and unavailable comparisons, and align submission/share/table/chart numbers. No historical record rewrite; existing Discord images need regeneration.
 
+
+- Preserve existing machine-local package credentials/configuration byte-for-byte while excluding them from versioned source; retain a safe `.npmrc.example`. This enables the strict runner source gate without changing authentication or runtime lookup.
