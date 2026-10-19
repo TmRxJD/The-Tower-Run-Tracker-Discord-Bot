@@ -38,7 +38,8 @@ export async function loadBotCompleteRunCloudDocuments(userId: string, options: 
     catch (error) {
       const failure = getKnownHistoryFailure(error);
       const retryable = failure?.cause === 'count_consistency'
-        || failure?.cause === 'pagination' && failure.stage === 'main_page' && failure.pagination !== undefined;
+        || failure?.cause === 'pagination' && failure.stage === 'main_page'
+          && (failure.pagination?.reason === 'empty_before_total' || failure.pagination?.reason === 'records_exceed_total');
       if (attempt !== 0 || !retryable
         || !['main_page', 'main_count'].includes(failure.stage) || Date.now() >= deadline || options.signal?.aborted) throw error;
       // Retry the entire verified read, never pages from different observations.
