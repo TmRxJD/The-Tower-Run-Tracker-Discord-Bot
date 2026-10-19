@@ -101,7 +101,18 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
 
     const userId = interaction.user.id;
     setStage('settings');
-    const settings = await getUserSettings(userId).catch(() => null);
+    // The cloud preference is local-authoritative. Establish it before starting
+    // any optional remote work, then overlap independent fresh display/history reads.
+    const localSettings = await getUserSettings(userId, { localOnly: true });
+    const localOnly = localSettings?.cloudSyncEnabled === false;
+    if (mode !== 'lifetime') setStage('history');
+    const [settings, shareContext] = await Promise.all([
+      getUserSettings(userId, { localOnly }).catch(() => null),
+      mode === 'lifetime' ? null : Promise.all([
+        withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { localFirst: true, readOnly: true, onStage: context.setStage }), 'share-history'),
+        getEffectiveUserSharedSettings(userId, { localOnly }),
+      ]),
+    ]);
     const includeNotes = settings?.shareNotes !== false;
     const includeCoverage = settings?.shareCoverage !== false;
     const includeScreenshot = settings?.shareScreenshot !== false;
@@ -181,11 +192,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       await disableShareButtonOnOriginalMessage(interaction);
     } else {
       setStage('history');
-      // Both reads use fresh settings/history and neither depends on the other.
-      const [history, sharedSettings] = await Promise.all([
-        withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { localFirst: true, readOnly: true, onStage: context.setStage }), 'share-history'),
-        getEffectiveUserSharedSettings(userId, { localOnly: settings?.cloudSyncEnabled === false }),
-      ]);
+      const [history, sharedSettings] = shareContext!;
       const verifiedRuns = await history.getRuns();
       const cached = getShareableRun(userId);
       let run = cached?.run ?? null;

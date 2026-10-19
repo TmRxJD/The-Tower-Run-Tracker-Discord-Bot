@@ -14,6 +14,19 @@ const KV_PREFIX = 'tracker:discord-appwrite-id:v1:';
 const CACHE_TTL_MS = 60_000;
 const runtimeCache = new Map<string, string | null>();
 const runtimeCachedAt = new Map<string, number>();
+const pendingIdentityReads = new Map<string, ReturnType<Users['listIdentities']>>();
+
+function readProviderIdentities(discordId: string, users: Users, queries?: string[]) {
+  const existing = pendingIdentityReads.get(discordId);
+  if (existing) return existing;
+  // Share only the underlying read. Linked-account and lookup-error policy stays
+  // with each caller of the platform resolver, including mixed strict/optional calls.
+  const read = Promise.resolve().then(() => users.listIdentities(queries));
+  pendingIdentityReads.set(discordId, read);
+  const clear = () => { if (pendingIdentityReads.get(discordId) === read) pendingIdentityReads.delete(discordId); };
+  void read.then(clear, clear);
+  return read;
+}
 
 type CachedEntry = {
   appwriteId: string | null;
@@ -39,7 +52,7 @@ export async function resolveAppwriteIdForDiscordUser(
   return resolveTrackerDiscordAppwriteUserId({
     discordUserId: discordId,
     requireLinked: options.requireLinked,
-    usersApi: new Users(client),
+    usersApi: { listIdentities: queries => readProviderIdentities(normalized, new Users(client), queries) },
     identityQueries: [
       Query.equal('provider', 'discord'),
       Query.equal('providerUid', discordId.trim()),
@@ -81,6 +94,7 @@ export async function resolveAppwriteIdForDiscordUser(
 }
 
 export async function refreshAppwriteIdForDiscordUser(discordId: string): Promise<string | null> {
+  pendingIdentityReads.delete(discordId.trim());
   runtimeCache.delete(discordId.trim());
   runtimeCachedAt.delete(discordId.trim());
   await setTrackerKv(`${KV_PREFIX}${discordId.trim()}`, { appwriteId: null, cachedAt: 0 } satisfies CachedEntry).catch(() => {});

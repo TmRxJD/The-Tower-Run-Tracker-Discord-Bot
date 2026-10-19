@@ -127,6 +127,57 @@ it('overlaps fresh history and shared settings without publishing before both co
   } finally { vi.useRealTimers(); }
 });
 
+it.each([2000, 500])('overlaps tracker settings (%ims) with fresh history after the local cloud gate', async settingsMs => {
+  vi.useFakeTimers();
+  const owner = interaction();
+  setShareableRun('share-owner', { run: rows[0], runTypeCounts: { Farming: 1 } });
+  mocks.settings.mockImplementation(async (_id, options) => {
+    if (!options?.localOnly) await new Promise(resolve => setTimeout(resolve, settingsMs));
+    return { cloudSyncEnabled: true, shareChart: false };
+  });
+  mocks.history.mockImplementation(async () => {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return { getRuns: mocks.runs };
+  });
+  try {
+    const pending = handleTrackMenuShareLast(owner as never);
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(owner.channel.send).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(Math.max(settingsMs, 1500) - 1499);
+    await pending;
+    expect(owner.channel.send).toHaveBeenCalledOnce();
+    expect(mocks.history).toHaveBeenCalledOnce();
+    expect(mocks.settings.mock.calls[0]).toEqual(['share-owner', { localOnly: true }]);
+    expect(mocks.settings.mock.calls[1]).toEqual(['share-owner', { localOnly: false }]);
+    expect(mocks.snapshot.mock.calls.at(-1)?.[0].runTypeCounts).toEqual({ Farming: 132 });
+  } finally { vi.useRealTimers(); }
+});
+
+it('waits for the authoritative local cloud preference and keeps disabled sharing local', async () => {
+  let release!: (value: object) => void;
+  mocks.settings.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }))
+    .mockResolvedValue({ cloudSyncEnabled: false, shareChart: false });
+  const owner = interaction();
+  const pending = handleTrackMenuShareLast(owner as never);
+  await vi.waitFor(() => expect(mocks.settings).toHaveBeenCalledOnce());
+  expect(mocks.history).not.toHaveBeenCalled(); expect(mocks.sharedSettings).not.toHaveBeenCalled();
+  release({ cloudSyncEnabled: false, shareChart: false });
+  await pending;
+  expect(mocks.settings.mock.calls.every(([, options]) => options?.localOnly === true)).toBe(true);
+  expect(mocks.sharedSettings).toHaveBeenCalledWith('share-owner', { localOnly: true });
+  expect(mocks.history).toHaveBeenCalledOnce();
+  expect(owner.channel.send).toHaveBeenCalledOnce();
+});
+
+it('fails before remote work or publication when the local cloud preference cannot be read', async () => {
+  mocks.settings.mockRejectedValueOnce(new Error('fixture storage unavailable'));
+  const owner = interaction();
+  await handleTrackMenuShareLast(owner as never);
+  expect(mocks.settings).toHaveBeenCalledOnce();
+  expect(mocks.history).not.toHaveBeenCalled(); expect(mocks.sharedSettings).not.toHaveBeenCalled();
+  expect(mocks.snapshot).not.toHaveBeenCalled(); expect(owner.channel.send).not.toHaveBeenCalled();
+});
+
 it('keeps explicit verified sharing on the fresh history path', async () => {
   setShareableRun('share-owner', { run: rows[0], runTypeCounts: {} });
   const owner = { ...interaction(), customId: 'tracker_share_verified' };
