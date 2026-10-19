@@ -19,7 +19,7 @@ import { resolveBotRunCloudIdentity } from './run-cloud-identity';
 import { isNotFoundAppwriteError } from '../../persistence/appwrite-error-utils';
 import { retireLocalOnlyBackupRun } from '../../rxdb/local-only-backup';
 import { randomUUID } from 'node:crypto';
-import { annotateHistoryFailure, getKnownHistoryFailure, historyFailureError, type HistoryFailureStage } from './history-failure-diagnostic';
+import { annotateHistoryFailure, getKnownHistoryFailure, historyFailureError, type HistoryFailureDiagnostic, type HistoryFailureStage } from './history-failure-diagnostic';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
 // Measured against a 1,360-run account: avoid 100-row round trips without unbounded requests.
@@ -37,7 +37,9 @@ export async function loadBotCompleteRunCloudDocuments(userId: string, options: 
     try { return await loadCompleteHistoryAttempt(userId, deadline, correlation, options.signal, options.includeExtended !== false); }
     catch (error) {
       const failure = getKnownHistoryFailure(error);
-      if (attempt !== 0 || failure?.cause !== 'count_consistency'
+      const retryable = failure?.cause === 'count_consistency'
+        || failure?.cause === 'pagination' && failure.stage === 'main_page' && failure.pagination !== undefined;
+      if (attempt !== 0 || !retryable
         || !['main_page', 'main_count'].includes(failure.stage) || Date.now() >= deadline || options.signal?.aborted) throw error;
       // Retry the entire verified read, never pages from different observations.
     }
@@ -65,7 +67,7 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
       const ownerResults = await Promise.allSettled(ownerIdsToRead.slice(wave, wave + 2).map(async ownerId => {
         const ownerDocuments = new Map<string, Record<string, unknown>>();
         let ownerStage: HistoryFailureStage = 'main_page';
-        const failure = (cause: Parameters<typeof historyFailureError>[1], message: string) => historyFailureError(message, cause, ownerStage, correlation);
+        const failure = (cause: Parameters<typeof historyFailureError>[1], message: string, details: Pick<HistoryFailureDiagnostic, 'pagination'> = {}) => historyFailureError(message, cause, ownerStage, correlation, details);
         const checkDeadline = () => {
           if (signal?.aborted) throw failure('unknown', 'Run history lookup cancelled.');
           if (Date.now() >= deadline) throw failure('timeout', 'Run history lookup timed out. Please retry.');
@@ -74,6 +76,7 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
           let cursor: string | null = null;
           let expectedTotal: number | null = null;
           const ownerIds = new Set<string>();
+          let pageIndex = 0;
           for (;;) {
             ownerStage = 'main_page';
             checkDeadline();
@@ -82,6 +85,7 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
               Query.orderAsc('$id'),
             ]);
             checkDeadline();
+            pageIndex++;
             if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0
               || (expectedTotal !== null && expectedTotal !== page.total)) {
               throw failure(!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 ? 'schema' : 'count_consistency', 'Run history changed or could not be verified. Please retry.');
@@ -97,7 +101,10 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
             }
             if (ownerIds.size === expectedTotal) break;
             if (!page.documents.length || ownerIds.size > expectedTotal) {
-              throw failure('pagination', 'Run history is incomplete. Please retry.');
+              throw failure('pagination', 'Run history is incomplete. Please retry.', { pagination: {
+                reason: ownerIds.size > expectedTotal ? 'records_exceed_total' : 'empty_before_total',
+                pageIndex, returnedCount: page.documents.length, collectedCount: ownerIds.size, expectedTotal,
+              } });
             }
             cursor = page.documents[page.documents.length - 1].$id;
           }

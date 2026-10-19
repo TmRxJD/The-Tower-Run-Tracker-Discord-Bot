@@ -34,6 +34,22 @@ describe('allowlisted history failure metadata', () => {
     expect(JSON.stringify(original)).not.toContain('PRIVATE');
     expect(readHistoryFailure(annotateHistoryFailure('PRIVATE', 'identity')).cause).toBe('unknown');
   });
+  it('copies bounded pagination counts without retaining mutable or arbitrary response data', () => {
+    const error = historyFailureError('PRIVATE_RESPONSE', 'pagination', 'main_page', undefined, {
+      pagination: { reason: 'empty_before_total', pageIndex: 2, returnedCount: 0, collectedCount: 100, expectedTotal: 101 },
+    });
+    const original = readHistoryFailure(error);
+    const copy = readHistoryFailure(annotateHistoryFailure(error, 'cloud_history'));
+    copy.pagination!.collectedCount = 0;
+    expect(readHistoryFailure(error)).toEqual(original);
+    expect(JSON.stringify(original)).not.toContain('PRIVATE_RESPONSE');
+    for (const invalid of [
+      { ...original.pagination, reason: 'PRIVATE_REASON' },
+      { ...original.pagination, returnedCount: -1 },
+      { ...original.pagination, expectedTotal: Infinity },
+      { ...original.pagination, documents: 'PRIVATE_RESPONSE' },
+    ]) expect(historyFailureSchema.safeParse({ ...original, pagination: invalid }).success).toBe(false);
+  });
 });
 
 it('copies only registered history metadata to a privacy wrapper without inspecting getters', async () => {

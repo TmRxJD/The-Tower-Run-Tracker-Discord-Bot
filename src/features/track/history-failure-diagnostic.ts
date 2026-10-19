@@ -8,14 +8,24 @@ export const historyFailureSchema = z.object({
   cause: z.enum(causes), stage: z.enum(stages), correlation: z.string().uuid(),
   status: z.number().int().min(400).max(599).optional(),
   transportCode: z.enum(transportCodes).optional(),
+  pagination: z.object({
+    reason: z.enum(['empty_before_total', 'records_exceed_total']),
+    pageIndex: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    returnedCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    collectedCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    expectedTotal: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  }).strict().optional(),
 }).strict();
 export type HistoryFailureDiagnostic = z.infer<typeof historyFailureSchema>;
 export type HistoryFailureStage = HistoryFailureDiagnostic['stage'];
 const metadata = new WeakMap<object, Readonly<HistoryFailureDiagnostic>>();
+function copyDiagnostic(diagnostic: Readonly<HistoryFailureDiagnostic>): HistoryFailureDiagnostic {
+  return { ...diagnostic, ...(diagnostic.pagination ? { pagination: { ...diagnostic.pagination } } : {}) };
+}
 
 export function getKnownHistoryFailure(error: unknown): HistoryFailureDiagnostic | undefined {
   const known = error && typeof error === 'object' ? metadata.get(error) : undefined;
-  return known ? { ...known } : undefined;
+  return known ? copyDiagnostic(known) : undefined;
 }
 
 /** Carry registered safe metadata through a privacy wrapper without inspecting the source. */
@@ -33,7 +43,7 @@ function ownData(value: unknown, key: string): unknown {
 export function readHistoryFailure(error: unknown, stage: HistoryFailureStage = 'unknown', correlation = randomUUID()): HistoryFailureDiagnostic {
   if (error && typeof error === 'object') {
     const known = metadata.get(error);
-    if (known) return { ...known };
+    if (known) return copyDiagnostic(known);
   }
   const code = ownData(error, 'code');
   const status = [code, ownData(error, 'status')].find(value => typeof value === 'number' && Number.isInteger(value) && value >= 400 && value <= 599);
@@ -48,8 +58,8 @@ export function annotateHistoryFailure(error: unknown, stage: HistoryFailureStag
   metadata.set(target, Object.freeze(historyFailureSchema.parse(readHistoryFailure(target, stage, correlation))));
   return target;
 }
-export function historyFailureError(message: string, cause: HistoryFailureDiagnostic['cause'], stage: HistoryFailureStage, correlation = randomUUID()): Error {
+export function historyFailureError(message: string, cause: HistoryFailureDiagnostic['cause'], stage: HistoryFailureStage, correlation = randomUUID(), details: Pick<HistoryFailureDiagnostic, 'pagination'> = {}): Error {
   const error = new Error(message);
-  metadata.set(error, Object.freeze(historyFailureSchema.parse({ cause, stage, correlation })));
+  metadata.set(error, Object.freeze(historyFailureSchema.parse({ ...details, cause, stage, correlation })));
   return error;
 }

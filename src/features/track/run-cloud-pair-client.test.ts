@@ -191,6 +191,8 @@ describe('complete bot history reads', () => {
   });
   it('rejects an incomplete pagination result', async () => {
     mocks.list.mockResolvedValueOnce({ total: 132, documents: docs('discord', 100) })
+      .mockResolvedValueOnce({ total: 132, documents: [] })
+      .mockResolvedValueOnce({ total: 132, documents: docs('discord', 100) })
       .mockResolvedValueOnce({ total: 132, documents: [] });
     await expect(loadBotCompleteRunCloudDocuments('discord')).rejects.toThrow('incomplete');
     expect(mocks.get).not.toHaveBeenCalled();
@@ -223,6 +225,80 @@ it.each([102, 100])('investigation: rejects a changed total on a later main page
 
 
 describe('one fresh bounded consistency retry', () => {
+  it.each([false, true])('drains a count-mismatch owner wave before retry, respecting cancellation (%s)', async cancel => {
+    mocks.identity.mockResolvedValue({ lookupUserIds: ['appwrite', 'discord'] });
+    const cancellation = new AbortController();
+    let finish!: () => void; let failed = false; let drained = false;
+    const draining = new Promise<void>(resolve => { finish = () => { drained = true; resolve(); }; });
+    mocks.list.mockImplementation(async (_db, _collection, queries: string[]) => {
+      const owner = queries.map(q => JSON.parse(q)).find(q => q.method === 'equal').values[0];
+      if (owner === 'appwrite' && !failed) { failed = true; return { total: 0, documents: docs('appwrite', 1) }; }
+      if (owner === 'discord' && !drained) await draining;
+      return { total: 0, documents: [] };
+    });
+    let settled = false;
+    const pending = loadBotCompleteRunCloudDocuments('discord', { includeExtended: false, signal: cancellation.signal })
+      .then(rows => { settled = true; return rows; }, error => { settled = true; return error; });
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false); expect(mocks.identity).toHaveBeenCalledOnce();
+    if (cancel) cancellation.abort();
+    finish();
+    if (cancel) {
+      expect(readHistoryFailure(await pending)).toMatchObject({ cause: 'pagination', pagination: { reason: 'records_exceed_total' } });
+      expect(mocks.identity).toHaveBeenCalledOnce();
+    } else {
+      expect(await pending).toEqual([]); expect(mocks.identity).toHaveBeenCalledTimes(2);
+    }
+  });
+  it.each(['empty_before_total', 'records_exceed_total'] as const)('restarts the entire observation after %s and discards its rows', async reason => {
+    const fresh = docs('discord', 2).map((row, i) => ({ ...row, $id: `fresh-${i}` }));
+    if (reason === 'empty_before_total') {
+      mocks.list.mockResolvedValueOnce({ total: 2, documents: docs('discord', 1) })
+        .mockResolvedValueOnce({ total: 2, documents: [] });
+    } else mocks.list.mockResolvedValueOnce({ total: 1, documents: docs('discord', 2) });
+    mocks.list.mockResolvedValueOnce({ total: 2, documents: fresh })
+      .mockResolvedValueOnce({ total: 2, documents: fresh.slice(0, 1) });
+    const result = await loadBotCompleteRunCloudDocuments('discord', { includeExtended: false });
+    expect(result.map(row => row.$id)).toEqual(['fresh-0', 'fresh-1']);
+    expect(mocks.identity).toHaveBeenCalledTimes(2);
+    const retryIndex = reason === 'empty_before_total' ? 2 : 1;
+    const queries = mocks.list.mock.calls[retryIndex][2].map((q: string) => JSON.parse(q));
+    expect(queries.some((q: { method: string }) => q.method === 'cursorAfter')).toBe(false);
+  });
+  it.each(['empty_before_total', 'records_exceed_total'] as const)('fails closed with safe final counts after a second %s', async reason => {
+    const page = { total: reason === 'empty_before_total' ? 2 : 0, documents: docs('discord', 1) };
+    mocks.list.mockImplementation(async (_db, _collection, queries: string[]) =>
+      queries.map(q => JSON.parse(q)).some(q => q.method === 'cursorAfter')
+        ? { total: 2, documents: [] } : page);
+    const error = await loadBotCompleteRunCloudDocuments('discord', { includeExtended: false }).catch(error => error);
+    expect(readHistoryFailure(error)).toMatchObject({ cause: 'pagination', stage: 'main_page', pagination: {
+      reason, pageIndex: reason === 'empty_before_total' ? 2 : 1,
+      returnedCount: reason === 'empty_before_total' ? 0 : 1, collectedCount: 1,
+      expectedTotal: reason === 'empty_before_total' ? 2 : 0,
+    } });
+    expect(mocks.identity).toHaveBeenCalledTimes(2);
+    expect(mocks.list).toHaveBeenCalledTimes(reason === 'empty_before_total' ? 4 : 2);
+    expect(mocks.get).not.toHaveBeenCalled();
+  });
+  it('does not retry a repeated main record even when a later valid response is available', async () => {
+    mocks.list.mockResolvedValueOnce({ total: 2, documents: [...docs('discord', 1), ...docs('discord', 1)] })
+      .mockResolvedValueOnce({ total: 0, documents: [] });
+    const error = await loadBotCompleteRunCloudDocuments('discord').catch(error => error);
+    expect(readHistoryFailure(error)).toMatchObject({ cause: 'pagination', stage: 'main_page' });
+    expect(readHistoryFailure(error).pagination).toBeUndefined();
+    expect(mocks.identity).toHaveBeenCalledOnce(); expect(mocks.list).toHaveBeenCalledOnce();
+  });
+  it('keeps the original deadline across a count-mismatch retry', async () => {
+    vi.useFakeTimers();
+    mocks.list.mockImplementationOnce(async () => { await new Promise(resolve => setTimeout(resolve, 20_000)); return { total: 0, documents: docs('discord', 1) }; })
+      .mockImplementationOnce(async () => { await new Promise(resolve => setTimeout(resolve, 26_000)); return { total: 1, documents: docs('discord', 1) }; });
+    try {
+      const final = loadBotCompleteRunCloudDocuments('discord').catch(error => error);
+      await vi.advanceTimersByTimeAsync(46_001);
+      expect(readHistoryFailure(await final)).toMatchObject({ cause: 'timeout', stage: 'main_page' });
+      expect(mocks.list).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
   it('discards first attempt rows and starts without its cursor after changing page totals', async () => {
     const fresh = docs('discord', 2).map((row, i) => ({ ...row, $id: `fresh-${i}` }));
     mocks.list.mockResolvedValueOnce({ total: 101, documents: docs('discord', 101).slice(0, 100) })
