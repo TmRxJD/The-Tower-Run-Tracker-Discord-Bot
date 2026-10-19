@@ -1,3 +1,10 @@
+## 2026-10-19 - Retry inconsistent history observations safely
+
+- Retry a complete fresh read once when main pagination ends before its reported total or returns more records than that total. Discard the failed observation, retain the original deadline and drain active owner reads. Schema, ownership and repeated-record failures still fail closed.
+- Retain bounded numeric page counts and an allowlisted mismatch reason in content-free failure diagnostics. A second mismatch remains a hard pagination failure; no partial history becomes a verified snapshot.
+- Overlap independent fresh tracker settings, shared settings and Share history after the authoritative local cloud preference is read. Coalesce unresolved provider identity lookups while preserving optional, strict and required-linked caller policies; explicit refresh still starts a fresh lookup.
+- Preserve complete extended history, automatic fresh quantities/comparisons, durable offline fallback and existing permissions. See docs/SHARE-2026-10-19.md for the failure mechanism, validation and timing limits.
+
 ## 2026-10-18 - Recover durable storage after temporary lock contention
 
 - Wait up to five seconds for SQLite locks, then reject a still-blocked operation without acknowledging an in-memory substitute. A temporary lock no longer permanently disables subsequent persistent reads/writes. Disk-full/corruption and other storage failures still fail closed.
@@ -187,10 +194,3 @@
 
 
 - Preserve existing machine-local package credentials/configuration byte-for-byte while excluding them from versioned source; retain a safe `.npmrc.example`. This enables the strict runner source gate without changing authentication or runtime lookup.
-## 2026-10-19 - Retry inconsistent history observations safely
-
-- Retry a complete fresh read once when main pagination ends before its reported total or returns more records than that total. Discard the failed observation, retain the original deadline and drain active owner reads. Schema, ownership and repeated-record failures still fail closed.
-- Retain bounded numeric page counts and an allowlisted mismatch reason in content-free failure diagnostics. A second mismatch remains a hard pagination failure; no partial history becomes a verified snapshot.
-- Overlap independent fresh tracker settings, shared settings and Share history after the authoritative local cloud preference is read. Coalesce unresolved provider identity lookups while preserving optional, strict and required-linked caller policies; explicit refresh still starts a fresh lookup.
-- Preserve complete extended history, automatic fresh quantities/comparisons, durable offline fallback and existing permissions. See docs/SHARE-2026-10-19.md for the failure mechanism, validation and timing limits.
-
