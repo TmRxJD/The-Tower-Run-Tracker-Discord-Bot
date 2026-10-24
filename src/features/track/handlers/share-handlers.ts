@@ -11,7 +11,11 @@ import { buildEmbedUserFromInteraction, resolveInteractionDisplayName } from '..
 import { getShareableRun, setShareableRun } from '../share/share-state';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
-import { TRACKER_IDS } from '../track-custom-ids';
+import { TRACKER_IDS, parsePrefixedTrackerToken } from '../track-custom-ids';
+import { resolvePreparedShareHistory, type PreparedShareHistory } from '../share/prepared-share';
+import { capturePreparedShareCheckpoint, preparedSourceMessageId } from '../share/prepared-share-inputs';
+import { peekPendingUploadProfile } from '../upload-target-profile';
+import { appendCapturedHistoryFooter } from '../share/captured-history-footer';
 import { EmbedBuilder, Colors, type MessageComponentInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { buildShareSnapshotRef } from '../share/share-run-ref';
@@ -47,7 +51,7 @@ async function disableShareButtonOnOriginalMessage(interaction: MessageComponent
     const nextRowComponents = json.components.map((component) => {
       if (component?.type !== 2) return component;
       const customId = typeof component.custom_id === 'string' ? component.custom_id : '';
-      if (!shareIds.has(customId)) return component;
+      if (!shareIds.has(customId) && !customId.startsWith(TRACKER_IDS.flow.preparedSharePrefix)) return component;
       changed = true;
       return { ...component, disabled: true };
     });
@@ -79,6 +83,8 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
   const ageOnArrivalMs = Date.now() - interaction.createdTimestamp;
   let outcome: 'no-send' | 'sent' | 'failed' = 'no-send';
   let publicSendMs: number | undefined;
+  let historySource: 'fresh' | 'invocation' = 'fresh';
+  let historyCapturedAt: number | undefined;
   let stageStarted = started;
   const stages: Partial<Record<DiagnosticStage, number>> = {};
   const setStage = (next: DiagnosticStage) => {
@@ -111,6 +117,18 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
     };
 
     const userId = interaction.user.id;
+    const preparedToken = parsePrefixedTrackerToken(TRACKER_IDS.flow.preparedSharePrefix, interaction.customId ?? '');
+    let prepared: PreparedShareHistory | null = null;
+    const resolvePrepared = () => resolvePreparedShareHistory({ token: preparedToken!, userId,
+      messageId: preparedSourceMessageId(interaction) ?? '', profileId: peekPendingUploadProfile(userId), mode,
+      checkpoint: () => capturePreparedShareCheckpoint(userId) });
+    if ((interaction.customId ?? '').startsWith(TRACKER_IDS.flow.preparedSharePrefix)) {
+      if (!preparedToken || !(prepared = await resolvePrepared())) {
+        await sendNotice('This prepared Share expired or your runs/profile changed. Open Tracker again to prepare a fresh Share.');
+        return;
+      }
+      historySource = 'invocation'; historyCapturedAt = prepared.capturedAt;
+    }
     setStage('settings');
     // The cloud preference is local-authoritative. Establish it before starting
     // any optional remote work, then overlap independent fresh display/history reads.
@@ -120,7 +138,8 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
     const [settings, shareContext] = await Promise.all([
       measurePerformanceSpan('tracker-settings', () => getUserSettings(userId, { localOnly })).catch(() => null),
       mode === 'lifetime' ? null : Promise.all([
-        withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { localFirst: true, readOnly: true, onStage: context.setStage }), 'share-history'),
+        prepared ? { verified: prepared.verified, completeLocal: prepared.completeLocal, getRuns: async () => prepared!.runs }
+          : withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { localFirst: true, readOnly: true, onStage: context.setStage }), 'share-history'),
         measurePerformanceSpan('shared-settings', () => getEffectiveUserSharedSettings(userId, { localOnly })),
       ]),
     ]);
@@ -206,7 +225,7 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
       setStage('history');
       const [history, sharedSettings] = shareContext!;
       const verifiedRuns = await measurePerformanceSpan('history-view', () => history.getRuns());
-      const cached = getShareableRun(userId);
+      const cached = prepared ? { run: prepared.selectedRun } : getShareableRun(userId);
       let run = cached?.run ?? null;
       const { runTypeCounts } = await measurePerformanceSpan('summary', () => getLocalRunSummary(userId, verifiedRuns));
 
@@ -283,6 +302,7 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
         embed.setTitle(embed.data.title + ' (locally saved)');
         embed.setFooter({ text: 'Offline fallback: counts and comparisons use saved history and pending runs; cloud changes are not verified.' });
       }
+      appendCapturedHistoryFooter(embed, prepared?.capturedAt);
       const channelWithSend = interaction.channel as { send?: (payload: ShareEmbedChannelPayload) => Promise<unknown> } | null;
       if (embed) {
         if (!channelWithSend?.send) {
@@ -301,9 +321,10 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
         }
 
         setStage('snapshot');
-        let shareRunRef = buildShareSnapshotRef(userId, run, runTypeCounts, history.verified !== false, deltaResult ?? null);
+        let shareRunRef = buildShareSnapshotRef(userId, run, runTypeCounts, history.verified !== false, deltaResult ?? null, prepared?.capturedAt);
         if (shareRunRef) {
-          const saved = await saveShareSnapshot({ ref: shareRunRef, userId, run, runTypeCounts, sharerName: embedUser.displayName, historyVerified: history.verified !== false, deltaResult: deltaResult ?? null }).catch(() => false);
+          const saved = await saveShareSnapshot({ ref: shareRunRef, userId, run, runTypeCounts, sharerName: embedUser.displayName, historyVerified: history.verified !== false, deltaResult: deltaResult ?? null, historyCapturedAt: prepared?.capturedAt,
+            ...(prepared && chartAttachment && Buffer.isBuffer(chartAttachment.attachment) ? { chartBase64: chartAttachment.attachment.toString('base64') } : {}) }).catch(() => false);
           if (!saved) shareRunRef = null;
         }
 
@@ -316,6 +337,10 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
             shareRunRef,
             collapsed: compact,
           });
+          if (preparedToken && !await resolvePrepared()) {
+            await sendNotice('Your runs/profile changed while preparing this Share. Open Tracker again to prepare a fresh Share.');
+            return;
+          }
           setStage('send');
           await channelWithSend.send(payload);
           outcome = 'sent'; publicSendMs = Math.round(performance.now() - started);
@@ -344,6 +369,7 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
     const loop = nodePerformance.eventLoopUtilization(loopStarted);
     logger.warn('[perf] share.operation', {
       ...performanceTraceSummary(), outcome, publicSendMs,
+      historySource, historyCapturedAt,
       ...(Number.isFinite(ageOnArrivalMs) ? { ageOnArrivalMs } : {}),
       // Process-wide deltas can include concurrent work; they are not per-request CPU attribution.
       processCpuMs: Math.round((cpu.user + cpu.system) / 1000),

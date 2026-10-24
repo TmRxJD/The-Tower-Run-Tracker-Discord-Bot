@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), snapshot: vi.fn(), settings: vi.fn(), sharedSettings: vi.fn() }));
+const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), snapshot: vi.fn(), settings: vi.fn(), sharedSettings: vi.fn(), checkpoint: vi.fn() }));
+vi.mock('../share/prepared-share-inputs', async original => ({ ...await original<object>(), capturePreparedShareCheckpoint: mocks.checkpoint }));
 vi.mock('../run-upload-history', () => ({ prepareBotRunUploadHistory: mocks.history, withBotRunSubmissionLock: async (_user: string, action: (context: { setStage: () => void }) => Promise<unknown>) => action({ setStage: vi.fn() }) }));
 vi.mock('../tracker-api-client', async importOriginal => ({ ...await importOriginal<object>(), getUserSettings: mocks.settings }));
 vi.mock('../share/share-snapshot-store', () => ({ saveShareSnapshot: mocks.snapshot }));
@@ -10,14 +11,63 @@ import { handleTrackMenuShareLast } from './share-handlers';
 import { logError } from './error-handlers';
 import { setShareableRun } from '../share/share-state';
 import { setTrackerFlowMode } from '../flow-mode-store';
+import { clearPreparedShareHistory, prepareShareHistory } from '../share/prepared-share';
+import { TRACKER_IDS, withToken } from '../track-custom-ids';
+import { setPendingUploadProfile } from '../upload-target-profile';
 
 const rows = Array.from({ length: 132 }, (_, i) => ({ runId: `run-${i}`, localId: `local-${i}`, type: 'Farming', tier: '22', wave: String(i + 1), totalCoins: '100', roundDuration: '1h0m0s', reportTimestamp: new Date(1700000000000 + i * 1000).toISOString() }));
 function interaction() { return { user: { id: 'share-owner', username: 'fixture', displayAvatarURL: () => '' }, client: {}, guildId: null, deferUpdate: vi.fn().mockResolvedValue(undefined), followUp: vi.fn().mockResolvedValue(undefined), channel: { send: vi.fn().mockResolvedValue({}) }, message: { components: [] } }; }
 beforeEach(() => {
   vi.clearAllMocks(); setTrackerFlowMode('share-owner', 'track');
+  clearPreparedShareHistory(); setPendingUploadProfile('share-owner', null); mocks.checkpoint.mockResolvedValue('unchanged');
   mocks.sharedSettings.mockResolvedValue({ runDeltaMode: 'disabled' });
   mocks.settings.mockResolvedValue({ shareChart: false }); mocks.runs.mockResolvedValue(rows);
   mocks.history.mockResolvedValue({ getRuns: mocks.runs }); mocks.snapshot.mockResolvedValue(true);
+});
+
+function preparedInteraction(snapshotRows = rows) {
+  const owner = { ...interaction(), message: { id: 'source-result', components: [] }, customId: '' };
+  const token = prepareShareHistory({ userId: owner.user.id, messageId: 'source-result', profileId: null, mode: 'track', checkpoint: 'unchanged',
+    history: { runs: snapshotRows, selectedRun: snapshotRows[0], verified: true, completeLocal: true, capturedAt: Date.now() } })!;
+  owner.customId = withToken(TRACKER_IDS.flow.preparedSharePrefix, token);
+  return owner;
+}
+it('shares a complete prepared invocation repeatedly with zero additional history requests and current disclosure settings', async () => {
+  const owner = preparedInteraction();
+  for (let i = 0; i < 2; i++) await handleTrackMenuShareLast(owner as never);
+  expect(mocks.history).not.toHaveBeenCalled(); expect(mocks.runs).not.toHaveBeenCalled();
+  expect(owner.channel.send).toHaveBeenCalledTimes(2);
+  expect(mocks.settings.mock.calls.some(([, options]) => options?.localOnly === false)).toBe(true);
+  expect(mocks.snapshot.mock.calls.at(-1)?.[0]).toMatchObject({ runTypeCounts: { Farming: 132 }, historyCapturedAt: expect.any(Number) });
+  expect(owner.channel.send.mock.calls[0][0].embed.data.footer.text).toContain('History captured');
+});
+it('keeps the prepared result available after a known Discord send failure', async () => {
+  const owner = preparedInteraction(); owner.channel.send.mockRejectedValueOnce(new Error('fixture failure'));
+  await handleTrackMenuShareLast(owner as never); await handleTrackMenuShareLast(owner as never);
+  expect(owner.channel.send).toHaveBeenCalledTimes(2); expect(mocks.history).not.toHaveBeenCalled();
+});
+it('rejects a copied prepared token on another message before settings or publication', async () => {
+  const owner = preparedInteraction(); owner.message.id = 'copied-message';
+  await handleTrackMenuShareLast(owner as never);
+  expect(mocks.settings).not.toHaveBeenCalled(); expect(owner.channel.send).not.toHaveBeenCalled();
+});
+it('rechecks observed changes immediately before public delivery', async () => {
+  const owner = preparedInteraction(); mocks.checkpoint.mockResolvedValueOnce('unchanged').mockResolvedValue('changed');
+  await handleTrackMenuShareLast(owner as never);
+  expect(owner.channel.send).not.toHaveBeenCalled(); expect(mocks.history).not.toHaveBeenCalled();
+  expect(owner.followUp.mock.calls.at(-1)?.[0].content).toContain('changed');
+});
+it('honors a fresh cloud disclosure change without re-reading prepared history', async () => {
+  const owner = preparedInteraction(rows.map((row, i) => i ? row : { ...row, notes: 'PRIVATE_PREPARED_NOTE' }));
+  mocks.settings.mockImplementation(async (_id, options) => ({ shareChart: false, shareNotes: options?.localOnly !== false }));
+  await handleTrackMenuShareLast(owner as never);
+  expect(owner.channel.send).toHaveBeenCalledOnce(); expect(mocks.history).not.toHaveBeenCalled();
+  expect(JSON.stringify(owner.channel.send.mock.calls[0][0].embed.data)).not.toContain('PRIVATE_PREPARED_NOTE');
+});
+it('rejects an invocation when the active upload profile changed', async () => {
+  const owner = preparedInteraction(); setPendingUploadProfile('share-owner', 'alt');
+  await handleTrackMenuShareLast(owner as never);
+  expect(owner.channel.send).not.toHaveBeenCalled(); expect(mocks.settings).not.toHaveBeenCalled();
 });
 describe('verified share history', () => {
   it('refreshes stale #1 while preserving an older selected run and repeated share semantics', async () => {

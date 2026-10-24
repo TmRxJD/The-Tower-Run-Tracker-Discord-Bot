@@ -19,14 +19,19 @@ vi.mock('../../../services/user-shared-settings-db', () => ({ getEffectiveUserSh
 vi.mock('../upload-target-profile', () => ({ listBotUserProfiles: async () => [], peekPendingUploadProfile: () => null, resolveDefaultUploadProfileId: async () => null, setPendingUploadProfile: vi.fn() }));
 vi.mock('./review-interaction-helpers', async original => ({ ...await original<object>(), isTrackReviewFlowEnabled: () => true }));
 vi.mock('../share/auto-log-channel-share', () => ({ autoShareToConfiguredLogChannel: async () => undefined }));
+vi.mock('../run-menu-sync', () => ({ beginBackgroundAuthoritySync: vi.fn() }));
 vi.mock('../share/share-snapshot-store', () => ({ saveShareSnapshot: io.snapshot }));
 vi.mock('../share/share-embed-delivery', () => ({ resolveShareEmbedChannelPayload: async (input: object) => input }));
 vi.mock('./error-handlers', () => ({ handleError: io.errors, logError: io.errors }));
-import { handleDirectTextPaste } from './upload-handlers';
+import { handleDirectTextPaste, renderTrackMenu } from './upload-handlers';
 import { handleDataSubmission } from './data-review-handlers';
 import { handleTrackMenuShareLast } from './share-handlers';
 import { setShareableRun } from '../share/share-state';
 import { setTrackerFlowMode } from '../flow-mode-store';
+import { TRACKER_IDS } from '../track-custom-ids';
+import { clearPreparedShareHistory, resolvePreparedShareHistory } from '../share/prepared-share';
+import { capturePreparedShareCheckpoint } from '../share/prepared-share-inputs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 type Row = Record<string, unknown>;
 let cloud: Row[], local: Row[], drafts: Map<string, Row>, queue: Row[];
@@ -35,7 +40,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 function interaction() {
   return { customId: 'tracker_accept:flow-fixture', user: { id: 'fixture-owner', username: 'fixture', displayAvatarURL: () => '' }, client: {}, guildId: null,
     deferred: true, replied: false, deferUpdate: vi.fn(async () => { await delay(2); }),
-    editReply: vi.fn(async () => { await delay(2); return {}; }), followUp: vi.fn(async (payload: unknown) => { void payload; }),
+    editReply: vi.fn(async (payload: unknown) => { void payload; await delay(2); return {}; }), followUp: vi.fn(async (payload: unknown) => { void payload; }),
     channel: { send: vi.fn(async (payload: unknown) => { void payload; await delay(2); return {}; }) }, message: { components: [] } };
 }
 beforeEach(() => {
@@ -73,6 +78,58 @@ beforeEach(() => {
     return { runId: row.runId, localId: 'local-new', queuedForCloud: io.outage };
   });
   io.snapshot.mockResolvedValue(true);
+});
+
+it('reuses the actual submitted-result invocation through its generated Share button without another history read', async () => {
+  const owner = { ...interaction(), message: { id: 'submitted-result-source', components: [] } };
+  await handleDirectTextPaste(owner as never, 'Battle Report\nBattle Date\tOct 14, 2026 01:00\nTier\t22\nWave\t2000\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1\nTotal Enemies\t1000', null, null, 'Farming', 'track');
+  await handleDataSubmission(owner as never);
+  expect(io.errors).not.toHaveBeenCalled();
+  const ids = owner.editReply.mock.calls.flatMap(([payload]) => {
+    const data = payload as { components?: Array<{ components: Array<{ toJSON: () => { custom_id?: string } }> }> };
+    return (data.components ?? []).flatMap(row => row.components.map(button => button.toJSON().custom_id ?? ''));
+  });
+  const preparedId = ids.find(id => id.startsWith(TRACKER_IDS.flow.preparedSharePrefix));
+  expect(preparedId).toBeTruthy(); owner.customId = preparedId!;
+  const callsBefore = io.list.mock.calls.length;
+  const clickStarted = performance.now();
+  await handleTrackMenuShareLast(owner as never);
+  const preparedMs = performance.now() - clickStarted;
+  expect(io.errors).not.toHaveBeenCalled(); expect(owner.channel.send).toHaveBeenCalledOnce();
+  expect(io.list.mock.calls.length).toBe(callsBefore);
+  expect(io.snapshot.mock.calls.at(-1)?.[0]).toMatchObject({ runTypeCounts: { Farming: 1361 }, historyCapturedAt: expect.any(Number) });
+  const retained = await resolvePreparedShareHistory({ token: preparedId!.slice(TRACKER_IDS.flow.preparedSharePrefix.length), userId: owner.user.id,
+    messageId: owner.message.id, profileId: null, mode: 'track', checkpoint: () => capturePreparedShareCheckpoint(owner.user.id) });
+  expect(retained?.runs).toHaveLength(1361);
+  expect(retained?.runs.find(run => run.runId === 'run-0000')?.killsWithBlackHole).toBe('800');
+  // Same actual handler, isolated backend adapter with a realistic bounded network delay.
+  const list = io.list.getMockImplementation()!;
+  io.list.mockImplementation(async (...args) => { await delay(300); return list(...args); });
+  const freshCallsBefore = io.list.mock.calls.length; owner.customId = TRACKER_IDS.flow.shareLast;
+  const freshStarted = performance.now(); await handleTrackMenuShareLast(owner as never);
+  const freshMs = performance.now() - freshStarted;
+  expect(io.list.mock.calls.length - freshCallsBefore).toBeGreaterThan(0);
+  expect(io.snapshot.mock.calls.at(-1)?.[0].runTypeCounts).toEqual({ Farming: 1361 });
+  mkdirSync('temp', {recursive:true});
+  writeFileSync('temp/prepared-flow-benchmark.json', JSON.stringify({ fixture:true, historyRows:1361, preparedMs, freshMs,
+    preparedHistoryRequests:0, freshHistoryRequests:io.list.mock.calls.length-freshCallsBefore,
+    method:'Actual parse/review/submit/generated-button and Share handler; isolated SDK adapter adds 300 ms per fresh request, Discord and settings mocked.' },null,2));
+});
+
+it('prepares a menu invocation once and rejects its old token after a process-cache restart', async () => {
+  const owner = { ...interaction(), message: { id: 'menu-source', components: [] } };
+  await renderTrackMenu(owner as never, 'track');
+  const payload = owner.editReply.mock.calls.at(-1)?.[0] as { components: Array<{ components: Array<{ toJSON: () => { custom_id?: string } }> }> };
+  const preparedId = payload.components.flatMap(row => row.components.map(button => button.toJSON().custom_id ?? '')).find(id => id.startsWith(TRACKER_IDS.flow.preparedSharePrefix));
+  expect(preparedId).toBeTruthy(); owner.customId = preparedId!;
+  const callsBefore = io.list.mock.calls.length;
+  await handleTrackMenuShareLast(owner as never);
+  expect(owner.channel.send).toHaveBeenCalledOnce(); expect(io.list.mock.calls.length).toBe(callsBefore);
+  expect(io.snapshot.mock.calls.at(-1)?.[0].runTypeCounts).toEqual({ Farming: 1360 });
+  clearPreparedShareHistory();
+  await handleTrackMenuShareLast(owner as never);
+  expect(owner.channel.send).toHaveBeenCalledOnce(); expect(io.list.mock.calls.length).toBe(callsBefore);
+  expect(owner.followUp.mock.calls.at(-1)?.[0]).toMatchObject({ content: expect.stringContaining('expired') });
 });
 
 
