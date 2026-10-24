@@ -1,5 +1,6 @@
 ## 2026-10-24 - Reduce fresh Share history round trips
 
+- Reuse complete history captured by the submitted result or prepared at menu invocation. Bind the button to its owner, message, profile and selected run for an absolute five minutes; reject expired/changed state, and check current disclosure settings before publication. Retain capture time and original chart in durable shared versions. See docs/SHARE-INVOCATIONS.md for the October 1 regression, freshness semantics, byte limits, invalidation and verification.
 - Use bounded 1,000-row main pages and pack exact extended IDs into queries below 4,000 characters, retaining four-request waves, complete paging, count/schema/ownership/profile checks and existing deadlines/retries. A read-only 1,363-run comparison reduced requests from 20 to 13 and full history from 7.54-7.60 seconds to 5.45-5.53 seconds with every returned field equal.
 - Correlate Share, history-lock and Discord rate-limit diagnostics with an opaque operation ID and PID. Separate settings, history requests, capacity waits, fallback snapshot persistence, comparison/chart work, public delivery and final completion. Preserve full history, fresh comparisons, permissions, local/offline behavior and protected queues. See docs/SHARE-2026-10-24.md for natural traffic, validation and measurement limits.
 

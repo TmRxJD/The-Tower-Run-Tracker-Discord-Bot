@@ -26,6 +26,9 @@ import type { TrackReplyInteractionLike } from '../interaction-types';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { setShareableRun } from '../share/share-state';
+import { prepareShareHistory } from '../share/prepared-share';
+import { bindPreparedShareSource, capturePreparedShareCheckpoint, preparedSourceMessageId } from '../share/prepared-share-inputs';
+import { peekPendingUploadProfile } from '../upload-target-profile';
 import { autoShareToConfiguredLogChannel } from '../share/auto-log-channel-share';
 import type { TrackerBotClient } from '../../../core/tracker-bot-client';
 import type { PendingRecordLike } from '../shared/track-review-records';
@@ -402,6 +405,11 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     // Consume the session and capture coherent state before allowing another save.
     // Discord delivery, settings lookups and chart work must not hold the mutation lock.
     const allRunsArr = await history.getRuns({ runId: syncResult?.runId, localId: syncResult?.localId });
+    const preparedShareToken = await capturePreparedShareCheckpoint(userId).then(checkpoint => prepareShareHistory({
+      userId, mode: draftMode, profileId: peekPendingUploadProfile(userId), messageId: preparedSourceMessageId(interaction), checkpoint,
+      history: { runs: allRunsArr, selectedRun: shareableRun, verified: history.verified !== false,
+        completeLocal: history.completeLocal === true || history.verified !== false, capturedAt: Date.now() },
+    })).catch(() => null);
     setShareableRun(userId, { run: shareableRun, runTypeCounts, screenshotUrl });
     await deletePendingRun(token);
     return async () => {
@@ -431,7 +439,8 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         }
 
         if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
-        await interaction.editReply({ content: syncResult?.queuedForCloud ? 'Saved locally; queued for cloud sync.' : undefined, embeds: [embed], components: createSuccessButtons(), files: chartAttachment ? [chartAttachment] : [] });
+        const boundShareToken = await bindPreparedShareSource(preparedShareToken, userId, interaction);
+        await interaction.editReply({ content: syncResult?.queuedForCloud ? 'Saved locally; queued for cloud sync.' : undefined, embeds: [embed], components: createSuccessButtons(boundShareToken), files: chartAttachment ? [chartAttachment] : [] });
 
         if (syncResult?.backgroundSync) {
           void syncResult.backgroundSync

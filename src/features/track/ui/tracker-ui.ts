@@ -177,10 +177,10 @@ export function createConfirmationButtons(token: string) {
   ];
 }
 
-export function createSuccessButtons() {
+export function createSuccessButtons(preparedShareToken?: string | null) {
   const ui = getTrackUiConfig();
   const idByKey: Record<string, string> = {
-    shareLast: TRACKER_IDS.flow.shareLast,
+    shareLast: preparedShareToken ? withToken(TRACKER_IDS.flow.preparedSharePrefix, preparedShareToken) : TRACKER_IDS.flow.shareLast,
     editLast: TRACKER_IDS.flow.editLast,
     uploadAnother: TRACKER_IDS.flow.uploadAnother,
     viewRuns: TRACKER_IDS.flow.viewRuns,
@@ -329,7 +329,7 @@ export function createInitialEmbed(params: {
   return embed;
 }
 
-export function createMainMenuButtons(mode: TrackerUiMode = 'track') {
+export function createMainMenuButtons(mode: TrackerUiMode = 'track', preparedShareToken?: string | null) {
   const ui = getTrackerUiConfig(mode);
   const menu = ui.initialMenu;
   const idByKey: Record<string, string> = {
@@ -337,7 +337,7 @@ export function createMainMenuButtons(mode: TrackerUiMode = 'track') {
     manual: TRACKER_IDS.flow.manual,
     editLast: TRACKER_IDS.flow.editLast,
     removeLast: TRACKER_IDS.flow.removeLast,
-    shareLastMenu: TRACKER_IDS.flow.shareLastMenu,
+    shareLastMenu: preparedShareToken ? withToken(TRACKER_IDS.flow.preparedSharePrefix, preparedShareToken) : TRACKER_IDS.flow.shareLastMenu,
     viewRuns: TRACKER_IDS.flow.viewRuns,
     support: TRACKER_IDS.flow.support,
     import: TRACKER_IDS.flow.import,

@@ -4,7 +4,7 @@ import * as Discord from 'discord.js';
 import { beginPasteDiagnostic, updatePasteDiagnostic } from '../paste-diagnostics';
 import { reportPasteFailure, type PasteFailureContext } from './paste-failure-response';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
-import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeRunData, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeRunData, computeTrackerRunDeltaBaseline, estimateTrackerRunTimestamp } from '@tmrxjd/platform/tools';
 import {
 } from '@tmrxjd/platform/node';
 import type {
@@ -34,7 +34,9 @@ import {
   parseRunDataFromText,
   findPotentialDuplicateRun,
 } from './upload-helpers';
-import { getMenuRunSummary, getLocalLifetimeData, getLastRun, runOCR } from '../tracker-api-client';
+import { getMenuRunSummary, getLocalLifetimeData, getLastRun, getLocalRunSummary, runOCR } from '../tracker-api-client';
+import { prepareShareHistory } from '../share/prepared-share';
+import { bindPreparedShareSource, capturePreparedShareCheckpoint, preparedSourceMessageId } from '../share/prepared-share-inputs';
 import { peekMenuPrimedSummary } from '../run-menu-cloud-prime';
 import { beginBackgroundAuthoritySync } from '../run-menu-sync';
 import { applyPerHourChartImage, resolveMainMenuPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
@@ -854,6 +856,19 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
   try {
     const userId = interaction.user.id;
     const userLabel = resolveInteractionDisplayName(interaction);
+    let preparedShareToken: string | null = null;
+    const preparedMenu = resolvedMode === 'lifetime' ? null : await withBotRunSubmissionLock(userId,
+      context => prepareBotRunUploadHistory(userId, { localFirst: true, readOnly: true, onStage: context.setStage }), 'share-prepare')
+      .then(async history => {
+        const runs = await history.getRuns();
+        const lastRun = [...runs].sort((a, b) => estimateTrackerRunTimestamp(b) - estimateTrackerRunTimestamp(a))[0] ?? null;
+        const counts = await getLocalRunSummary(userId, runs);
+        preparedShareToken = prepareShareHistory({ userId, mode: resolvedMode, profileId: peekPendingUploadProfile(userId),
+          messageId: preparedSourceMessageId(interaction), checkpoint: await capturePreparedShareCheckpoint(userId),
+          history: { runs, selectedRun: lastRun, verified: history.verified !== false,
+            completeLocal: history.completeLocal === true || history.verified !== false, capturedAt: Date.now() } });
+        return { lastRun, totalRuns: counts.totalRuns, runTypeCounts: counts.runTypeCounts, recentRunsForAnalytics: runs, historyVerified: history.verified !== false };
+      }).catch(() => { logger.warn('Menu Share preparation unavailable; retaining fresh Share fallback'); return null; });
 
     const summary = resolvedMode === 'lifetime'
       ? await (async () => {
@@ -866,7 +881,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
             recentRunsForAnalytics: sorted,
           };
         })()
-      : await getMenuRunSummary(userId).catch((error) => {
+      : preparedMenu ?? await getMenuRunSummary(userId).catch((error) => {
           const primed = peekMenuPrimedSummary(userId);
           if (primed) {
             return primed;
@@ -892,7 +907,8 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
       deltaResult,
     });
     if (resolvedMode !== 'lifetime' && summary && 'historyVerified' in summary && summary.historyVerified === false) embed.setFooter({ text: 'Offline fallback: showing locally saved history.' });
-    const rows = createMainMenuButtons(resolvedMode);
+    const boundShareToken = await bindPreparedShareSource(preparedShareToken, userId, interaction);
+    const rows = createMainMenuButtons(resolvedMode, boundShareToken);
     let chartFiles: AttachmentBuilder[] = [];
     if (resolvedMode !== 'lifetime' && summary?.lastRun && analyticsRuns.length > 0) {
       const chartResult = await resolveMainMenuPerHourChartAttachment(analyticsRuns, lastRunType);

@@ -14,7 +14,7 @@ const diagnosticSalt = randomBytes(32);
 
 // Bot interaction coordination only; parsing, hydration and reference semantics remain shared.
 const tails = new Map<string, Promise<void>>();
-type LockOperation = 'submission' | 'upload-history' | 'share-history' | 'presentation';
+type LockOperation = 'submission' | 'upload-history' | 'share-history' | 'share-prepare' | 'presentation';
 type OperationStage = 'action' | 'settings' | 'cloud-history' | 'local-history' | 'hydration' | 'duplicate-check' | 'save' | 'saved-state';
 export type BotRunOperationContext = { setStage: (stage: OperationStage) => void };
 const owners = new Map<string, { operation: LockOperation; started: number; stage: OperationStage }>();

@@ -51,5 +51,7 @@ src/
 
 ## Parity Notes
 
+- Prepared Share controls follow docs/SHARE-INVOCATIONS.md: full verified invocation history, central token IDs, strict owner/message/profile/run binding, absolute expiry, bounded memory and observed-mutation checks. Unseen later cloud changes are represented honestly through capture-time metadata; current disclosure checks and legacy fresh-read behavior remain.
+
 - TrackerBot now matches ModBot and ToolsBot at the core framework layer: one router, one kind-aware component registry, shared ownership helpers, and centralized interaction-id contracts.
 - Future TrackerBot interaction work should extend that shared contract instead of introducing feature-local parsing shortcuts.

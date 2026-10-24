@@ -1,4 +1,5 @@
-import type { AttachmentBuilder, Client, EmbedBuilder } from 'discord.js';
+import { AttachmentBuilder, type Client, type EmbedBuilder } from 'discord.js';
+import { appendCapturedHistoryFooter } from './captured-history-footer';
 import { getLastRun, getUserSettings } from '../tracker-api-client';
 import { getLocalRuns } from '../local-run-store';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
@@ -13,6 +14,8 @@ export type SharedRunContext = {
   sharerName: string;
   runTypeCounts?: Record<string, number>;
   historyVerified?: boolean;
+  historyCapturedAt?: number;
+  chartBase64?: string;
   deltaResult?: TrackerRunDeltaResult | null;
 };
 
@@ -42,7 +45,8 @@ export async function resolveSharedRunContext(client: Client, userId: string, ru
   if (/^S-[a-f0-9]{32}$/.test(runRef)) {
     const snapshot = await readShareSnapshot(`${userId}:${runRef}`);
     if (!snapshot || snapshot.userId !== userId || snapshot.ref !== `${userId}:${runRef}`) return null;
-    return { run: { ...snapshot.run }, sharerName: snapshot.sharerName || 'Unknown', runTypeCounts: snapshot.runTypeCounts, historyVerified: snapshot.historyVerified, deltaResult: snapshot.deltaResult };
+    return { run: { ...snapshot.run }, sharerName: snapshot.sharerName || 'Unknown', runTypeCounts: snapshot.runTypeCounts, historyVerified: snapshot.historyVerified, deltaResult: snapshot.deltaResult,
+      historyCapturedAt: snapshot.historyCapturedAt, chartBase64: snapshot.chartBase64 };
   }
   // Legacy posted buttons retain their existing lookup semantics; do not rewrite old posts.
   let run = await findSharedRun(userId, runRef);
@@ -94,9 +98,11 @@ export async function buildExpandedSharePayload(
     embed.setTitle(embed.data.title + ' (locally saved)');
     embed.setFooter({ text: 'Offline fallback: counts and comparisons use saved history and pending runs.' });
   }
-  const chartAttachment = settings?.shareChart !== false && allRuns.length >= 2
-    ? await buildPerHourChartAttachment(allRuns, runType).catch(() => null)
-    : null;
+  appendCapturedHistoryFooter(embed, context.historyCapturedAt);
+  const capturedChart = context.chartBase64 && context.chartBase64.length <= 4 * 1024 * 1024 && /^[A-Za-z0-9+/]+={0,2}$/.test(context.chartBase64)
+    ? new AttachmentBuilder(Buffer.from(context.chartBase64, 'base64'), { name: 'per-hour-chart.png' }) : null;
+  const chartAttachment = settings?.shareChart === false ? null : context.historyCapturedAt !== undefined ? capturedChart
+    : allRuns.length >= 2 ? await buildPerHourChartAttachment(allRuns, runType).catch(() => null) : null;
   if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
 
   return { embed, files: chartAttachment ? [chartAttachment] : [] };

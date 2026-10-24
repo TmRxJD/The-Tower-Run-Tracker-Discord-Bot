@@ -119,6 +119,7 @@ export function registerComponentHandlers(client: TrackerBotClient) {
     { prefix: TRACKER_IDS.flow.uploadAnother, handler: handleTrackMenuUploadAnother },
     { prefix: TRACKER_IDS.flow.mainMenu, handler: handleTrackMenuMainMenu },
     { prefix: TRACKER_IDS.flow.shareLast, handler: handleTrackMenuShareLast },
+      { prefix: TRACKER_IDS.flow.preparedSharePrefix, handler: handleTrackMenuShareLast },
     { prefix: TRACKER_IDS.flow.upload, handler: handleTrackMenuUpload },
     { prefix: TRACKER_IDS.flow.paste, handler: handleTrackMenuPaste },
     { prefix: TRACKER_IDS.flow.addRun, handler: handleTrackMenuAddRun },
