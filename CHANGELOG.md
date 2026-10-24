@@ -1,3 +1,8 @@
+## 2026-10-24 - Reduce fresh Share history round trips
+
+- Use bounded 1,000-row main pages and pack exact extended IDs into queries below 4,000 characters, retaining four-request waves, complete paging, count/schema/ownership/profile checks and existing deadlines/retries. A read-only 1,363-run comparison reduced requests from 20 to 13 and full history from 7.54-7.60 seconds to 5.45-5.53 seconds with every returned field equal.
+- Correlate Share, history-lock and Discord rate-limit diagnostics with an opaque operation ID and PID. Separate settings, history requests, capacity waits, fallback snapshot persistence, comparison/chart work, public delivery and final completion. Preserve full history, fresh comparisons, permissions, local/offline behavior and protected queues. See docs/SHARE-2026-10-24.md for natural traffic, validation and measurement limits.
+
 ## 2026-10-19 - Retry inconsistent history observations safely
 
 - Retry a complete fresh read once when main pagination ends before its reported total or returns more records than that total. Discard the failed observation, retain the original deadline and drain active owner reads. Schema, ownership and repeated-record failures still fail closed.

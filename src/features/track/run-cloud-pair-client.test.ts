@@ -92,7 +92,7 @@ describe('complete bot history reads', () => {
     expect(readHistoryFailure(transport)).toMatchObject({ cause: 'transport', transportCode: 'ECONNRESET', stage: 'main_page' });
     expect(JSON.stringify(readHistoryFailure(transport))).not.toContain('PRIVATE_SOCKET_BODY');
   });
-  it('completes a 1359-run, one-second-per-request lookup in eight seconds with bounded waves', async () => {
+  it('completes a 1359-run, one-second-per-request lookup in five seconds with bounded waves', async () => {
     vi.useFakeTimers();
     fixture({ discord: docs('discord', 1359) });
     const main = mocks.list.getMockImplementation()!;
@@ -104,9 +104,9 @@ describe('complete bot history reads', () => {
     });
     try {
       const start = Date.now(); const pending = loadBotCompleteRunCloudDocuments('discord');
-      await vi.advanceTimersByTimeAsync(8_000);
-      expect(await pending).toHaveLength(1359); expect(Date.now() - start).toBe(8_000);
-      expect(mocks.list).toHaveBeenCalledTimes(18); expect(mocks.get).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await pending).toHaveLength(1359); expect(Date.now() - start).toBe(5_000);
+      expect(mocks.list).toHaveBeenCalledTimes(9); expect(mocks.get).not.toHaveBeenCalled();
       expect(15 + Math.ceil(1359 / 25)).toBe(70); // Old sequential GET batch waves plus main reads.
     } finally { vi.useRealTimers(); }
   });
@@ -153,7 +153,7 @@ describe('complete bot history reads', () => {
     const runs = await loadBotCompleteRunCloudDocuments('discord');
     expect(runs).toHaveLength(1359); expect(runs.every(run => run.shockwaveDamage === '0')).toBe(true);
     expect(mocks.get).not.toHaveBeenCalled();
-    expect(mocks.list).toHaveBeenCalledTimes(58); //4 main pages/check +54 short extended pages.
+    expect(mocks.list).toHaveBeenCalledTimes(50); // Two main pages/check plus 47 short extended pages.
   });
   it('rejects foreign, repeated and prematurely empty extended result pages', async () => {
     for (const pages of [
@@ -176,13 +176,13 @@ describe('complete bot history reads', () => {
     const result = await loadBotCompleteRunCloudDocuments('discord');
     expect(result).toHaveLength(132);
     expect(new Set(result.map(d => d.$id)).size).toBe(132);
-    expect(mocks.list).toHaveBeenCalledTimes(4); // Main page/check and two bounded extended queries.
+    expect(mocks.list).toHaveBeenCalledTimes(3); // Main page/check and one bounded extended query.
     expect(mocks.get).not.toHaveBeenCalled();
   });
   it('does not mistake a short partial page for complete history', async () => {
     fixture({ discord: docs('discord', 132) }, 32);
     expect(await loadBotCompleteRunCloudDocuments('discord')).toHaveLength(132);
-    expect(mocks.list).toHaveBeenCalledTimes(8);
+    expect(mocks.list).toHaveBeenCalledTimes(7);
   });
   it('loads both linked and legacy identities', async () => {
     mocks.identity.mockResolvedValue({ lookupUserIds: ['appwrite', 'discord', 'discord'] });
@@ -374,6 +374,6 @@ it('bounds extended concurrency and drains a failed wave before rejecting withou
 it('duplicate review validates all main pages and final count without extended reads', async () => {
   fixture({ discord: docs('discord', 1360) });
   expect(await loadBotCompleteRunCloudDocuments('discord', { includeExtended: false })).toHaveLength(1360);
-  expect(mocks.list).toHaveBeenCalledTimes(4);
+  expect(mocks.list).toHaveBeenCalledTimes(3);
   expect(mocks.list.mock.calls.every(call => call[1] !== 'runs_extended_data')).toBe(true);
 });

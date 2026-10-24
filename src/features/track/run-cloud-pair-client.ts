@@ -19,11 +19,13 @@ import { resolveBotRunCloudIdentity } from './run-cloud-identity';
 import { isNotFoundAppwriteError } from '../../persistence/appwrite-error-utils';
 import { retireLocalOnlyBackupRun } from '../../rxdb/local-only-backup';
 import { randomUUID } from 'node:crypto';
+import { measurePerformanceSpan, measurePerformanceSync } from '../../core/performance-trace';
+import { buildCompleteHistoryExtendedBatches } from './complete-history-batches';
 import { annotateHistoryFailure, getKnownHistoryFailure, historyFailureError, type HistoryFailureDiagnostic, type HistoryFailureStage } from './history-failure-diagnostic';
 
 const RUNS_DATABASE_ID = 'run-tracker-data';
-// Measured against a 1,360-run account: avoid 100-row round trips without unbounded requests.
-const COMPLETE_HISTORY_MAIN_PAGE_SIZE = 500;
+// Measured with full field equality on 1,363 runs; retain bounded cursor pages.
+const COMPLETE_HISTORY_MAIN_PAGE_SIZE = 1000;
 const COMPLETE_HISTORY_EXTENDED_CONCURRENCY = 4;
 
 /** Read-only, all-or-nothing history for upload numbering and duplicate checks.
@@ -57,7 +59,7 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
     };
     checkDeadline();
     const { databases } = createAppwriteClient();
-    const identity = await resolveBotRunCloudIdentity(userId);
+    const identity = await measurePerformanceSpan('cloud-identity', () => resolveBotRunCloudIdentity(userId));
     checkDeadline();
     if (!identity.lookupUserIds.length) throw failure('identity', 'Run history identity is unavailable. Please retry.');
     const documents = new Map<string, Record<string, unknown>>();
@@ -81,10 +83,10 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
           for (;;) {
             ownerStage = 'main_page';
             checkDeadline();
-            const page: Models.DocumentList<Models.Document & { userId?: unknown }> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
+            const page: Models.DocumentList<Models.Document & { userId?: unknown }> = await measurePerformanceSpan('cloud-main', () => databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
               ...buildBotRunCloudUserIdQueries(ownerId, cursor, COMPLETE_HISTORY_MAIN_PAGE_SIZE),
               Query.orderAsc('$id'),
-            ]);
+            ]));
             checkDeadline();
             pageIndex++;
             if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0
@@ -112,9 +114,9 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
           // Detect concurrent additions/deletions after the last page, before trusting counts.
           ownerStage = 'main_count';
           checkDeadline();
-          const check = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
+          const check = await measurePerformanceSpan('cloud-count', () => databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_MAIN_COLLECTION_ID, [
             Query.equal('userId', ownerId), Query.limit(1), Query.select(['$id']),
-          ]);
+          ]));
           checkDeadline();
           if (check.total !== expectedTotal) throw failure('count_consistency', 'Run history changed. Please retry.');
           return ownerDocuments;
@@ -133,12 +135,11 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
     // Complete bot history already verified the owning main records. Query their
     // exact IDs in bulk rather than issuing one extended GET per historical run.
     const ids = [...documents.keys()];
-    const offsets = Array.from({ length: Math.ceil(ids.length / TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE) }, (_, i) => i * TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE);
-    for (let wave = 0; wave < offsets.length; wave += COMPLETE_HISTORY_EXTENDED_CONCURRENCY) {
+    const batches = buildCompleteHistoryExtendedBatches(ids);
+    for (let wave = 0; wave < batches.length; wave += COMPLETE_HISTORY_EXTENDED_CONCURRENCY) {
       // Drain the current wave on failure before releasing the coalesced history read.
       // Later waves never start after failure, cancellation, or the shared deadline.
-      const results = await Promise.allSettled(offsets.slice(wave, wave + COMPLETE_HISTORY_EXTENDED_CONCURRENCY).map(async offset => {
-        const batch = ids.slice(offset, offset + TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE);
+      const results = await Promise.allSettled(batches.slice(wave, wave + COMPLETE_HISTORY_EXTENDED_CONCURRENCY).map(async batch => {
         const requested = new Set(batch);
         const seen = new Set<string>();
         let cursor: string | null = null;
@@ -146,10 +147,10 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
         for (;;) {
           stage = 'extended_page';
           checkDeadline();
-          const page: Models.DocumentList<Models.Document> = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_EXTENDED_COLLECTION_ID, [
-            Query.equal('$id', batch), Query.limit(TRACKER_RUN_CLOUD_PAIR_PAGE_SIZE), Query.orderAsc('$id'),
+          const page: Models.DocumentList<Models.Document> = await measurePerformanceSpan('cloud-extended', () => databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_EXTENDED_COLLECTION_ID, [
+            Query.equal('$id', batch), Query.limit(batch.length), Query.orderAsc('$id'),
             ...(cursor ? [Query.cursorAfter(cursor)] : []),
-          ]);
+          ]));
           checkDeadline();
           if (!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > batch.length
             || (expectedTotal !== null && expectedTotal !== page.total)) throw failure(!Array.isArray(page.documents) || !Number.isSafeInteger(page.total) || page.total < 0 ? 'schema' : 'count_consistency', 'Extended run history could not be verified. Please retry.');
@@ -173,7 +174,7 @@ async function loadCompleteHistoryAttempt(userId: string, deadline: number, corr
     }
     stage = 'stitch';
     checkDeadline();
-    return stitchTrackerRunCloudLoadDocuments({ mainDocuments, extendedDocuments }).stitchedDocuments;
+    return measurePerformanceSync('cloud-stitch', () => stitchTrackerRunCloudLoadDocuments({ mainDocuments, extendedDocuments }).stitchedDocuments);
   } catch (error) { throw annotateHistoryFailure(error, stage, correlation); }
 }
 

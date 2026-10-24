@@ -1,4 +1,6 @@
 import { logger } from '../../../core/logger';
+import { measurePerformanceSpan, measurePerformanceSync, performanceTraceSummary, withPerformanceTrace } from '../../../core/performance-trace';
+import { performance as nodePerformance } from 'node:perf_hooks';
 import type { DiagnosticStage } from './safe-error-diagnostic';
 import { logError } from './error-handlers';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
@@ -64,10 +66,19 @@ async function disableShareButtonOnOriginalMessage(interaction: MessageComponent
 }
 
 export async function handleTrackMenuShareLast(interaction: MessageComponentInteraction | ModalSubmitInteraction) {
+  return withPerformanceTrace(() => handleShareLast(interaction));
+}
+
+async function handleShareLast(interaction: MessageComponentInteraction | ModalSubmitInteraction) {
   const mode = getTrackerFlowMode(interaction.user.id);
   const shareUiConfig = getTrackerUiConfig(mode).share;
   let stage: DiagnosticStage = 'acknowledge';
   const started = performance.now();
+  const cpuStarted = process.cpuUsage();
+  const loopStarted = nodePerformance.eventLoopUtilization();
+  const ageOnArrivalMs = Date.now() - interaction.createdTimestamp;
+  let outcome: 'no-send' | 'sent' | 'failed' = 'no-send';
+  let publicSendMs: number | undefined;
   let stageStarted = started;
   const stages: Partial<Record<DiagnosticStage, number>> = {};
   const setStage = (next: DiagnosticStage) => {
@@ -107,10 +118,10 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     const localOnly = localSettings?.cloudSyncEnabled === false;
     if (mode !== 'lifetime') setStage('history');
     const [settings, shareContext] = await Promise.all([
-      getUserSettings(userId, { localOnly }).catch(() => null),
+      measurePerformanceSpan('tracker-settings', () => getUserSettings(userId, { localOnly })).catch(() => null),
       mode === 'lifetime' ? null : Promise.all([
         withBotRunSubmissionLock(userId, context => prepareBotRunUploadHistory(userId, { localFirst: true, readOnly: true, onStage: context.setStage }), 'share-history'),
-        getEffectiveUserSharedSettings(userId, { localOnly }),
+        measurePerformanceSpan('shared-settings', () => getEffectiveUserSharedSettings(userId, { localOnly })),
       ]),
     ]);
     const includeNotes = settings?.shareNotes !== false;
@@ -185,6 +196,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         });
         setStage('send');
         await channelForLifetime.send(payload);
+        outcome = 'sent'; publicSendMs = Math.round(performance.now() - started);
       } catch (error) {
         throw error;
       }
@@ -193,10 +205,10 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     } else {
       setStage('history');
       const [history, sharedSettings] = shareContext!;
-      const verifiedRuns = await history.getRuns();
+      const verifiedRuns = await measurePerformanceSpan('history-view', () => history.getRuns());
       const cached = getShareableRun(userId);
       let run = cached?.run ?? null;
-      const { runTypeCounts } = await getLocalRunSummary(userId, verifiedRuns);
+      const { runTypeCounts } = await measurePerformanceSpan('summary', () => getLocalRunSummary(userId, verifiedRuns));
 
       if (run) {
         const selected = verifiedRuns.find(existing => trackerRunReferencesSameEntry({ left: { localId: existing.localId, runId: existing.runId, fallbackRunId: existing.id }, right: { localId: run!.localId, runId: run!.runId, fallbackRunId: run!.id } }));
@@ -226,7 +238,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       const runType = String(run.type ?? 'Farming').trim() || 'Farming';
 
       const deltaResult = (history.verified !== false || history.completeLocal === true) && sharedSettings.runDeltaMode !== 'disabled'
-        ? computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode, undefined, run)
+        ? measurePerformanceSync('comparison', () => computeTrackerRunDeltaBaseline(allRuns, runType, sharedSettings.runDeltaMode, undefined, run))
         : undefined;
 
       const embedUser = buildEmbedUserFromInteraction(interaction);
@@ -278,7 +290,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
         }
 
         const chartAttachment = settings?.shareChart !== false && allRuns.length >= 2
-          ? await buildPerHourChartAttachment(allRuns, runType).catch(() => null)
+          ? await measurePerformanceSpan('chart', () => buildPerHourChartAttachment(allRuns, runType)).catch(() => null)
           : null;
 
         // Compact shares only preview the chart as a thumbnail (the full-size chart rides along
@@ -306,6 +318,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
           });
           setStage('send');
           await channelWithSend.send(payload);
+          outcome = 'sent'; publicSendMs = Math.round(performance.now() - started);
         } catch (error) {
           throw error;
         }
@@ -316,6 +329,7 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
       return;
     }
   } catch (error) {
+    outcome = 'failed';
     await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, error, 'track_menu_sharelast', null, null, stage);
     if (!acknowledged) return;
     const message = shareUiConfig.shareFailed;
@@ -326,7 +340,15 @@ export async function handleTrackMenuShareLast(interaction: MessageComponentInte
     }
   } finally {
     setStage(stage);
+    const cpu = process.cpuUsage(cpuStarted);
+    const loop = nodePerformance.eventLoopUtilization(loopStarted);
     logger.warn('[perf] share.operation', {
+      ...performanceTraceSummary(), outcome, publicSendMs,
+      ...(Number.isFinite(ageOnArrivalMs) ? { ageOnArrivalMs } : {}),
+      // Process-wide deltas can include concurrent work; they are not per-request CPU attribution.
+      processCpuMs: Math.round((cpu.user + cpu.system) / 1000),
+      processLoopActiveMs: Math.round(loop.active),
+      processLoopUtilization: Math.round(loop.utilization * 1000) / 1000,
       durationMs: Math.round(performance.now() - started),
       stages: Object.fromEntries(Object.entries(stages).map(([name, ms]) => [name, Math.round(ms)])),
     });

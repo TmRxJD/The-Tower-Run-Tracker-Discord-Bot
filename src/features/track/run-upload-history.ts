@@ -8,6 +8,7 @@ import { getPermanentlyDeletedRunIds } from './run-deletion-tombstones';
 import { loadBotCompleteRunCloudDocuments } from './run-cloud-pair-client';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { logger } from '../../core/logger';
+import { measurePerformanceSpan, performanceTraceIdentity } from '../../core/performance-trace';
 import { annotateHistoryFailure, historyFailureError, readHistoryFailure, getKnownHistoryFailure, type HistoryFailureStage } from './history-failure-diagnostic';
 const diagnosticSalt = randomBytes(32);
 
@@ -64,6 +65,7 @@ export async function withBotRunSubmissionLock<T>(userId: string, action: (conte
   finally {
     finishStage();
     if (acquiredAt) logger.warn('[perf] run.operation', {
+      ...performanceTraceIdentity(),
       operation, waitMs: Math.round(acquiredAt - waitingStarted),
       durationMs: Math.round(performance.now() - acquiredAt),
       stages: Object.fromEntries(Object.entries(stageMs).map(([stage, ms]) => [stage, Math.round(ms)])),
@@ -93,7 +95,7 @@ function historyReadKey(userId: string, includeExtended: boolean) { return `${in
 function readCompleteHistory(userId: string, includeExtended = true) {
   const key = historyReadKey(userId, includeExtended);
   const existing = cloudReads.get(key);
-  if (existing) return existing;
+  if (existing) return measurePerformanceSpan('coalesced-history-wait', () => existing);
   if (cloudReads.size >= 128) return Promise.reject(historyFailureError('Run history service is busy. Please retry.', 'busy', 'cloud_history'));
   const read = includeExtended ? loadBotCompleteRunCloudDocuments(userId) : loadBotCompleteRunCloudDocuments(userId, { includeExtended: false });
   cloudReads.set(key, read);
@@ -165,7 +167,7 @@ export async function prepareBotRunUploadHistory(userId: string, options: { read
           elapsedMs: Date.now() - started, pendingRead: cloudReads.has(historyReadKey(userId, !options.mainOnly)), ...readHistoryFailure(failure) });
         throw failure;
       });
-    if (!options.mainOnly) await saveVerifiedHistorySnapshot(userId, cloudRuns).catch(() => logger.warn('Verified history fallback snapshot could not be persisted'));
+    if (!options.mainOnly) await measurePerformanceSpan('history-snapshot', () => saveVerifiedHistorySnapshot(userId, cloudRuns)).catch(() => logger.warn('Verified history fallback snapshot could not be persisted'));
     options.onStage?.('local-history');
     historyStage = 'local_history';
     const tombstones = await getPermanentlyDeletedRunIds(userId);

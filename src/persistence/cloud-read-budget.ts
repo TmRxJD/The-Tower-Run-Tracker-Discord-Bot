@@ -1,3 +1,5 @@
+import { measurePerformanceSpan } from '../core/performance-trace';
+
 /** Queue normal SDK fan-out instead of mistaking concurrency for an outage. Writes bypass this layer. */
 const pending = new Set<Promise<unknown>>();
 const waiters: Array<{ resume: () => void; reject: (error: Error) => void }> = [];
@@ -29,11 +31,11 @@ async function acquire(signal?: AbortSignal): Promise<void> {
   });
 }
 export async function withCloudReadBudget<T>(read: () => Promise<T>, timeoutMs = 5000, signal?: AbortSignal): Promise<T> {
-  await acquire(signal);
+  await measurePerformanceSpan('cloud-capacity-wait', () => acquire(signal));
   reservations--;
   if (signal?.aborted) { drain(); throw cancelled(); }
   const started = Date.now();
-  const operation = Promise.resolve().then(() => { if (signal?.aborted) throw cancelled(); return read(); });
+  const operation = Promise.resolve().then(() => { if (signal?.aborted) throw cancelled(); return measurePerformanceSpan('cloud-sdk', read); });
   pending.add(operation);
   const settled = () => { pending.delete(operation); drain(); };
   void operation.then(settled, settled);
