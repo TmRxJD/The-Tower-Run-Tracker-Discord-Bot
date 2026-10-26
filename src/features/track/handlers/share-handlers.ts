@@ -15,7 +15,6 @@ import { TRACKER_IDS, parsePrefixedTrackerToken } from '../track-custom-ids';
 import { resolvePreparedShareHistory, type PreparedShareHistory } from '../share/prepared-share';
 import { capturePreparedShareCheckpoint, preparedSourceMessageId } from '../share/prepared-share-inputs';
 import { peekPendingUploadProfile } from '../upload-target-profile';
-import { appendCapturedHistoryFooter } from '../share/captured-history-footer';
 import { EmbedBuilder, Colors, type MessageComponentInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import { buildShareSnapshotRef } from '../share/share-run-ref';
@@ -302,7 +301,6 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
         embed.setTitle(embed.data.title + ' (locally saved)');
         embed.setFooter({ text: 'Offline fallback: counts and comparisons use saved history and pending runs; cloud changes are not verified.' });
       }
-      appendCapturedHistoryFooter(embed, prepared?.capturedAt);
       const channelWithSend = interaction.channel as { send?: (payload: ShareEmbedChannelPayload) => Promise<unknown> } | null;
       if (embed) {
         if (!channelWithSend?.send) {

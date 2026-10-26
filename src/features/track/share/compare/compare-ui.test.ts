@@ -9,6 +9,21 @@ const session = (description: string): CompareSession => ({ token: 'a'.repeat(24
 const desc = (run = shared, options = {}, collapsed = false) => buildShareEmbed({ user: { username: 'Alice' }, run, runTypeCounts: {}, options, collapsed }).data.description!;
 
 describe('private comparison presentation', () => {
+  it.each([true, false])('omits the report-view explanation while preserving comparison data and missing-data warnings (complete=%s)', complete => {
+    const s = session(desc());
+    s.view = 'reports';
+    s.selected = { choice: { source: 'local', id: 'fixture', profileId: null, preview: shared }, run: shared, name: 'Bob', details: [],
+      reports: { pages: [{ text: 'Coins: S **1B** | Y **2B**' }], sharedAvailable: complete, mineAvailable: true } };
+    const result = compareResult(s, shared, 'Bob');
+    const embed = result.embeds[0].toJSON();
+    expect(embed.description).not.toContain('Only captured battle-report fields are shown.');
+    expect(embed.description).toContain('S = shared run (Alice)');
+    expect(embed.description).toContain('Y = your run (Bob)');
+    expect(embed.description).toContain('Coins: S **1B** | Y **2B**');
+    expect(embed.description?.includes('Some older report data was not captured. Missing values are Unavailable.')).toBe(!complete);
+    expect(embed.footer?.text).toContain('Different tiers/types affect comparisons.');
+    expect(result.allowedMentions).toEqual({ parse: [], repliedUser: false });
+  });
   it('pairs both values on each metric row without mobile-stacking embed fields', () => {
     const s = session(desc());
     const result = compareResult(s, { ...shared, totalCoins: '2B', totalCells: '5K', totalDice: null, roundDuration: '0s' }, 'Bob');

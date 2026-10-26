@@ -1,5 +1,4 @@
 import { AttachmentBuilder, type Client, type EmbedBuilder } from 'discord.js';
-import { appendCapturedHistoryFooter } from './captured-history-footer';
 import { getLastRun, getUserSettings } from '../tracker-api-client';
 import { getLocalRuns } from '../local-run-store';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
@@ -98,7 +97,6 @@ export async function buildExpandedSharePayload(
     embed.setTitle(embed.data.title + ' (locally saved)');
     embed.setFooter({ text: 'Offline fallback: counts and comparisons use saved history and pending runs.' });
   }
-  appendCapturedHistoryFooter(embed, context.historyCapturedAt);
   const capturedChart = context.chartBase64 && context.chartBase64.length <= 4 * 1024 * 1024 && /^[A-Za-z0-9+/]+={0,2}$/.test(context.chartBase64)
     ? new AttachmentBuilder(Buffer.from(context.chartBase64, 'base64'), { name: 'per-hour-chart.png' }) : null;
   const chartAttachment = settings?.shareChart === false ? null : context.historyCapturedAt !== undefined ? capturedChart
