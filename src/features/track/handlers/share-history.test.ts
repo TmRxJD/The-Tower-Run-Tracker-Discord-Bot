@@ -14,6 +14,7 @@ import { setTrackerFlowMode } from '../flow-mode-store';
 import { clearPreparedShareHistory, prepareShareHistory } from '../share/prepared-share';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { setPendingUploadProfile } from '../upload-target-profile';
+import { getTrackUiConfig } from '../../../config/tracker-ui-config';
 
 const rows = Array.from({ length: 132 }, (_, i) => ({ runId: `run-${i}`, localId: `local-${i}`, type: 'Farming', tier: '22', wave: String(i + 1), totalCoins: '100', roundDuration: '1h0m0s', reportTimestamp: new Date(1700000000000 + i * 1000).toISOString() }));
 function interaction() { return { user: { id: 'share-owner', username: 'fixture', displayAvatarURL: () => '' }, client: {}, guildId: null, deferUpdate: vi.fn().mockResolvedValue(undefined), followUp: vi.fn().mockResolvedValue(undefined), channel: { send: vi.fn().mockResolvedValue({}) }, message: { components: [] } }; }
@@ -39,7 +40,7 @@ it('shares a complete prepared invocation repeatedly with zero additional histor
   expect(owner.channel.send).toHaveBeenCalledTimes(2);
   expect(mocks.settings.mock.calls.some(([, options]) => options?.localOnly === false)).toBe(true);
   expect(mocks.snapshot.mock.calls.at(-1)?.[0]).toMatchObject({ runTypeCounts: { Farming: 132 }, historyCapturedAt: expect.any(Number) });
-  expect(owner.channel.send.mock.calls[0][0].embed.data.footer.text).toContain('History captured');
+  expect(owner.channel.send.mock.calls[0][0].embed.data.footer.text).toBe(getTrackUiConfig().share.footer);
 });
 it('keeps the prepared result available after a known Discord send failure', async () => {
   const owner = preparedInteraction(); owner.channel.send.mockRejectedValueOnce(new Error('fixture failure'));

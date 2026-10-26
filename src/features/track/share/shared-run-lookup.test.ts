@@ -32,13 +32,14 @@ it('preserves the captured cloud comparison when expansion has no complete local
   await buildExpandedSharePayload(client as never, 'owner', context!);
   expect(mocks.embed.mock.calls.at(-1)?.[0].deltaResult).toEqual(captured);
 });
-it('retains the invocation capture time and original chart across restart/expansion instead of substituting current history', async () => {
+it.each([true, false])('keeps capture metadata and the original chart without appending a capture annotation on expansion (verified=%s)', async historyVerified => {
   const png = Buffer.from([137,80,78,71,13,10,26,10]);
-  mocks.settings.mockResolvedValue({shareChart:true}); mocks.embed.mockReturnValue(new EmbedBuilder());
-  mocks.snapshot.mockResolvedValue({ref:'owner:'+token,userId:'owner',run:{runId:'run-9'},sharerName:'fixture',runTypeCounts:{Farming:10},historyCapturedAt:1700000000000,chartBase64:png.toString('base64'),deltaResult:null});
+  mocks.settings.mockResolvedValue({shareChart:true}); mocks.embed.mockReturnValue(new EmbedBuilder().setTitle('Fixture run').setFooter({text:'Existing footer'}));
+  mocks.snapshot.mockResolvedValue({ref:'owner:'+token,userId:'owner',run:{runId:'run-9'},sharerName:'fixture',runTypeCounts:{Farming:10},historyVerified,historyCapturedAt:1700000000000,chartBase64:png.toString('base64'),deltaResult:null});
   const context = await resolveSharedRunContext(client as never,'owner',token);
   const expanded = await buildExpandedSharePayload(client as never,'owner',context!);
-  expect(expanded.embed.data.footer?.text).toContain('History captured');
+  expect(context?.historyCapturedAt).toBe(1700000000000);
+  expect(expanded.embed.data.footer?.text).toBe(historyVerified ? 'Existing footer' : 'Offline fallback: counts and comparisons use saved history and pending runs.');
   expect(expanded.files).toHaveLength(1); expect(expanded.files[0].attachment).toEqual(png);
   expect(mocks.embed.mock.calls.at(-1)?.[0]).toMatchObject({runTypeCounts:{Farming:10},deltaResult:undefined});
 });

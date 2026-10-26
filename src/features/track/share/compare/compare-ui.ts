@@ -40,7 +40,7 @@ export function compareResult(session: CompareSession, mine: CompareRun, name: s
   const report = session.selected?.reports;
   const missing = reports && (!report?.sharedAvailable || !report?.mineAvailable)
     ? '\nSome older report data was not captured. Missing values are Unavailable.' : '';
-  const legend = `**S = shared run (${escapeMarkdown(session.shared.sharerName).slice(0, 80)}) · Y = your run (${escapeMarkdown(name).slice(0, 80)})**\nEach value row is S | Y. Δ is yours relative to shared; missing/zero baselines have no percentage.${reports ? '\nOnly captured battle-report fields are shown.' : ''}${missing}`;
+  const legend = `**S = shared run (${escapeMarkdown(session.shared.sharerName).slice(0, 80)}) · Y = your run (${escapeMarkdown(name).slice(0, 80)})**\nEach value row is S | Y. Δ is yours relative to shared; missing/zero baselines have no percentage.${missing}`;
   const embed = new EmbedBuilder().setTitle(reports ? 'Battle report comparison' : 'Expanded run comparison').setColor(0xF9A825)
     .setDescription(legend + '\n\n' + (pages[page]?.text ?? (reports ? 'No battle report fields were captured for these runs.' : 'No accessible expanded details were captured.')))
     .setFooter({ text: `Page ${page + 1} of ${Math.max(1, pages.length)} · ${String(session.shared.run.type ?? 'Farming').slice(0, 60)} vs ${String(mine.type ?? 'Farming').slice(0, 60)} · Different tiers/types affect comparisons.` });
