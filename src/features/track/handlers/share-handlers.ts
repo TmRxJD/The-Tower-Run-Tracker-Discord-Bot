@@ -1,5 +1,5 @@
 import { logger } from '../../../core/logger';
-import { measurePerformanceSpan, measurePerformanceSync, performanceTraceSummary, withPerformanceTrace } from '../../../core/performance-trace';
+import { bindPerformanceFlow, ensurePerformanceTrace, measurePerformanceSpan, measurePerformanceSync, performanceTraceSummary, setPerformanceTraceStage } from '../../../core/performance-trace';
 import { performance as nodePerformance } from 'node:perf_hooks';
 import type { DiagnosticStage } from './safe-error-diagnostic';
 import { logError } from './error-handlers';
@@ -12,7 +12,7 @@ import { getShareableRun, setShareableRun } from '../share/share-state';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { TRACKER_IDS, parsePrefixedTrackerToken } from '../track-custom-ids';
-import { resolvePreparedShareHistory, type PreparedShareHistory } from '../share/prepared-share';
+import { resolvePreparedShareHistory, type PreparedShareHistory, type PreparedShareDecision } from '../share/prepared-share';
 import { capturePreparedShareCheckpoint, preparedSourceMessageId } from '../share/prepared-share-inputs';
 import { peekPendingUploadProfile } from '../upload-target-profile';
 import { EmbedBuilder, Colors, type MessageComponentInteraction, type ModalSubmitInteraction } from 'discord.js';
@@ -69,7 +69,7 @@ async function disableShareButtonOnOriginalMessage(interaction: MessageComponent
 }
 
 export async function handleTrackMenuShareLast(interaction: MessageComponentInteraction | ModalSubmitInteraction) {
-  return withPerformanceTrace(() => handleShareLast(interaction));
+  return ensurePerformanceTrace(() => handleShareLast(interaction));
 }
 
 async function handleShareLast(interaction: MessageComponentInteraction | ModalSubmitInteraction) {
@@ -84,11 +84,16 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
   let publicSendMs: number | undefined;
   let historySource: 'fresh' | 'invocation' = 'fresh';
   let historyCapturedAt: number | undefined;
+  let noSendReason: 'invalid_prepared_token' | 'prepared_rejected' | 'prepared_changed_before_send' | 'no_lifetime_entries' | 'selected_run_unavailable' | 'no_runs' | undefined;
+  let preparedDecision: PreparedShareDecision | undefined;
+  let preparedPhase: 'initial' | 'pre_send' = 'initial';
+  setPerformanceTraceStage('acknowledge');
   let stageStarted = started;
   const stages: Partial<Record<DiagnosticStage, number>> = {};
   const setStage = (next: DiagnosticStage) => {
     stages[stage] = (stages[stage] ?? 0) + performance.now() - stageStarted;
     stage = next; stageStarted = performance.now();
+    setPerformanceTraceStage(next);
   };
   let acknowledged = interaction.deferred || interaction.replied;
   try {
@@ -117,16 +122,19 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
 
     const userId = interaction.user.id;
     const preparedToken = parsePrefixedTrackerToken(TRACKER_IDS.flow.preparedSharePrefix, interaction.customId ?? '');
+    if (preparedToken) bindPerformanceFlow(preparedToken, mode);
     let prepared: PreparedShareHistory | null = null;
     const resolvePrepared = () => resolvePreparedShareHistory({ token: preparedToken!, userId,
       messageId: preparedSourceMessageId(interaction) ?? '', profileId: peekPendingUploadProfile(userId), mode,
-      checkpoint: () => capturePreparedShareCheckpoint(userId) });
+      checkpoint: () => capturePreparedShareCheckpoint(userId), onDecision: decision => { preparedDecision = decision; } });
     if ((interaction.customId ?? '').startsWith(TRACKER_IDS.flow.preparedSharePrefix)) {
+      noSendReason = preparedToken ? 'prepared_rejected' : 'invalid_prepared_token';
       if (!preparedToken || !(prepared = await resolvePrepared())) {
         await sendNotice('This prepared Share expired or your runs/profile changed. Open Tracker again to prepare a fresh Share.');
         return;
       }
       historySource = 'invocation'; historyCapturedAt = prepared.capturedAt;
+      noSendReason = undefined;
     }
     setStage('settings');
     // The cloud preference is local-authoritative. Establish it before starting
@@ -176,6 +184,7 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
       const sorted = [...entries].sort((a, b) => new Date(String(b.date ?? '')).getTime() - new Date(String(a.date ?? '')).getTime());
       const latest = sorted[0];
       if (!latest) {
+        noSendReason = 'no_lifetime_entries';
         await sendNotice(shareUiConfig.noRunsFound);
         return;
       }
@@ -231,6 +240,7 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
       if (run) {
         const selected = verifiedRuns.find(existing => trackerRunReferencesSameEntry({ left: { localId: existing.localId, runId: existing.runId, fallbackRunId: existing.id }, right: { localId: run!.localId, runId: run!.runId, fallbackRunId: run!.id } }));
         if (!selected) {
+          noSendReason = 'selected_run_unavailable';
           await sendNotice('This run is no longer in your current history. Please choose another run.');
           return;
         }
@@ -242,6 +252,7 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
       }
 
       if (!run) {
+        noSendReason = 'no_runs';
         await sendNotice(shareUiConfig.noRunsFound);
         return;
       }
@@ -335,7 +346,9 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
             shareRunRef,
             collapsed: compact,
           });
+          preparedPhase = 'pre_send';
           if (preparedToken && !await resolvePrepared()) {
+            noSendReason = 'prepared_changed_before_send';
             await sendNotice('Your runs/profile changed while preparing this Share. Open Tracker again to prepare a fresh Share.');
             return;
           }
@@ -368,6 +381,10 @@ async function handleShareLast(interaction: MessageComponentInteraction | ModalS
     logger.warn('[perf] share.operation', {
       ...performanceTraceSummary(), outcome, publicSendMs,
       historySource, historyCapturedAt,
+      ...(outcome === 'no-send' ? { noSendReason: noSendReason ?? 'unclassified' } : {}),
+      ...(preparedDecision ? { preparedReason: preparedDecision.reason, preparedPhase,
+        ...(preparedDecision.cacheAgeMs !== undefined ? { preparedCacheAgeMs: preparedDecision.cacheAgeMs } : {}),
+        ...(preparedDecision.originOperationId ? { preparedOriginOperationId: preparedDecision.originOperationId } : {}) } : {}),
       ...(Number.isFinite(ageOnArrivalMs) ? { ageOnArrivalMs } : {}),
       // Process-wide deltas can include concurrent work; they are not per-request CPU attribution.
       processCpuMs: Math.round((cpu.user + cpu.system) / 1000),

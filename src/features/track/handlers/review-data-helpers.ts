@@ -9,6 +9,7 @@ import {
 import { ensureType } from './review-interaction-helpers';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import type { RunDataRecord } from '../shared/track-review-records';
+import { annotateSubmissionValidation } from '../submission-failure-diagnostic';
 
 type RawParseFieldValue = {
   value: string | null;
@@ -395,7 +396,8 @@ export async function sendRawParseMessage(interaction: TrackReplyInteractionLike
 
 export async function buildSubmitPayload(userId: string, username: string, data: RunDataRecord, includeType: boolean, includeNotes: boolean) {
   const canonical = canonicalizeRunData(canonicalizeRunDataForOutput(data));
-  assertTrackerRunSubmission(canonical);
+  try { assertTrackerRunSubmission(canonical); }
+  catch (error) { annotateSubmissionValidation(error, canonical); throw error; }
   const runData: Record<string, unknown> = {
     ...canonical,
     killedBy: canonical.killedBy ?? 'Apathy',

@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { buildTrackerResolvedRunReference } from '@tmrxjd/platform/tools';
+import { performanceTraceIdentity } from '../../../core/performance-trace';
 
 export type PreparedShareHistory = {
   runs: Record<string, unknown>[];
@@ -9,7 +10,8 @@ export type PreparedShareHistory = {
   capturedAt: number;
 };
 type Entry = { userId: string; messageId: string | null; profileId: string | null; mode: string; checkpoint: string;
-  expiresAt: number; data: Buffer; cost: number };
+  expiresAt: number; data: Buffer; cost: number; capturedAt: number; originOperationId?: string };
+export type PreparedShareDecision = { reason: 'hit' | 'missing' | 'expired' | 'user_mismatch' | 'message_mismatch' | 'profile_mismatch' | 'mode_mismatch' | 'replaced' | 'checkpoint_changed' | 'checkpoint_error'; cacheAgeMs?: number; originOperationId?: string };
 const entries = new Map<string, Entry>();
 const TTL_MS = 5 * 60_000;
 const MAX_BYTES = 32 * 1024 * 1024;
@@ -28,7 +30,8 @@ export function prepareShareHistory(input: { userId: string; messageId?: string 
   while (entries.size >= 64 || bytes + cost > MAX_BYTES) remove(entries.keys().next().value!);
   const token = randomUUID();
   entries.set(token, { userId: input.userId, messageId: input.messageId ?? null, profileId: input.profileId ?? null,
-    mode: input.mode, checkpoint: input.checkpoint, expiresAt: Date.now() + TTL_MS, data, cost });
+    mode: input.mode, checkpoint: input.checkpoint, expiresAt: Date.now() + TTL_MS, data, cost,
+    capturedAt: input.history.capturedAt, originOperationId: performanceTraceIdentity().operationId });
   bytes += cost;
   return token;
 }
@@ -38,16 +41,29 @@ export function bindPreparedShareMessage(token: string, userId: string, messageI
   entry.messageId = messageId; return true;
 }
 export async function resolvePreparedShareHistory(input: { token: string; userId: string; messageId: string;
-  profileId?: string | null; mode: string; checkpoint: () => Promise<string> }): Promise<PreparedShareHistory | null> {
+  profileId?: string | null; mode: string; checkpoint: () => Promise<string>; onDecision?: (decision: PreparedShareDecision) => void }): Promise<PreparedShareHistory | null> {
+  const beforePrune = entries.get(input.token);
+  const expired = Boolean(beforePrune && beforePrune.expiresAt <= Date.now());
   prune(); const entry = entries.get(input.token);
-  if (!entry || entry.userId !== input.userId || entry.messageId !== input.messageId
-    || entry.profileId !== (input.profileId ?? null) || entry.mode !== input.mode) return null;
-  const checkpoint = await input.checkpoint();
+  const observe = (reason: PreparedShareDecision['reason'], source = entry ?? beforePrune) => {
+    const owned = source?.userId === input.userId;
+    const cacheAgeMs = owned && Number.isFinite(source?.capturedAt) ? Math.max(0, Math.min(604_800_000, Date.now() - source!.capturedAt)) : undefined;
+    try { input.onDecision?.({ reason, ...(cacheAgeMs !== undefined ? { cacheAgeMs } : {}), ...(owned && source?.originOperationId ? { originOperationId: source.originOperationId } : {}) }); } catch { /* Diagnostic observers cannot affect admission. */ }
+  };
+  if (!entry) { observe(expired ? 'expired' : 'missing'); return null; }
+  if (entry.userId !== input.userId) { observe('user_mismatch'); return null; }
+  if (entry.messageId !== input.messageId) { observe('message_mismatch'); return null; }
+  if (entry.profileId !== (input.profileId ?? null)) { observe('profile_mismatch'); return null; }
+  if (entry.mode !== input.mode) { observe('mode_mismatch'); return null; }
+  let checkpoint: string;
+  try { checkpoint = await input.checkpoint(); } catch (error) { observe('checkpoint_error'); throw error; }
   const history = JSON.parse(entry.data.toString('utf8')) as PreparedShareHistory;
   if (entries.get(input.token) !== entry || entry.expiresAt <= Date.now()
     || checkpoint !== entry.checkpoint && !permitsCapturedHydration(entry.checkpoint, checkpoint, history.runs)) {
+    observe(entries.get(input.token) !== entry ? 'replaced' : entry.expiresAt <= Date.now() ? 'expired' : 'checkpoint_changed');
     remove(input.token); return null;
   }
+  observe('hit');
   return history;
 }
 

@@ -1,4 +1,7 @@
 import { resolveQueuedRunDuplicate } from './local-run-store';
+import { observeOperation } from '../../core/operation-lifecycle';
+import { measurePerformanceSpan, performanceDiagnosticContext, setPerformanceTraceStage } from '../../core/performance-trace';
+import { safeErrorDiagnostic } from './handlers/safe-error-diagnostic';
 import { loadBotCompleteRunCloudDocuments } from './run-cloud-pair-client';
 import { downloadBoundedBuffer } from '../../core/bounded-download';
 import { backupLocalOnlyRunsNow, refreshExistingLocalOnlyBackup } from '../../rxdb/local-only-backup';
@@ -320,8 +323,12 @@ async function runLocalGutenyeOcr(file: AttachmentPayload): Promise<ParsedOcrRes
 }
 
 export async function runOCR(file: AttachmentPayload) {
+  return observeOperation('ocr', () => runOcrObserved(file));
+}
+async function runOcrObserved(file: AttachmentPayload) {
   try {
-    const visionResult = await runDirectVisionOcr(file);
+    setPerformanceTraceStage('ocr-cloud');
+    const visionResult = await measurePerformanceSpan('ocr-cloud', () => runDirectVisionOcr(file));
     const modelRunData = visionResult.runData;
 
     try {
@@ -346,8 +353,9 @@ export async function runOCR(file: AttachmentPayload) {
       throw error;
     }
   } catch (error) {
-    logger.warn(`cloud OCR unavailable; falling back to local OCR: ${error instanceof Error ? error.message : 'unknown cloud OCR failure'}`);
-    return await runLocalGutenyeOcr(file);
+    logger.warn('cloud OCR unavailable; falling back to local OCR', { ...performanceDiagnosticContext(), ...safeErrorDiagnostic(error, 'runOCR', 'ocr-cloud') });
+    setPerformanceTraceStage('ocr-local');
+    return await measurePerformanceSpan('ocr-local', () => runLocalGutenyeOcr(file));
   }
 }
 

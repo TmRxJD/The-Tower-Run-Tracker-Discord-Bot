@@ -6,6 +6,9 @@ import { hasOwnedModalWait } from './interaction-session';
 import type { TrackerBotClient } from './tracker-bot-client';
 import { ANALYTICS_EVENT_COMMAND_INVOKED } from '@tmrxjd/platform/tools';
 import { clearMainMenuSession } from '../features/track/handlers/upload-handlers';
+import { observeOperation } from './operation-lifecycle';
+import { markPerformanceFailure, performanceDiagnosticContext, rememberPerformanceErrorStage } from './performance-trace';
+import { safeErrorDiagnostic } from '../features/track/handlers/safe-error-diagnostic';
 
 /**
  * Shown for a button or select whose handler no longer exists (usually a menu that outlived
@@ -15,7 +18,7 @@ import { clearMainMenuSession } from '../features/track/handlers/upload-handlers
 export const STALE_COMPONENT_MESSAGE = 'That menu is no longer active. Run the command again to open a fresh one.';
 
 export function registerInteractionRouter(client: TrackerBotClient) {
-  const handleInteraction = async (interaction: Interaction) => {
+  const handleInteraction = async (interaction: Interaction) => observeOperation('interaction', async () => {
     try {
       if (interaction.isChatInputCommand()) {
         const command = client.commands.get(interaction.commandName);
@@ -34,7 +37,7 @@ export function registerInteractionRouter(client: TrackerBotClient) {
           guildId: interaction.guildId ?? undefined,
           commandName: interaction.commandName,
         }).catch(error => {
-          logger.warn('Failed to record analytics event', error);
+          logger.warn('Failed to record analytics event', { ...performanceDiagnosticContext(), ...safeErrorDiagnostic(error, 'interaction_router', 'finalize') });
         });
         return;
       }
@@ -62,9 +65,8 @@ export function registerInteractionRouter(client: TrackerBotClient) {
           // failed" and the user clicks again. Usually a customId from a message that
           // outlived the process that registered its handler.
           recordDiagnostic('interaction.dropped', {
-            interactionId: interaction.id,
-            userId: interaction.user.id,
-            customId: 'customId' in interaction ? interaction.customId : null,
+            ...performanceDiagnosticContext(),
+            customIdPresent: Boolean('customId' in interaction && interaction.customId),
             type: interaction.type,
             ageOnArrivalMs: Date.now() - interaction.createdTimestamp,
           });
@@ -77,7 +79,9 @@ export function registerInteractionRouter(client: TrackerBotClient) {
         }
       }
     } catch (error) {
-      logger.error('Interaction handling error', error);
+      rememberPerformanceErrorStage(error);
+      markPerformanceFailure();
+      logger.error('Interaction handling error', { ...performanceDiagnosticContext(), ...safeErrorDiagnostic(error, 'interaction_router', 'dispatch') });
       if (interaction.isRepliable()) {
         const alreadyAcked = interaction.replied || interaction.deferred;
         const payload = { content: 'There was an error handling this interaction.', flags: MessageFlagsBitField.Flags.Ephemeral } as const;
@@ -88,7 +92,7 @@ export function registerInteractionRouter(client: TrackerBotClient) {
         }
       }
     }
-  };
+  });
 
   client.on('interactionCreate', interaction => {
     void handleInteraction(interaction);

@@ -35,21 +35,17 @@ import type { PendingRecordLike } from '../shared/track-review-records';
 import { ANALYTICS_EVENT_RUN_TRACKER_UPLOAD, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
 import { logger } from '../../../core/logger';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
+import { observeOperation } from '../../../core/operation-lifecycle';
+import { bindPerformanceFlow, performanceDiagnosticContext, rememberPerformanceErrorStage, setPerformanceTraceStage } from '../../../core/performance-trace';
 
 function reviewUi() {
   return getTrackUiConfig().review;
 }
 
 export async function renderDataReview(interaction: TrackReplyInteractionLike, token: string, pending: PendingRecordLike, label: string = 'Extracted') {
-  logger.info('tracker review render', pending.pasteDiagnosticId ? { userId: pending.userId, reference: pending.pasteDiagnosticId } : {
-    token,
-    userId: pending.userId,
-    tier: pending.runData?.tier,
-    wave: pending.runData?.wave,
-    killedBy: pending.runData?.killedBy,
-    taggedByDeathWave: pending.runData?.taggedByDeathWave,
-    totalEnemies: pending.runData?.totalEnemies,
-  });
+  bindPerformanceFlow(token, getTrackerFlowMode(pending.userId));
+  setPerformanceTraceStage('review');
+  logger.warn('[diag] review.render', { ...performanceDiagnosticContext(), pasteDiagnosticPresent: Boolean(pending.pasteDiagnosticId) });
   await renderDataReviewOrSubmit(interaction, token, pending, label, userId => getUserSettings(userId), submitPendingRun);
 }
 
@@ -154,7 +150,6 @@ async function handleNoteModal(interaction: ReviewInteraction, returnMode: 'revi
       renderEditFieldPicker,
     );
   } catch (error) {
-    logger.error('[handleNoteModal] error:', error);
     await handleError({ client: interaction.client, user: interaction.user, error, context: returnMode === 'edit' ? 'edit_note' : 'add_note' });
   }
 }
@@ -196,16 +191,24 @@ export async function handleDataSubmission(interaction: ReviewInteraction) {
 }
 
 async function submitPendingRun(interaction: ReviewInteraction, token: string, pending: PendingRecordLike) {
+  return observeOperation('submission', async () => {
+    bindPerformanceFlow(token, getTrackerFlowMode(pending.userId));
+    await submitPendingRunObserved(interaction, token, pending);
+  });
+}
+async function submitPendingRunObserved(interaction: ReviewInteraction, token: string, pending: PendingRecordLike) {
   if (pending.userId !== interaction.user.id) return;
   const requestedVersion = submissionDraftVersion(toPendingRecord(pending));
   const requestedMode = getTrackerFlowMode(pending.userId);
   // Acknowledge before waiting for another submission/cloud history; avoid Discord expiry.
+  setPerformanceTraceStage('acknowledge');
   if (!interaction.deferred && !interaction.replied) {
     try { await interaction.deferUpdate(); } catch { return; }
   }
   // Another Submit may consume this session while Discord acknowledgement is pending.
   if (!await getPendingRun(token)) return;
   await interaction.editReply({ embeds: [createLoadingEmbed(reviewUi().messages.processingSubmission)], components: [] }).catch(() => {});
+  setPerformanceTraceStage('settings');
   const settingsForDuplicate = getTrackerFlowMode(pending.userId) === 'lifetime'
     ? null : await getUserSettings(pending.userId);
   const present = await withBotRunSubmissionLock(pending.userId, async context => {
@@ -294,7 +297,6 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
       ...pending.runData,
     };
 
-    const payload = await buildSubmitPayload(userId, username, mergedSourceData, includeType, includeNotes);
     if (isLifetimeMode) {
       if (!await draftIsCurrent()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
       if (!await admitDispatch()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
@@ -307,11 +309,15 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         userId,
         username,
         uiMessages: ui.messages,
+        onSaved: () => { runSaved = true; context.setStage('render'); },
       });
       runSaved = true;
-      return async () => { try { await presentLifetime(); } catch (error) { await reportFailure(error); } };
+      return async (presentation: BotRunOperationContext) => { presentation.setStage('reply'); try { await presentLifetime(); } catch (error) { rememberPerformanceErrorStage(error); await reportFailure(error, presentation); } };
     }
 
+    context.setStage('validate');
+    const payload = await buildSubmitPayload(userId, username, mergedSourceData, includeType, includeNotes);
+    context.setStage('history');
     const history = await prepareBotRunUploadHistory(userId, { localFirst: true, onStage: context.setStage });
     if (!await draftIsCurrent()) return async () => { await showCurrentSubmissionReview(interaction, token, 'This review changed or expired. Please review it again.'); };
     context.setStage('duplicate-check');
@@ -412,24 +418,28 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
     })).catch(() => null);
     setShareableRun(userId, { run: shareableRun, runTypeCounts, screenshotUrl });
     await deletePendingRun(token);
-    return async () => {
+    return async (presentation: BotRunOperationContext) => {
       try {
+        presentation.setStage('settings');
         const hasScreenshot = Boolean(pending.screenshot?.url);
         const settings = await getUserSettings(userId, { localOnly: true }).catch(() => null);
 
         const sharedSettings = await getEffectiveUserSharedSettings(userId, { localOnly: settings?.cloudSyncEnabled === false }).catch(() => ({ runDeltaMode: 'disabled' as const }));
+        presentation.setStage('comparison');
         const deltaMode = sharedSettings.runDeltaMode ?? 'disabled';
         const runTypeForDelta = String(canonicalRunData.type ?? 'Farming').trim() || 'Farming';
         const deltaResult = (history.verified !== false || history.completeLocal === true) && deltaMode !== 'disabled' && allRunsArr.length > 1
           ? computeTrackerRunDeltaBaseline(allRunsArr, runTypeForDelta, deltaMode, undefined, { ...coverageSource, runId: resolvedRunId }) ?? undefined
           : undefined;
 
+        presentation.setStage('render');
         const embed = buildSubmissionResultEmbed({ data: coverageSource, isUpdate: shouldUpdateExistingRun, runTypeCounts, hasScreenshot, screenshotUrl, deltaResult });
         if (history.verified === false) embed.setFooter({ text: 'Offline fallback: counts and comparisons use saved history and pending runs; cloud changes are not verified.' });
 
         const shouldAttachChart = settings?.shareChart !== false;
         let chartAttachment = null;
         if (shouldAttachChart) {
+          presentation.setStage('chart');
           if (allRunsArr.length) {
             chartAttachment = await buildPerHourChartAttachment(
               allRunsArr,
@@ -439,7 +449,9 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         }
 
         if (chartAttachment) embed.setImage('attachment://per-hour-chart.png');
+        presentation.setStage('bind');
         const boundShareToken = await bindPreparedShareSource(preparedShareToken, userId, interaction);
+        presentation.setStage('reply');
         await interaction.editReply({ content: syncResult?.queuedForCloud ? 'Saved locally; queued for cloud sync.' : undefined, embeds: [embed], components: createSuccessButtons(boundShareToken), files: chartAttachment ? [chartAttachment] : [] });
 
         if (syncResult?.backgroundSync) {
@@ -454,6 +466,7 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
             });
         }
 
+        presentation.setStage('auto-share');
         await autoShareToConfiguredLogChannel({
           interaction,
           userId,
@@ -479,10 +492,12 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         }).catch(() => {});
 
       } catch (error) {
-        await reportFailure(error);
+        rememberPerformanceErrorStage(error);
+        await reportFailure(error, presentation);
       }
     };
   } catch (error) {
+    rememberPerformanceErrorStage(error);
     const failure = getKnownHistoryFailure(error);
     const transientHistory = failure && (['timeout', 'transport', 'busy'].includes(failure.cause)
       || (failure.cause === 'count_consistency' && ['main_page', 'main_count'].includes(failure.stage))
@@ -496,19 +511,24 @@ async function submitPendingRunLocked(interaction: ReviewInteraction, token: str
         await deletePendingRun(token).catch(() => {});
       }
     }
-    return async () => { await reportFailure(error); };
+    return async (presentation: BotRunOperationContext) => { presentation.setStage('diagnostic'); await reportFailure(error, presentation); };
   }
 
-  async function reportFailure(error: unknown) {
+  async function reportFailure(error: unknown, presentation?: BotRunOperationContext) {
+    presentation?.setStage('diagnostic');
     const historyFailure = !runSaved && !dispatchAdmitted && !dispatchStarted ? getKnownHistoryFailure(error) : undefined;
     await updatePasteDiagnostic(pending.pasteDiagnosticId, { result: runSaved ? 'saved' : 'failed', stage: 'submit',
       errorCode: runSaved ? 'presentation_error' : historyFailure ? 'history_unavailable' : 'internal_error',
       ...(historyFailure ? { historyFailure } : {}) });
     const wrapper = pending.pasteDiagnosticId ? new Error(`Paste submission failed (reference ${pending.pasteDiagnosticId}).`)
       : historyFailure ? new Error('Run history could not be verified.') : undefined;
+    if (wrapper) Object.defineProperty(wrapper, 'cause', { value: error });
     const safeError = historyFailure && wrapper ? copyKnownHistoryFailure(error, wrapper) : wrapper ?? error;
     if (historyFailure && safeError instanceof Error) Object.defineProperty(safeError, 'code', { value: 'history_unavailable', configurable: true });
-    await handleError({ client: interaction.client, user: interaction.user, error: safeError, context: 'dataSubmission', stage: historyFailure ? 'history' : 'submit' });
+    await handleError({ client: interaction.client, user: interaction.user, error: safeError, context: 'dataSubmission', stage: historyFailure ? 'history' : 'submit',
+      lifecycle: { runSaved, dispatchStarted, dispatchAdmitted, admissionAttempted } });
+    setPerformanceTraceStage('notice');
+    presentation?.setStage('notice');
     if (admissionAttempted && !dispatchAdmitted) {
       await showCurrentSubmissionReview(interaction, token, 'The submission could not start. Your input is retained until this session expires. Review it and select Submit or Retry again when storage is available.');
       return;

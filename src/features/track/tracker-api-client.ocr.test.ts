@@ -106,6 +106,7 @@ vi.mock('./shared/tracker-parity-core', () => ({
 import { parseBattleReportRunDataFromOcrLines } from '@tmrxjd/platform/parity'
 import { parseLifetimeTrackerOcrText } from '@tmrxjd/platform/tools'
 import { runOCR } from './tracker-api-client'
+import { logger } from '../../core/logger'
 
 function loadAttachment(fileName: string): { data: Buffer; filename: string; contentType: string } {
   // Minimal valid PNG header — OCR paths are mocked; bytes are not decoded in these tests.
@@ -253,7 +254,7 @@ describe('tracker-api-client OCR routing', () => {
   })
 
   it('falls back to local Gutenye OCR when cloud OCR is unavailable', async () => {
-    runDirectVisionOcrMock.mockRejectedValue(new Error('cloud unavailable'))
+    runDirectVisionOcrMock.mockRejectedValue(Object.assign(new Error('PRIVATE_OCR_REPORT_TOKEN_URL'), { status: 401 }))
     preprocessTrackerImageForOcrMock.mockResolvedValue(Buffer.from('preprocessed-image'))
     extractTrackerImageTextMock.mockResolvedValue({ textLines: battleReportLines })
     extractDateTimeFromImageMock.mockResolvedValue(null)
@@ -279,5 +280,8 @@ describe('tracker-api-client OCR routing', () => {
     expect(result.text).toEqual(battleReportLines)
     expect(preprocessTrackerImageForOcrMock).toHaveBeenCalledTimes(1)
     expect(extractTrackerImageTextMock).toHaveBeenCalledTimes(1)
+    const warning = vi.mocked(logger.warn).mock.calls.find(([message]) => message === 'cloud OCR unavailable; falling back to local OCR')
+    expect(warning?.[1]).toMatchObject({ operation: 'runOCR', stage: 'ocr-cloud', status: 401 })
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain('PRIVATE_')
   })
 })

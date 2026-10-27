@@ -2,6 +2,8 @@ import { safeErrorDiagnostic, type DiagnosticStage } from './safe-error-diagnost
 import { randomUUID } from 'node:crypto';
 import { Colors, EmbedBuilder } from 'discord.js';
 import { logger } from '../../../core/logger';
+import { markPerformanceFailure, performanceDiagnosticContext, performanceTraceIdentity } from '../../../core/performance-trace';
+import { diagnosticDelivery } from './diagnostic-delivery';
 
 const ERROR_LOG_CHANNEL_ID = process.env.ERROR_LOG_CHANNEL_ID ?? '1344016216087592960';
 interface ErrorContext {
@@ -12,6 +14,7 @@ interface ErrorContext {
   stage?: DiagnosticStage;
   ocrOutput?: unknown[] | null;
   attachmentUrl?: string | null;
+  lifecycle?: { runSaved: boolean; dispatchStarted: boolean; dispatchAdmitted: boolean; admissionAttempted: boolean };
 }
 function category(context: string): string {
   if (context.includes('import')) return 'import';
@@ -22,22 +25,22 @@ function category(context: string): string {
 }
 async function publishSafeDiagnostic(params: ErrorContext): Promise<void> {
   const incident = randomUUID();
+  markPerformanceFailure();
   const diagnostic = safeErrorDiagnostic(params.error, params.context, params.stage);
-  const rawStatus = diagnostic.code;
+  const rawStatus = diagnostic.status ?? diagnostic.code;
   const status = typeof rawStatus === 'number' && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : undefined;
-  const details = { incident, category: category(params.context), status, ocrLineCount: Array.isArray(params.ocrOutput) ? params.ocrOutput.length : 0, attachmentPresent: Boolean(params.attachmentUrl) };
+  const caughtAt = safeErrorDiagnostic(new Error(), params.context, params.stage).frames.filter(frame => !frame.includes('/error-handlers.')).slice(0, 3);
+  const lifecycle = params.lifecycle ? Object.fromEntries(['runSaved', 'dispatchStarted', 'dispatchAdmitted', 'admissionAttempted'].flatMap(key => {
+    const flag = params.lifecycle![key as keyof NonNullable<ErrorContext['lifecycle']>]; return typeof flag === 'boolean' ? [[key, flag]] : [];
+  })) : undefined;
+  const details = { incident, category: category(params.context), status, ...performanceDiagnosticContext(), caughtAt,
+    ...(lifecycle ? { lifecycle } : {}), ocrLineCount: Array.isArray(params.ocrOutput) ? Math.min(params.ocrOutput.length, 100_000) : 0, attachmentPresent: Boolean(params.attachmentUrl) };
   logger.error('Tracker operation failed; private report content omitted', { ...details, ...diagnostic });
   if (!ERROR_LOG_CHANNEL_ID) return;
-  try {
-    const channel = await params.client.channels.fetch(ERROR_LOG_CHANNEL_ID);
-    if (!channel || typeof channel !== 'object' || !('send' in channel) || typeof channel.send !== 'function') return;
-    const embed = new EmbedBuilder().setTitle('Tracker operation failed').setColor(Colors.DarkRed)
+  const embed = new EmbedBuilder().setTitle('Tracker operation failed').setColor(Colors.DarkRed)
       .setDescription(`Incident: ${incident}\nOperation: ${details.category}`)
       .setTimestamp();
-    await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
-  } catch {
-    logger.error('Tracker diagnostic delivery failed', { incident });
-  }
+  diagnosticDelivery.enqueue({ client: params.client, channelId: ERROR_LOG_CHANNEL_ID, embed, incident, correlation: performanceTraceIdentity() });
 }
 export async function handleError(params: ErrorContext): Promise<void> { await publishSafeDiagnostic(params); }
 export async function logError(client: ErrorContext['client'], user: ErrorContext['user'], error: unknown, context: string, ocrOutput: unknown[] | null = null, attachmentUrl: string | null = null, stage: DiagnosticStage = 'unknown'): Promise<void> {

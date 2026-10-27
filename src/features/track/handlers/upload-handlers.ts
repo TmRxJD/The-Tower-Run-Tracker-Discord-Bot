@@ -1,5 +1,7 @@
 import { TransientCache } from '../../../core/transient-cache';
 import { downloadBoundedBuffer } from '../../../core/bounded-download';
+import { performanceDiagnosticContext, setPerformanceTraceStage } from '../../../core/performance-trace';
+import { safeErrorDiagnostic } from './safe-error-diagnostic';
 import * as Discord from 'discord.js';
 import { beginPasteDiagnostic, updatePasteDiagnostic } from '../paste-diagnostics';
 import { reportPasteFailure, type PasteFailureContext } from './paste-failure-response';
@@ -608,6 +610,7 @@ export async function handleDirectAttachment(
   await interaction.editReply({ embeds: [createLoadingEmbed(uploadUi.processingScreenshot)], components: [] }).catch(() => {});
 
   try {
+    setPerformanceTraceStage('lookup');
     const imageBuffer = await downloadBoundedBuffer(attachment.url);
     const attachmentName = attachment.name ?? attachment.id ?? 'screenshot.png';
     const attachmentContentType = attachment.contentType ?? 'application/octet-stream';
@@ -618,6 +621,7 @@ export async function handleDirectAttachment(
         filename: attachmentName,
         contentType: attachmentContentType,
       });
+      setPerformanceTraceStage('parse');
       const ocrText = ocrResult.text.join('\n');
       const lifetimeData = parseLifetimeStatsFromOcrText(ocrText);
       if (!lifetimeData) {
@@ -656,6 +660,7 @@ export async function handleDirectAttachment(
       return;
     }
 
+    setPerformanceTraceStage('parse');
     applyAutoTournament(result.processedData, result.tierCandidates);
 
     const { timestamp, displayDate, displayTime } = deriveBattleDateInfoFromRun(result.processedData);
@@ -886,7 +891,7 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
           if (primed) {
             return primed;
           }
-          logger.warn('renderTrackMenu summary failed with no primed fallback', { userId, error });
+          logger.warn('renderTrackMenu summary failed with no primed fallback', { ...performanceDiagnosticContext(), ...safeErrorDiagnostic(error, 'render_track_menu', 'history') });
           throw error;
         });
 
@@ -938,11 +943,11 @@ export async function renderTrackMenu(interaction: TrackReplyInteractionLike, mo
     };
     if (interaction.replied || interaction.deferred) {
       await interaction.editReply(menuPayload).catch(error => {
-        logger.warn('renderTrackMenu editReply failed', error);
+        logger.warn('renderTrackMenu editReply failed', { ...performanceDiagnosticContext(), ...safeErrorDiagnostic(error, 'render_track_menu', 'reply') });
       });
     } else {
       await interaction.reply({ ...menuPayload, ephemeral: true }).catch(error => {
-        logger.warn('renderTrackMenu reply failed', error);
+        logger.warn('renderTrackMenu reply failed', { ...performanceDiagnosticContext(), ...safeErrorDiagnostic(error, 'render_track_menu', 'reply') });
       });
     }
 
