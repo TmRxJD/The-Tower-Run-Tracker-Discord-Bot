@@ -60,6 +60,7 @@ export async function submitLifetimePendingRun(params: {
   userId: string;
   username: string;
   uiMessages: LifetimeUiMessages;
+  onSaved?: () => void;
 }) {
   const payload = buildLifetimeEntryPayload(params.pending);
   const lifetimeResult = await saveLifetimeEntry({
@@ -67,6 +68,7 @@ export async function submitLifetimePendingRun(params: {
     username: params.username,
     ...payload,
   });
+  params.onSaved?.();
 
   const { embed, files } = buildLifetimeSubmissionArtifacts({
     pending: params.pending,

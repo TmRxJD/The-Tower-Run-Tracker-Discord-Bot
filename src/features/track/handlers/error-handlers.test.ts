@@ -1,13 +1,15 @@
 import { expect, it, vi } from 'vitest';
-const log = vi.hoisted(() => ({ error: vi.fn() }));
+const log = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }));
 vi.mock('../../../core/logger', () => ({ logger: log }));
 import { handleError, logError } from './error-handlers';
 import { resolve } from 'node:path';
+import { withBotRunSubmissionLock } from '../run-upload-history';
 it('correlates useful private-safe local diagnostics with a category/reference-only alert', async () => {
   log.error.mockClear(); const send = vi.fn().mockResolvedValue({});
   const error = Object.assign(new TypeError('PRIVATE_SECRET_FIXTURE'), { code: 50013 });
   error.stack = `TypeError: PRIVATE_SECRET_FIXTURE\n at PRIVATE_FUNCTION (${resolve(process.cwd(), 'src/features/track/handlers/share-handlers.ts')}:42:9)`;
   await handleError({ client: { channels: { fetch: async () => ({ send }) } }, error, context: 'track_menu_sharelast', stage: 'send' });
+  await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
   const details = log.error.mock.calls[0][1];
   expect(details).toMatchObject({ exceptionType: 'TypeError', code: 50013, operation: 'track_menu_sharelast', stage: 'send', frames: ['src/features/track/handlers/share-handlers.ts:42:9'] });
   const alert = JSON.stringify(send.mock.calls);
@@ -21,12 +23,28 @@ it.each(['handle', 'log'])('publishes only safe metadata through %s', async api 
   const user = { id: marker, tag: marker }; const ocr = [{ text: marker }]; const url = `https://example.invalid/${marker}`;
   if (api === 'handle') await handleError({ client, user, error, context: marker, ocrOutput: ocr, attachmentUrl: url });
   else await logError(client, user, error, marker, ocr, url);
+  await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
   expect(JSON.stringify(send.mock.calls)).not.toContain(marker); expect(JSON.stringify(log.error.mock.calls)).not.toContain(marker);
   const payload = send.mock.calls[0][0]; expect(payload.files).toBeUndefined(); expect(payload.allowedMentions.parse).toEqual([]);
 });
 it('does not leak delivery failures into local logs', async () => {
   log.error.mockClear(); await handleError({ client: { channels: { fetch: async () => { throw Error('PRIVATE_DELIVERY_SECRET'); } } }, error: Error('PRIVATE_ERROR_SECRET'), context: 'upload' });
+  await vi.waitFor(() => expect(log.error.mock.calls.some(([message]) => message === 'Tracker diagnostic delivery failed')).toBe(true));
   expect(JSON.stringify(log.error.mock.calls)).not.toContain('PRIVATE_');
+});
+it('does not hold the presentation lock while an internal Discord diagnostic stalls', async () => {
+  let release!: (channel: unknown) => void;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const fetch = vi.fn(() => blocked), send = vi.fn().mockResolvedValue({});
+  const first = withBotRunSubmissionLock('diagnostic-fixture:presentation', async () => {
+    await handleError({ client: { channels: { fetch } }, error: new Error('PRIVATE_REPORT'), context: 'dataSubmission', stage: 'submit' });
+  }, 'presentation');
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+  let entered = false;
+  const second = withBotRunSubmissionLock('diagnostic-fixture:presentation', async () => { entered = true; }, 'presentation');
+  try { await vi.waitFor(() => expect(entered).toBe(true), { timeout: 200 }); }
+  finally { release({ send }); await Promise.all([first, second]); }
+  await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
 });
 
 it('logs only registered safe history correlation while external alerts remain category-only', async () => {
@@ -35,6 +53,7 @@ it('logs only registered safe history correlation while external alerts remain c
   const error = historyFailureError('PRIVATE_CLOUD_BODY', 'count_consistency', 'main_page');
   const historyFailure = readHistoryFailure(error);
   await handleError({ client: { channels: { fetch: async () => ({ send }) } }, error, context: 'dataSubmission', stage: 'history' });
+  await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
   expect(log.error.mock.calls[0][1]).toMatchObject({ operation: 'dataSubmission', stage: 'history', historyFailure });
   expect(JSON.stringify(log.error.mock.calls)).not.toContain('PRIVATE_CLOUD_BODY');
   expect(JSON.stringify(send.mock.calls)).not.toContain(historyFailure.correlation);

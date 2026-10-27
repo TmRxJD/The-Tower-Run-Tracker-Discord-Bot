@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ history: vi.fn(), runs: vi.fn(), snapshot: vi.fn(), settings: vi.fn(), sharedSettings: vi.fn(), checkpoint: vi.fn() }));
+const perfLog = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() }));
+vi.mock('../../../core/logger', () => ({ logger: perfLog }));
 vi.mock('../share/prepared-share-inputs', async original => ({ ...await original<object>(), capturePreparedShareCheckpoint: mocks.checkpoint }));
 vi.mock('../run-upload-history', () => ({ prepareBotRunUploadHistory: mocks.history, withBotRunSubmissionLock: async (_user: string, action: (context: { setStage: () => void }) => Promise<unknown>) => action({ setStage: vi.fn() }) }));
 vi.mock('../tracker-api-client', async importOriginal => ({ ...await importOriginal<object>(), getUserSettings: mocks.settings }));
@@ -41,6 +43,7 @@ it('shares a complete prepared invocation repeatedly with zero additional histor
   expect(mocks.settings.mock.calls.some(([, options]) => options?.localOnly === false)).toBe(true);
   expect(mocks.snapshot.mock.calls.at(-1)?.[0]).toMatchObject({ runTypeCounts: { Farming: 132 }, historyCapturedAt: expect.any(Number) });
   expect(owner.channel.send.mock.calls[0][0].embed.data.footer.text).toBe(getTrackUiConfig().share.footer);
+  expect(perfLog.warn.mock.calls.filter(([message]) => message === '[perf] share.operation').at(-1)?.[1]).toMatchObject({ outcome: 'sent', preparedReason: 'hit' });
 });
 it('keeps the prepared result available after a known Discord send failure', async () => {
   const owner = preparedInteraction(); owner.channel.send.mockRejectedValueOnce(new Error('fixture failure'));
@@ -51,12 +54,14 @@ it('rejects a copied prepared token on another message before settings or public
   const owner = preparedInteraction(); owner.message.id = 'copied-message';
   await handleTrackMenuShareLast(owner as never);
   expect(mocks.settings).not.toHaveBeenCalled(); expect(owner.channel.send).not.toHaveBeenCalled();
+  expect(perfLog.warn.mock.calls.filter(([message]) => message === '[perf] share.operation').at(-1)?.[1]).toMatchObject({ noSendReason: 'prepared_rejected', preparedReason: 'message_mismatch', preparedPhase: 'initial' });
 });
 it('rechecks observed changes immediately before public delivery', async () => {
   const owner = preparedInteraction(); mocks.checkpoint.mockResolvedValueOnce('unchanged').mockResolvedValue('changed');
   await handleTrackMenuShareLast(owner as never);
   expect(owner.channel.send).not.toHaveBeenCalled(); expect(mocks.history).not.toHaveBeenCalled();
   expect(owner.followUp.mock.calls.at(-1)?.[0].content).toContain('changed');
+  expect(perfLog.warn.mock.calls.filter(([message]) => message === '[perf] share.operation').at(-1)?.[1]).toMatchObject({ noSendReason: 'prepared_changed_before_send', preparedReason: 'checkpoint_changed', preparedPhase: 'pre_send' });
 });
 it('honors a fresh cloud disclosure change without re-reading prepared history', async () => {
   const owner = preparedInteraction(rows.map((row, i) => i ? row : { ...row, notes: 'PRIVATE_PREPARED_NOTE' }));
@@ -69,6 +74,17 @@ it('rejects an invocation when the active upload profile changed', async () => {
   const owner = preparedInteraction(); setPendingUploadProfile('share-owner', 'alt');
   await handleTrackMenuShareLast(owner as never);
   expect(owner.channel.send).not.toHaveBeenCalled(); expect(mocks.settings).not.toHaveBeenCalled();
+});
+it('identifies an unavailable prepared cache and malformed token without fresh reads or public output', async () => {
+  const owner = preparedInteraction(); clearPreparedShareHistory();
+  await handleTrackMenuShareLast(owner as never);
+  expect(perfLog.warn.mock.calls.filter(([message]) => message === '[perf] share.operation').at(-1)?.[1]).toMatchObject({ outcome: 'no-send', noSendReason: 'prepared_rejected', preparedReason: 'missing' });
+  owner.customId = TRACKER_IDS.flow.preparedSharePrefix;
+  await handleTrackMenuShareLast(owner as never);
+  expect(perfLog.warn.mock.calls.filter(([message]) => message === '[perf] share.operation').at(-1)?.[1]).toMatchObject({ noSendReason: 'invalid_prepared_token' });
+  expect(owner.channel.send).not.toHaveBeenCalled(); expect(mocks.history).not.toHaveBeenCalled(); expect(mocks.settings).not.toHaveBeenCalled();
+  const telemetry = JSON.stringify(perfLog.warn.mock.calls);
+  expect(telemetry).not.toContain(owner.user.id); expect(telemetry).not.toContain('source-result');
 });
 describe('verified share history', () => {
   it('refreshes stale #1 while preserving an older selected run and repeated share semantics', async () => {

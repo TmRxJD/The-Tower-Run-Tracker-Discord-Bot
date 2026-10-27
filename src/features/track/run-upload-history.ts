@@ -8,18 +8,21 @@ import { getPermanentlyDeletedRunIds } from './run-deletion-tombstones';
 import { loadBotCompleteRunCloudDocuments } from './run-cloud-pair-client';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { logger } from '../../core/logger';
-import { measurePerformanceSpan, performanceTraceIdentity } from '../../core/performance-trace';
+import { ensurePerformanceTrace, measurePerformanceSpan, performanceTraceIdentity, rememberPerformanceErrorStage, setPerformanceTraceStage } from '../../core/performance-trace';
 import { annotateHistoryFailure, historyFailureError, readHistoryFailure, getKnownHistoryFailure, type HistoryFailureStage } from './history-failure-diagnostic';
 const diagnosticSalt = randomBytes(32);
 
 // Bot interaction coordination only; parsing, hydration and reference semantics remain shared.
 const tails = new Map<string, Promise<void>>();
 type LockOperation = 'submission' | 'upload-history' | 'share-history' | 'share-prepare' | 'presentation';
-type OperationStage = 'action' | 'settings' | 'cloud-history' | 'local-history' | 'hydration' | 'duplicate-check' | 'save' | 'saved-state';
+type OperationStage = 'action' | 'settings' | 'history' | 'cloud-history' | 'local-history' | 'hydration' | 'duplicate-check' | 'save' | 'saved-state' | 'validate' | 'render' | 'comparison' | 'chart' | 'bind' | 'reply' | 'auto-share' | 'diagnostic' | 'notice';
 export type BotRunOperationContext = { setStage: (stage: OperationStage) => void };
 const owners = new Map<string, { operation: LockOperation; started: number; stage: OperationStage }>();
 export async function withBotRunSubmissionLock<T>(userId: string, action: (context: BotRunOperationContext) => Promise<T>,
   operation: LockOperation = 'submission'): Promise<T> {
+  return ensurePerformanceTrace(() => runWithSubmissionLock(userId, action, operation));
+}
+async function runWithSubmissionLock<T>(userId: string, action: (context: BotRunOperationContext) => Promise<T>, operation: LockOperation): Promise<T> {
   const previous = tails.get(userId) ?? Promise.resolve();
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -42,14 +45,17 @@ export async function withBotRunSubmissionLock<T>(userId: string, action: (conte
     acquiredAt = performance.now();
     stageStarted = acquiredAt;
     const owner = { operation, started: Date.now(), stage: 'action' as OperationStage };
+    setPerformanceTraceStage('action');
     owners.set(userId, owner);
     slowTimer = setTimeout(() => logger.warn('Run operation lock held', {
+      ...performanceTraceIdentity(),
       scope: createHmac('sha256', diagnosticSalt).update(userId).digest('hex').slice(0, 16),
       operation, stage: owner.stage, elapsedMs: Date.now() - owner.started,
     }), 30_000);
-    return await action({ setStage: stage => { finishStage(); currentStage = stage; stageStarted = performance.now(); owner.stage = stage; } });
+    return await action({ setStage: stage => { finishStage(); currentStage = stage; stageStarted = performance.now(); owner.stage = stage; setPerformanceTraceStage(stage); } });
   }
   catch (error) {
+    rememberPerformanceErrorStage(error);
     if (!acquired) {
       const owner = owners.get(userId);
       logger.warn('Run operation lock wait failed', {

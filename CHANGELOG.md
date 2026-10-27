@@ -1,3 +1,9 @@
+## 2026-10-27 - Route lifetime submissions correctly and diagnose failures privately
+
+- Route lifetime statistics through their existing lifetime save path before battle-report validation; retain strict battle-report admission and write safeguards.
+- Keep internal Discord diagnostic delivery off the ordered user-response path with two in-flight requests and 32 queued alerts. Slow requests retain their slots, with no retries or run-queue replay.
+- Add bounded operation/PID/session correlation, precise presentation stages, safe original-cause/HTTP/validation-shape metadata and explicit Share guard return reasons. Keep report/image/token values out of new diagnostics and preserve snapshot history reuse, privacy, invalidation and existing visible copy. See docs/FAILURE-DIAGNOSTICS-2026-10-27.md for evidence and historical limits.
+
 ## 2026-10-24 - Reduce fresh Share history round trips
 
 - Reuse complete history captured by the submitted result or prepared at menu invocation. Bind the button to its owner, message, profile and selected run for an absolute five minutes; reject expired/changed state, and check current disclosure settings before publication. Retain capture time and original chart in durable shared versions. See docs/SHARE-INVOCATIONS.md for the October 1 regression, freshness semantics, byte limits, invalidation and verification.

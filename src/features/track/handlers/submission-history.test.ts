@@ -12,7 +12,7 @@ vi.mock('./review-interaction-helpers', async importOriginal => ({ ...await impo
   resolveOwnedPendingInteraction: async (interaction: { customId: string }) => {
     const token = interaction.customId.startsWith('tracker_accept:') ? interaction.customId.split(':')[1] : interaction.customId; const pending = await mocks.pending(token); return pending ? { token, pending } : null;
   } }));
-vi.mock('../ui/tracker-submission-embeds', () => ({ buildSubmissionResultEmbed: mocks.render }));
+vi.mock('../ui/tracker-submission-embeds', async original => ({ ...await original<object>(), buildSubmissionResultEmbed: mocks.render }));
 vi.mock('../share/auto-log-channel-share', () => ({ autoShareToConfiguredLogChannel: mocks.autoShare }));
 vi.mock('./error-handlers', () => ({ handleError: vi.fn() }));
 vi.mock('../../../services/user-shared-settings-db', () => ({ getEffectiveUserSharedSettings: async () => ({ runDeltaMode: 'disabled' }) }));
@@ -46,6 +46,43 @@ beforeEach(() => {
   mocks.edit.mockResolvedValue({ localId: 'new-local' });
 });
 describe('actual submission history integration', () => {
+  it('routes real lifetime statistics to lifetime persistence without requiring battle-report fields', async () => {
+    setTrackerFlowMode('submit-owner', 'lifetime');
+    const record = pending.get('a')!;
+    record.flowMode = 'lifetime';
+    record.runData = { gameStarted: '2023-08-30', coinsEarned: '5.67s', cashEarned: '26.14q', stonesEarned: '165493', date: '2026-10-27' };
+    mocks.lifetime.mockResolvedValue({ allEntries: [record.runData] });
+    const owner = interaction('a');
+    await handleDataSubmission(owner as never);
+    expect(mocks.lifetime).toHaveBeenCalledOnce();
+    expect(mocks.lifetime.mock.calls[0][0].entryData).toMatchObject(record.runData as Record<string, unknown>);
+    expect(mocks.log).not.toHaveBeenCalled(); expect(mocks.edit).not.toHaveBeenCalled();
+    expect(mocks.history).not.toHaveBeenCalled(); expect(pending.has('a')).toBe(false);
+    const { handleError } = await import('./error-handlers.js');
+    expect(handleError).not.toHaveBeenCalled();
+    expect(owner.editReply.mock.calls.at(-1)?.[0].components.length).toBeGreaterThan(0);
+  });
+  it('still rejects a battle submission without its required battle fields before any write', async () => {
+    pending.get('a')!.runData = { coinsEarned: '5.67s', gameStarted: '2023-08-30' };
+    await handleDataSubmission(interaction('a') as never);
+    expect(mocks.lifetime).not.toHaveBeenCalled(); expect(mocks.log).not.toHaveBeenCalled(); expect(mocks.edit).not.toHaveBeenCalled();
+    expect(mocks.history).not.toHaveBeenCalled();
+  });
+  it('retains already-saved lifetime classification if result rendering fails after persistence', async () => {
+    setTrackerFlowMode('submit-owner', 'lifetime');
+    pending.get('a')!.flowMode = 'lifetime';
+    pending.get('a')!.runData = { coinsEarned: '5.67s', date: '2026-10-27' };
+    const ui = await import('../ui/tracker-submission-embeds.js');
+    const render = vi.spyOn(ui, 'buildLifetimeSubmissionResultEmbed').mockImplementationOnce(() => { throw new Error('PRIVATE_LIFETIME_RENDER'); });
+    const { handleError } = await import('./error-handlers.js');
+    const owner = interaction('a');
+    try { await handleDataSubmission(owner as never); }
+    finally { render.mockRestore(); }
+    expect(mocks.lifetime).toHaveBeenCalledOnce();
+    expect(vi.mocked(handleError).mock.calls.at(-1)?.[0].lifecycle).toMatchObject({ runSaved: true, dispatchStarted: true, dispatchAdmitted: true });
+    expect(owner.editReply.mock.calls.at(-1)?.[0].content).toContain('was saved');
+    expect(JSON.stringify(owner.editReply.mock.calls)).not.toContain('PRIVATE_');
+  });
   it('does not replace a saved response with loading when a repeated Submit acknowledgement arrives late', async () => {
     let finish!: () => void;
     const blocked = new Promise<void>(resolve => { finish = resolve; });
@@ -216,7 +253,8 @@ it('does not classify an unregistered submission exception as a history failure'
   await handleDataSubmission(interaction('a') as never);
   expect(mocks.diagnostic).toHaveBeenCalledWith('fixture-reference', { result: 'failed', stage: 'submit', errorCode: 'internal_error' });
   const diagnostic = vi.mocked(handleError).mock.calls.at(-1)![0];
-  expect(safeErrorDiagnostic(diagnostic.error, diagnostic.context, diagnostic.stage)).toMatchObject({ operation: 'dataSubmission', stage: 'submit' });
+  // The failing call site is known to be history preparation; its unregistered cause is still not trusted.
+  expect(safeErrorDiagnostic(diagnostic.error, diagnostic.context, diagnostic.stage)).toMatchObject({ operation: 'dataSubmission', stage: 'history' });
   expect(safeErrorDiagnostic(diagnostic.error, diagnostic.context, diagnostic.stage)).not.toHaveProperty('historyFailure');
 });
 it('preserves already-saved classification when presentation throws a registered history error', async () => {

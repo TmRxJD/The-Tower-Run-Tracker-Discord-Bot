@@ -87,7 +87,8 @@ describe('interaction router', () => {
     await fire(interaction);
 
     expect(interaction.reply).not.toHaveBeenCalled();
-    expect(recordDiagnostic).toHaveBeenCalledWith('interaction.dropped', expect.objectContaining({ customId: 'tracker:old-menu' }));
+    expect(recordDiagnostic).toHaveBeenCalledWith('interaction.dropped', expect.objectContaining({ customIdPresent: true, operationId: expect.any(String), pid: process.pid }));
+    expect(JSON.stringify(vi.mocked(recordDiagnostic).mock.calls)).not.toContain('tracker:old-menu');
   });
 
   it('does not reply on top of a handler that already answered', async () => {
