@@ -1,3 +1,8 @@
+## 2026-11-05 - Preserve prepared Share after cloud identity acknowledgement
+
+- Keep a newly uploaded run's prepared Share valid when deferred cloud replay assigns its first cloud ID to the same durable local run with unchanged captured content. Continue rejecting changed content, known cloud identities, membership, pending intent, tombstones, profile/mode/message bindings and expired tokens.
+- Cover the real durable save/replay path and the generated upload-result Share button, including complete history reuse without another history request. Deployment remains Git push, exact runner pull and guarded activation only.
+
 ## 2026-10-27 - Route lifetime submissions correctly and diagnose failures privately
 
 - Route lifetime statistics through their existing lifetime save path before battle-report validation; retain strict battle-report admission and write safeguards.

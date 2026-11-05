@@ -96,6 +96,8 @@ import { getOriginalRunTarget } from './run-local-provenance';
 import { restoreLocalOnlyRuns, LOCAL_ONLY_BACKUP_KEY_PREFIX } from '../../rxdb/local-only-backup';
 import * as kv from '../../services/idb';
 import { createDiscordSaveImportPort } from './import/save-import-port';
+import { capturePreparedShareCheckpoint } from './share/prepared-share-inputs';
+import { prepareShareHistory, resolvePreparedShareHistory } from './share/prepared-share';
 const complete = { tier: '5', wave: '321', totalCoins: '2B', totalCells: '3K', totalDice: 0, roundDuration: '1h', runDate: '2026-10-02', runTime: '10:00:00' };
 const main = new Map<string, Record<string, unknown>>();
 beforeAll(() => { const dir=join(tmpdir(), 'tracker-offline-acceptance-'+Date.now()); mkdirSync(dir,{recursive:true});process.env.TRACKER_BOT_DATA_DIR=dir; });
@@ -194,6 +196,31 @@ it('resolves a matching website report before writing and persists that identity
   expect([...main.keys()]).toEqual(['website-existing']);
   expect(await getQueueItems(userId)).toHaveLength(0);
   expect((await getLocalRuns(userId))[0].runId).toBe('website-existing');
+});
+
+it('keeps the actual durable upload Share usable after deferred cloud replay assigns its ID', async () => {
+  const userId = 'fixture-share-ack';
+  await updateLocalSettings(userId, { cloudSyncEnabled: true });
+  let recover!: (rows: object[]) => void;
+  historyMock.mockImplementationOnce(() => new Promise(resolve => { recover = resolve; }));
+  const accepted = await logRun({ userId, username: 'fixture', uploadProfileId: null,
+    runData: { ...complete, localId: 'share-ack-local' }, deferCloudSync: true });
+  await vi.waitFor(() => expect(historyMock).toHaveBeenCalled());
+  const runs = await getLocalRuns(userId);
+  expect(runs).toHaveLength(1);
+  expect(runs[0].runId).toBeUndefined();
+  const token = prepareShareHistory({ userId, messageId: 'result', mode: 'track',
+    checkpoint: await capturePreparedShareCheckpoint(userId),
+    history: { runs, selectedRun: runs[0], verified: true, completeLocal: true, capturedAt: Date.now() } })!;
+  recover([]);
+  await accepted.backgroundSync;
+  expect(await getQueueItems(userId)).toHaveLength(0);
+  const after = await getLocalRuns(userId);
+  expect(after).toHaveLength(1);
+  expect(after[0].runId).toBeTruthy();
+  expect(after[0].localId).toBe(runs[0].localId);
+  expect(await resolvePreparedShareHistory({ token, userId, messageId: 'result', mode: 'track',
+    checkpoint: () => capturePreparedShareCheckpoint(userId) })).not.toBeNull();
 });
 it('does not acknowledge a cloud-enabled submission when the durable queue write fails', async () => {
   const userId = 'fixture-queue-disk-failure'; await updateLocalSettings(userId, { cloudSyncEnabled: true });

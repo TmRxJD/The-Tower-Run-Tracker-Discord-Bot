@@ -93,3 +93,29 @@ it('invalidates a newly observed revision contradicting the capture even when it
   expect(await resolve(token,{checkpoint:async()=>preparedShareCheckpoint([captured],[],[],true)})).not.toBeNull();
   expect(await resolve(token,{checkpoint:async()=>preparedShareCheckpoint([{...old,updatedAt:3}],[],[],true)})).toBeNull();
 });
+
+it('retains a fresh upload after cloud acknowledgement assigns its first run ID', async () => {
+  const local = { localId: 'durable-draft', runDate: '2026-11-05', runTime: '14:34:00', wave: '3906', updatedAt: 1 };
+  const acknowledged = { ...local, runId: 'cloud-run', updatedAt: 2 };
+  const token = prepareShareHistory({ ...input(), checkpoint: preparedShareCheckpoint([local], [], [], true),
+    history: { ...input().history, runs: [local], selectedRun: local } })!;
+  expect(await resolve(token, { checkpoint: async () => preparedShareCheckpoint([acknowledged], [], [], true) })).not.toBeNull();
+});
+
+it.each([
+  { localId: 'different-draft' }, { wave: '3907' }, { profileId: 'alt' },
+  { notes: 'new note' }, { screenshotUrl: 'new-image' },
+])('rejects acknowledgement accompanied by changed identity or content %j', async patch => {
+  const local = { localId: 'durable-draft', runDate: '2026-11-05', wave: '3906', updatedAt: 1 };
+  const token = prepareShareHistory({ ...input(), checkpoint: preparedShareCheckpoint([local], [], [], true),
+    history: { ...input().history, runs: [local], selectedRun: local } })!;
+  expect(await resolve(token, { checkpoint: async () => preparedShareCheckpoint([{ ...local, runId: 'cloud-run', updatedAt: 2, ...patch }], [], [], true) })).toBeNull();
+});
+
+it('rejects replacement of an already assigned cloud identity and extra duplicate rows', async () => {
+  const row = { localId: 'durable-draft', runId: 'original-cloud', runDate: '2026-11-05', wave: '3906' };
+  const makeToken = () => prepareShareHistory({ ...input(), checkpoint: preparedShareCheckpoint([row], [], [], true),
+    history: { ...input().history, runs: [row], selectedRun: row } })!;
+  expect(await resolve(makeToken(), { checkpoint: async () => preparedShareCheckpoint([{ ...row, runId: 'other-cloud' }], [], [], true) })).toBeNull();
+  expect(await resolve(makeToken(), { checkpoint: async () => preparedShareCheckpoint([row, row], [], [], true) })).toBeNull();
+});

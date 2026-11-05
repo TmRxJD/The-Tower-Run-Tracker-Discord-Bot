@@ -75,17 +75,19 @@ export function preparedShareCheckpoint(runs: readonly Record<string, unknown>[]
   const normalized = runs.map((run, index) => {
     const runDate = run.runDate ?? run.date;
     const hasRunDate = typeof runDate === 'string' && Number.isFinite(Date.parse(`${runDate} ${run.runTime ?? run.time ?? ''}`.trim()));
-    const value = Object.fromEntries(Object.entries(run).filter(([key]) => !key.startsWith('$') && !['_rev', '_meta', 'updatedAtEpoch'].includes(key)
-      && !(hasRunDate && ['updatedAt', 'createdAt'].includes(key)) && !(run.runId && key === 'localId')));
+    // Identity is checked separately: assigning a cloud ID to a durable local row
+    // does not edit its display, but changing an already assigned ID is significant.
+    const value = Object.fromEntries(Object.entries(run).filter(([key]) => !key.startsWith('$') && !['_rev', '_meta', 'updatedAtEpoch', 'runId', 'localId', 'id'].includes(key)
+      && !(hasRunDate && ['updatedAt', 'createdAt'].includes(key))));
     const ref = buildTrackerResolvedRunReference({ runId: run.runId, localId: run.localId, fallbackRunId: run.id ?? run.$id });
     return [ref.runId ?? ref.localId ?? `unknown-${index}`, createHash('sha256').update(JSON.stringify(stable(value))).digest('hex'),
-      String(run.$updatedAt ?? run.updatedAtEpoch ?? run.updatedAt ?? '')];
+      String(run.$updatedAt ?? run.updatedAtEpoch ?? run.updatedAt ?? ''), ref.localId ?? '', ref.runId ?? ''];
   }).sort(([a, ah], [b, bh]) => a.localeCompare(b) || ah.localeCompare(bh));
   return JSON.stringify({ rows: normalized, queue: createHash('sha256').update(JSON.stringify(stable(queue))).digest('hex'),
     deleted: [...tombstones].sort(), cloudEnabled });
 }
-/** Filling an empty/partial mirror from this already captured observation is not a mutation.
- * Never accept a new identity/content absent from both checkpoints, or any vanished prior row. */
+/** Hydration and first cloud-ID acknowledgement are not display mutations.
+ * Require a captured identity or its durable local alias; reject vanished rows and new content. */
 function permitsCapturedHydration(beforeText: string, currentText: string, captured: Record<string, unknown>[]): boolean {
   try {
     type Checkpoint = { rows: string[][]; queue: string; deleted: string[]; cloudEnabled?: boolean };
@@ -93,6 +95,19 @@ function permitsCapturedHydration(beforeText: string, currentText: string, captu
     const expected = JSON.parse(preparedShareCheckpoint(captured, [], [])) as Checkpoint;
     if (!Array.isArray(before.rows) || !Array.isArray(current.rows) || before.queue !== current.queue
       || JSON.stringify(before.deleted) !== JSON.stringify(current.deleted) || before.cloudEnabled !== current.cloudEnabled) return false;
+    // Only the first cloud acknowledgement may bridge identities, using the exact
+    // durable local ID present at capture. Never infer identity from equal metrics.
+    const localRows = new Map<string, string[][]>();
+    for (const row of [...before.rows, ...expected.rows]) {
+      const localId = row[3];
+      if (localId) localRows.set(localId, [...(localRows.get(localId) ?? []), row]);
+    }
+    current.rows = current.rows.map(row => {
+      const sources = localRows.get(row[3]) ?? [];
+      if (!row[4] || !sources.length || sources.some(source => source[4])) return row;
+      const ids = new Set(sources.map(source => source[0]));
+      return ids.size === 1 ? [sources[0][0], ...row.slice(1)] : row;
+    });
     const prior = new Map<string, Set<string>>(), expectedValues = new Map<string, Set<string>>();
     const counts = (rows: string[][]) => { const result = new Map<string, number>(); for (const [id] of rows) result.set(id, (result.get(id) ?? 0) + 1); return result; };
     for (const [id, hash, revision = ''] of before.rows) { const values = prior.get(id) ?? new Set<string>(); values.add(`${hash}:${revision}`); prior.set(id, values); }

@@ -116,6 +116,27 @@ it('reuses the actual submitted-result invocation through its generated Share bu
     method:'Actual parse/review/submit/generated-button and Share handler; isolated SDK adapter adds 300 ms per fresh request, Discord and settings mocked.' },null,2));
 });
 
+it('shares the actual generated upload button after deferred cloud identity acknowledgement', async () => {
+  io.save.mockImplementation(async (input: { runData: Row }) => {
+    local.push({ ...input.runData, userId: 'fixture-owner', localId: 'durable-new' });
+    return { localId: 'durable-new', queuedForCloud: true };
+  });
+  const owner = { ...interaction(), message: { id: 'deferred-result', components: [] } };
+  await handleDirectTextPaste(owner as never, 'Battle Report\nBattle Date\tOct 14, 2026 01:00\nTier\t22\nWave\t2000\nReal Time\t1h 0m 0s\nCoins earned\t100\nCells Earned\t10\nReroll Shards Earned\t1\nTotal Enemies\t1000', null, null, 'Farming', 'track');
+  await handleDataSubmission(owner as never);
+  const payload = owner.editReply.mock.calls.at(-1)?.[0] as { components: Array<{ components: Array<{ toJSON: () => { custom_id?: string } }> }> };
+  const id = payload.components.flatMap(row => row.components.map(button => button.toJSON().custom_id ?? '')).find(value => value.startsWith(TRACKER_IDS.flow.preparedSharePrefix));
+  expect(id).toBeTruthy(); owner.customId = id!;
+  const saved = local.find(row => row.localId === 'durable-new')!;
+  saved.runId = 'cloud-new';
+  const callsBefore = io.list.mock.calls.length;
+  await handleTrackMenuShareLast(owner as never);
+  expect(io.errors).not.toHaveBeenCalled();
+  expect(owner.channel.send).toHaveBeenCalledOnce();
+  expect(io.list.mock.calls.length).toBe(callsBefore);
+  expect(io.snapshot.mock.calls.at(-1)?.[0].runTypeCounts).toEqual({ Farming: 1361 });
+});
+
 it('prepares a menu invocation once and rejects its old token after a process-cache restart', async () => {
   const owner = { ...interaction(), message: { id: 'menu-source', components: [] } };
   await renderTrackMenu(owner as never, 'track');
