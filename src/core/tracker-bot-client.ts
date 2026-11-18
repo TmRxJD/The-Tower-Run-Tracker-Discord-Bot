@@ -1,3 +1,4 @@
+import { installDiscordRestDiagnostics } from './discord-rest-diagnostics';
 import type { ClientOptions } from 'discord.js';
 import { Client } from 'discord.js';
 import { recordDiagnostic } from './diagnostics';
@@ -16,6 +17,7 @@ export class TrackerBotClient extends Client {
   constructor(options: ClientOptions, appConfig: AppConfig) {
     super(options);
     this.appConfig = appConfig;
+    installDiscordRestDiagnostics(this.rest);
     // Omit routes, URLs, bucket hashes and major parameters (including webhook tokens).
     this.rest.on('rateLimited', info => recordDiagnostic('discord.rest.rate_limit', {
       ...performanceTraceIdentity(),

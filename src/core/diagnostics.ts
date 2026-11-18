@@ -14,6 +14,7 @@ import { logger } from './logger';
 export type DiagnosticEvent =
   /** Discord REST queued a request behind a rate limit; contains no route or token. */
   | 'discord.rest.rate_limit'
+  | 'discord.rest.request'
   /** An interaction was acknowledged (or failed to be) - carries how old it already was. */
   | 'interaction.ack'
   /** A component interaction matched no handler and was dropped without acknowledgement. */

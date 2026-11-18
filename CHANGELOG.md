@@ -211,3 +211,7 @@
 
 
 - Preserve existing machine-local package credentials/configuration byte-for-byte while excluding them from versioned source; retain a safe `.npmrc.example`. This enables the strict runner source gate without changing authentication or runtime lookup.
+
+## Unreleased - Discord REST latency diagnostics
+
+- Add bounded, sanitized REST request timing for slow/failing calls, retries and rate-limit waits, correlated with existing operation IDs. Separate preparation/initial queue wait from HTTP-attempt time and remaining response/body/backoff time; record status codes and allowlisted network errors only. Do not log routes, tokens, headers, bodies or Discord identifiers. No retry/timeout/deployment behavior changes.
