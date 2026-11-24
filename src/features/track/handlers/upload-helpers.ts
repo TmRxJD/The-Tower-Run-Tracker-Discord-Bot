@@ -1,5 +1,6 @@
+import { readTrackerRunCoveragePercentage } from '@tmrxjd/platform/tools';
 import { IncompleteRunReportError } from './paste-input-error';
-import { normalizeOcrReportMetric, normalizeReportMetric, readCoverageCount } from '../shared/report-number';
+import { normalizeOcrReportMetric, normalizeReportMetric } from '../shared/report-number';
 import { parseBattleReportRunData } from '@tmrxjd/platform/parity';
 import {
   TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS,
@@ -457,45 +458,6 @@ export function generateCoverageDescription(
   },
 ): string {
   if (!runData) return '';
-  const rawFields = runData.rawParseFields && typeof runData.rawParseFields === 'object'
-    ? runData.rawParseFields as Record<string, unknown> : {};
-  const totalEnemies = readCoverageCount(runData['Total Enemies'] ?? runData.totalEnemies ?? rawFields.totalEnemies) ?? 0;
-  const hasValidTotalEnemies = Number.isFinite(totalEnemies) && totalEnemies > 0;
-  if (!hasValidTotalEnemies) return '';
-
-  const getVal = (key: unknown) => readCoverageCount(key) ?? 0;
-  const killsWithGoldenTower = getVal(runData['Golden Tower'] ?? runData.killsWithGoldenTower);
-  const enemiesHitByBlackHole = getVal(
-    runData['Enemies Hit By Black Hole'] ??
-      runData.enemiesHitByBlackHole,
-  );
-  const enemiesHitByOrbs = getVal(
-    runData['Enemies Hit by Orbs'] ??
-      runData.enemiesHitByOrbs,
-  );
-  // The game reports Orbs and Black Hole coverage from the "Killed With Effect Active"
-  // rows, which differ from the "Enemies Hit By" rows. Fall back to hits only for older
-  // runs that predate the kill-tagged fields — presence decides, not magnitude, so a
-  // genuine zero stays zero here exactly as it does in the platform's delta extractor.
-  const correctedOrbs = readCoverageCount(runData.killsWithOrbs) ?? readCoverageCount(rawFields.killsWithOrbs);
-  const orbsCoverage = correctedOrbs ?? enemiesHitByOrbs;
-  const correctedBlackHole = readCoverageCount(runData.killsWithBlackHole) ?? readCoverageCount(rawFields.killsWithBlackHole);
-  const blackHoleCoverage = correctedBlackHole ?? enemiesHitByBlackHole;
-  const taggedByDeathWave = getVal(runData['Tagged by Death Wave'] ?? runData.taggedByDeathWave);
-  const destroyedInSpotlight = getVal(runData['Destroyed in Spotlight'] ?? runData.destroyedInSpotlight);
-  const destroyedInGoldenBot = getVal(runData['Destroyed in Golden Bot'] ?? runData.destroyedInGoldenBot);
-  const killsWithAmplifyBot = getVal(runData['Amplify Bot'] ?? runData.killsWithAmplifyBot);
-  const summonedEnemies = getVal(
-    runData['Summoned enemies'] ??
-      runData.guardianSummonedEnemies,
-  );
-
-  const toPct = (val: number) => {
-    if (!Number.isFinite(val) || val <= 0) return null;
-    const pct = Math.min(100, Math.round((val / totalEnemies) * 100));
-    return pct;
-  };
-
   const toBar = (pct: number, filledChar: string) => {
     const segments = 10;
     const filled = Math.max(0, Math.min(segments, Math.round(pct / 10)));
@@ -503,15 +465,19 @@ export function generateCoverageDescription(
     return `${filledChar.repeat(filled)}${'⬛'.repeat(empty)}`;
   };
 
+  const coverage = (key: string) => {
+    const value = readTrackerRunCoveragePercentage(runData, key);
+    return value === null ? null : Math.round(value);
+  };
   const allMetrics: { label: string; value: number | null; block: string; deltaKey: string; metricKey: string }[] = [
-    { label: 'Golden Tower', value: toPct(killsWithGoldenTower), block: '🟨', deltaKey: 'killsWithGoldenTowerPercentage', metricKey: 'goldenTower' },
-    { label: 'Black Hole',   value: correctedBlackHole === 0 ? 0 : toPct(blackHoleCoverage), block: '🟪', deltaKey: 'destroyedByBlackHolePercentage', metricKey: 'blackHole' },
-    { label: 'Spotlight',    value: toPct(destroyedInSpotlight), block: '⬜', deltaKey: 'destroyedInSpotlightPercentage', metricKey: 'spotlight' },
-    { label: 'Death Wave',   value: toPct(taggedByDeathWave), block: '🟥', deltaKey: 'taggedByDeathWavePercentage', metricKey: 'deathWave' },
-    { label: 'Orbs',         value: correctedOrbs === 0 ? 0 : toPct(orbsCoverage), block: '🟪', deltaKey: 'hitByOrbsPercentage', metricKey: 'orbs' },
-    { label: 'Golden Bot',   value: toPct(destroyedInGoldenBot), block: '🟨', deltaKey: 'destroyedInGoldenBotPercentage', metricKey: 'goldenBot' },
-    { label: 'Amp Bot',      value: toPct(killsWithAmplifyBot), block: '🟦', deltaKey: 'killsWithAmplifyBotPercentage', metricKey: 'ampBot' },
-    { label: 'Summoned',     value: toPct(summonedEnemies), block: '🟪', deltaKey: 'summonedEnemiesPercentage', metricKey: 'summoned' },
+    { label: 'Golden Tower', value: coverage('killsWithGoldenTowerPercentage'), block: '🟨', deltaKey: 'killsWithGoldenTowerPercentage', metricKey: 'goldenTower' },
+    { label: 'Black Hole',   value: coverage('destroyedByBlackHolePercentage'), block: '🟪', deltaKey: 'destroyedByBlackHolePercentage', metricKey: 'blackHole' },
+    { label: 'Spotlight',    value: coverage('destroyedInSpotlightPercentage'), block: '⬜', deltaKey: 'destroyedInSpotlightPercentage', metricKey: 'spotlight' },
+    { label: 'Death Wave',   value: coverage('taggedByDeathWavePercentage'), block: '🟥', deltaKey: 'taggedByDeathWavePercentage', metricKey: 'deathWave' },
+    { label: 'Orbs',         value: coverage('hitByOrbsPercentage'), block: '🟪', deltaKey: 'hitByOrbsPercentage', metricKey: 'orbs' },
+    { label: 'Golden Bot',   value: coverage('destroyedInGoldenBotPercentage'), block: '🟨', deltaKey: 'destroyedInGoldenBotPercentage', metricKey: 'goldenBot' },
+    { label: 'Amp Bot',      value: coverage('killsWithAmplifyBotPercentage'), block: '🟦', deltaKey: 'killsWithAmplifyBotPercentage', metricKey: 'ampBot' },
+    { label: 'Summoned',     value: coverage('summonedEnemiesPercentage'), block: '🟪', deltaKey: 'summonedEnemiesPercentage', metricKey: 'summoned' },
   ];
 
   const metrics = allMetrics.filter(

@@ -1,6 +1,7 @@
-import type { TrackerRunDeltaResult } from '@tmrxjd/platform/tools';
+import { canUseStoredTrackerRunCoverage, TRACKER_RUN_COVERAGE_PERCENTAGE_KEYS, type TrackerRunDeltaResult } from '@tmrxjd/platform/tools';
 import { getTrackerKv, setTrackerKv } from '../../../services/idb';
 import { logger } from '../../../core/logger';
+import { SHARE_COVERAGE_VERSION } from './share-run-ref';
 
 /**
  * Share buttons (Expand / Battle Report) must keep working indefinitely, including after the
@@ -21,6 +22,7 @@ export type ShareSnapshot = {
   historyCapturedAt?: number;
   chartBase64?: string;
   deltaResult?: TrackerRunDeltaResult | null;
+  coverageVersion?: typeof SHARE_COVERAGE_VERSION;
   runTypeCounts?: Record<string, number>;
 };
 
@@ -35,6 +37,7 @@ export async function saveShareSnapshot(params: { ref: string; userId: string; r
     run: params.run,
     sharerName: params.sharerName,
     updatedAt: Date.now(),
+    coverageVersion: SHARE_COVERAGE_VERSION,
     ...(params.historyCapturedAt !== undefined ? { historyCapturedAt: params.historyCapturedAt } : {}),
     ...(params.chartBase64 !== undefined ? { chartBase64: params.chartBase64 } : {}),
     ...(params.deltaResult !== undefined ? { deltaResult: params.deltaResult } : {}),
@@ -54,7 +57,13 @@ export async function saveShareSnapshot(params: { ref: string; userId: string; r
 export async function readShareSnapshot(ref: string): Promise<ShareSnapshot | null> {
   try {
     const snapshot = await getTrackerKv<ShareSnapshot>(snapshotKey(ref));
-    return snapshot && typeof snapshot.run === 'object' && snapshot.run !== null ? snapshot : null;
+    if (!snapshot || typeof snapshot.run !== 'object' || snapshot.run === null) return null;
+    if (snapshot.coverageVersion === SHARE_COVERAGE_VERSION || !snapshot.deltaResult) return snapshot;
+    // Older baselines may have used the superseded hit-based coverage fields.
+    // Leave proven or unrelated comparison fields and the original snapshot intact.
+    const baseline = { ...snapshot.deltaResult.baseline };
+    for (const key of TRACKER_RUN_COVERAGE_PERCENTAGE_KEYS) if (!canUseStoredTrackerRunCoverage(key)) delete baseline[key];
+    return { ...snapshot, deltaResult: { ...snapshot.deltaResult, baseline } };
   } catch (error) {
     logger.warn('[share-snapshot] failed to read share snapshot', { ref, error });
     return null;

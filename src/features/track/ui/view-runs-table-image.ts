@@ -5,6 +5,7 @@ import {
   type TrackerRunTableColumn,
   type TrackerRunTableRow,
 } from '@tmrxjd/platform/tools';
+import { normalizeKnownRunMetrics } from '../shared/report-number';
 import { renderViewRunsTablePng } from './view-runs-chart';
 import type { ViewRunsPresentationPrefs } from '../view-runs-store';
 
@@ -47,7 +48,9 @@ export function buildRunIndexMap(runs: ViewRunsTableRun[]): Map<string, number> 
 }
 
 export const normalizeTrackColumnOrder = normalizeTrackerRunTableColumnOrder;
-export const buildTrackColumnValue = buildTrackerRunTableColumnValue;
+export function buildTrackColumnValue(run: ViewRunsTableRun, column: TrackerRunTableColumn): string {
+  return buildTrackerRunTableColumnValue(normalizeKnownRunMetrics(run, true), column);
+}
 
 export async function buildViewRunsTableImage(
   page: ViewRunsTableRun[],
@@ -63,8 +66,9 @@ export async function buildViewRunsTableImage(
     page.forEach((run, index) => {
       const runNumber = runIndexMap.get(runIdentityKey(run)) ?? 0;
       rows.push(['Run', `#${runNumber}`]);
+      const projected = normalizeKnownRunMetrics(run, true);
       selectedColumns.forEach((column) => {
-        rows.push([column, buildTrackColumnValue(run, column)]);
+        rows.push([column, buildTrackerRunTableColumnValue(projected, column)]);
       });
       if (index < page.length - 1) {
         rows.push(['', '']);
@@ -79,10 +83,13 @@ export async function buildViewRunsTableImage(
   }
 
   const headers = ['#', ...selectedColumns];
-  const rows = page.map((run) => [
-    String(runIndexMap.get(runIdentityKey(run)) ?? 0),
-    ...selectedColumns.map((column) => buildTrackColumnValue(run, column)),
-  ]);
+  const rows = page.map((run) => {
+    const projected = normalizeKnownRunMetrics(run, true);
+    return [
+      String(runIndexMap.get(runIdentityKey(run)) ?? 0),
+      ...selectedColumns.map((column) => buildTrackerRunTableColumnValue(projected, column)),
+    ];
+  });
   return renderViewRunsTablePng({
     title,
     headers,

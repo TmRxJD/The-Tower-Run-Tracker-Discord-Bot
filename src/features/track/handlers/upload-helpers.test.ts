@@ -146,10 +146,10 @@ describe('upload-helpers single-line paste parsing', () => {
     const description = generateCoverageDescription({
       totalEnemies: '100',
       killsWithGoldenTower: '10',
-      enemiesHitByBlackHole: '20',
+      killsWithBlackHole: '20',
       destroyedInSpotlight: '30',
       taggedByDeathWave: '40',
-      enemiesHitByOrbs: '50',
+      killsWithOrbs: '50',
       destroyedInGoldenBot: '60',
       killsWithAmplifyBot: '70',
       guardianSummonedEnemies: '80',
@@ -185,13 +185,13 @@ describe('upload-helpers single-line paste parsing', () => {
     expect(description).toContain('Orbs: 73%');
   });
 
-  it('falls back to enemiesHitByOrbs when killsWithOrbs is missing', () => {
+  it('omits Orb coverage when the canonical row is missing', () => {
     const description = generateCoverageDescription({
       totalEnemies: '1010402',
       enemiesHitByOrbs: '693.02K',
     });
 
-    expect(description).toContain('Orbs: 69%');
+    expect(description).not.toContain('Orbs:');
   });
 
   it('treats a present zero killsWithOrbs as zero rather than falling back to hits', () => {

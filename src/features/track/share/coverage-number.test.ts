@@ -1,3 +1,4 @@
+import { buildTrackerRunTableColumnValue, computeTrackerRunDeltaBaseline, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools';
 import { describe, expect, it } from 'vitest';
 import { readCoverageCount } from './coverage-number';
 import { generateCoverageDescription } from '../handlers/upload-helpers';
@@ -42,14 +43,46 @@ describe('game-report coverage number presentation', () => {
     expect(coverage).toContain('Golden Bot: 57%');
   });
 
-  it('keeps corrected zero authoritative and legacy hit-count fallbacks localized', () => {
+  it('preserves genuine zeros and never uses legacy hit counts as coverage', () => {
     const corrected = generateCoverageDescription({ totalEnemies: '1,000', killsWithOrbs: '0[0,0%]',
       killsWithBlackHole: 0, enemiesHitByOrbs: '900', enemiesHitByBlackHole: '900' });
     expect(corrected).toContain('Orbs: 0%');
     expect(corrected).toContain('Black Hole: 0%');
     const legacy = generateCoverageDescription({ totalEnemies: '1,00K', enemiesHitByOrbs: '500',
       enemiesHitByBlackHole: '600' });
-    expect(legacy).toContain('Orbs: 50%');
-    expect(legacy).toContain('Black Hole: 60%');
+    expect(legacy).not.toContain('Orbs:');
+    expect(legacy).not.toContain('Black Hole:');
   });
+});
+
+it('uses the same report counts in embeds, tables and comparison for corrected and other coverage', () => {
+  const prior = { id: 'prior', type: 'Farming', totalEnemies: '1.000,00',
+    killsWithOrbs: '500,00', killsWithBlackHole: '500,00', taggedByDeathWave: '500,00',
+    enemiesHitByOrbs: '990', destroyedByOrbs: '10', hitByOrbsPercentage: '99%' };
+  const current = { ...prior, rawParseFields: {
+    killsWithOrbs: '600[60,0%]', killsWithBlackHole: '600[60,0%]', taggedByDeathWave: '600[60,0%]',
+  }, killsWithOrbs: null, killsWithBlackHole: null, taggedByDeathWave: null };
+  const result = computeTrackerRunDeltaBaseline([prior], 'Farming', 'last');
+  const keys = ['hitByOrbsPercentage', 'destroyedByBlackHolePercentage', 'taggedByDeathWavePercentage'] as const;
+  const labels = ['Orbs', 'Black Hole', 'Death Wave'] as const;
+  for (const [i, key] of keys.entries()) {
+    expect(result.baseline[key]).toBe(50);
+    expect(getDeltaAnnotationForStat(current, key, result.baseline)).toBe('(+20.00%)');
+    expect(buildTrackerRunTableColumnValue(current, labels[i])).toBe('60%');
+    expect(generateCoverageDescription(current)).toContain(labels[i] + ': 60%');
+  }
+  expect(buildTrackerRunTableColumnValue({ ...prior, killsWithOrbs: null }, 'Orbs')).toBe('N/A');
+});
+
+it('preserves authoritative stored-only coverage but refuses superseded hit-derived percentages', () => {
+  const run = { type: 'Farming', destroyedInSpotlightPercentage: '89,125%', hitByOrbsPercentage: '96%',
+    destroyedByBlackHolePercentage: '95%', taggedByDeathWavePercentage: '0%' };
+  const result = computeTrackerRunDeltaBaseline([run], 'Farming', 'last');
+  expect(result.baseline).toMatchObject({ destroyedInSpotlightPercentage: 89.125, taggedByDeathWavePercentage: 0 });
+  expect(result.baseline).not.toHaveProperty('hitByOrbsPercentage');
+  expect(result.baseline).not.toHaveProperty('destroyedByBlackHolePercentage');
+  expect(buildTrackerRunTableColumnValue(run, 'Spotlight')).toBe('89.13%');
+  expect(generateCoverageDescription(run)).toContain('Spotlight: 89%');
+  expect(generateCoverageDescription(run)).toContain('Death Wave: 0%');
+  expect(generateCoverageDescription(run)).not.toContain('Orbs:');
 });

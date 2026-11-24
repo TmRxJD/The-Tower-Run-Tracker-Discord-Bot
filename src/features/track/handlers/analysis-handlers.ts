@@ -15,6 +15,7 @@ import { createCanvas } from '@napi-rs/canvas';
 import {
   buildNapiRsCanvasChartRenderRuntime,
   renderAnalyticsLineChartPng,
+  readTrackerRunCoveragePercentage,
 } from '@tmrxjd/platform/tools';
 import { getLastRun } from '../tracker-api-client';
 import { TRACKER_IDS } from '../track-custom-ids';
@@ -145,14 +146,18 @@ const ANALYSIS_CHARTS: AnalysisChartDef[] = [
   { id: 'generatorShardsFetched', label: 'Generator Shards Fetched', category: 'Guardian', getYValue: r => toNum(r.generatorShardsFetched), color: '#42A5F5' },
   { id: 'coreShardsFetched', label: 'Core Shards Fetched', category: 'Guardian', getYValue: r => toNum(r.coreShardsFetched), color: '#42A5F5' },
   // ── Coverage ──────────────────────────────────────────────────────────────
-  { id: 'coverageGtPct', label: 'Golden Tower %', category: 'Coverage', getYValue: r => toNum(r.coverageGtPct), color: '#F4D03F' },
-  { id: 'coverageBhPct', label: 'Black Hole %', category: 'Coverage', getYValue: r => toNum(r.coverageBhPct), color: '#7E57C2' },
-  { id: 'coverageOrbsPct', label: 'Orbs %', category: 'Coverage', getYValue: r => toNum(r.coverageOrbsPct), color: '#6EC6FF' },
-  { id: 'coverageDwPct', label: 'Death Wave %', category: 'Coverage', getYValue: r => toNum(r.coverageDwPct), color: '#E53935' },
-  { id: 'coverageSlPct', label: 'Spotlight %', category: 'Coverage', getYValue: r => toNum(r.coverageSlPct), color: '#E0E0E0' },
-  { id: 'coverageGbPct', label: 'Golden Bot %', category: 'Coverage', getYValue: r => toNum(r.coverageGbPct), color: '#C99700' },
-  { id: 'coverageAmpPct', label: 'Amp Bot %', category: 'Coverage', getYValue: r => toNum(r.coverageAmpPct), color: '#1565C0' },
+  { id: 'coverageGtPct', label: 'Golden Tower %', category: 'Coverage', getYValue: r => readTrackerRunCoveragePercentage(r, 'killsWithGoldenTowerPercentage'), color: '#F4D03F' },
+  { id: 'coverageBhPct', label: 'Black Hole %', category: 'Coverage', getYValue: r => readTrackerRunCoveragePercentage(r, 'destroyedByBlackHolePercentage'), color: '#7E57C2' },
+  { id: 'coverageOrbsPct', label: 'Orbs %', category: 'Coverage', getYValue: r => readTrackerRunCoveragePercentage(r, 'hitByOrbsPercentage'), color: '#6EC6FF' },
+  { id: 'coverageDwPct', label: 'Death Wave %', category: 'Coverage', getYValue: r => readTrackerRunCoveragePercentage(r, 'taggedByDeathWavePercentage'), color: '#E53935' },
+  { id: 'coverageSlPct', label: 'Spotlight %', category: 'Coverage', getYValue: r => readTrackerRunCoveragePercentage(r, 'destroyedInSpotlightPercentage'), color: '#E0E0E0' },
+  { id: 'coverageGbPct', label: 'Golden Bot %', category: 'Coverage', getYValue: r => readTrackerRunCoveragePercentage(r, 'destroyedInGoldenBotPercentage'), color: '#C99700' },
+  { id: 'coverageAmpPct', label: 'Amp Bot %', category: 'Coverage', getYValue: r => readTrackerRunCoveragePercentage(r, 'killsWithAmplifyBotPercentage'), color: '#1565C0' },
 ];
+
+export function resolveAnalysisChartValue(chartId: string, run: Record<string, unknown>): number | null {
+  return ANALYSIS_CHARTS.find(chart => chart.id === chartId)?.getYValue(run) ?? null;
+}
 
 const ITEMS_PER_PAGE = 25;
 

@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
  * the custom id rather than pointing at an in-memory cache entry.
  */
 
+export const SHARE_COVERAGE_VERSION = 1;
+
 const DISCORD_CUSTOM_ID_MAX_LENGTH = 100;
 
 function readTrimmedString(value: unknown): string {
@@ -38,6 +40,6 @@ export function fitsShareCustomId(prefix: string, ref: string): boolean {
 /** Immutable version reference; repeat shares of identical data reuse their snapshot. */
 export function buildShareSnapshotRef(userId: string, run: Record<string, unknown>, runTypeCounts: Record<string, number>, historyVerified = true, deltaResult?: TrackerRunDeltaResult | null, historyCapturedAt?: number): string | null {
   if (!buildShareRunRef(userId, run)) return null;
-  const version = createHash('sha256').update(JSON.stringify({ userId, run, runTypeCounts, ...(historyVerified ? {} : { historyVerified: false }), ...(deltaResult !== undefined ? { deltaResult } : {}), ...(historyCapturedAt !== undefined ? { historyCapturedAt } : {}) })).digest('hex').slice(0, 32);
+  const version = createHash('sha256').update(JSON.stringify({ coverageVersion: SHARE_COVERAGE_VERSION, userId, run, runTypeCounts, ...(historyVerified ? {} : { historyVerified: false }), ...(deltaResult !== undefined ? { deltaResult } : {}), ...(historyCapturedAt !== undefined ? { historyCapturedAt } : {}) })).digest('hex').slice(0, 32);
   return `${userId}:S-${version}`;
 }

@@ -225,29 +225,40 @@ index c66e5e4d93ba03935bb4de02e489412d638e5d10..f8173b5423d979866eaea38ae357afc2
      sign: DeltaSign;
      annotation: string;
 diff --git a/dist/tools/tracker-run-delta.js b/dist/tools/tracker-run-delta.js
-index 542df7d7a8bae224ea656a64fa38fcf2e212091c..cf9cd20c13c0b26ea79feeb567e3593d8e1ade32 100644
+index 542df7d7a8bae224ea656a64fa38fcf2e212091c..119c486ef8df0ded5b88c42a8dea77a7ba339651 100644
 --- a/dist/tools/tracker-run-delta.js
 +++ b/dist/tools/tracker-run-delta.js
-@@ -192,7 +192,18 @@ const COVERAGE_DELTA_BASIS_SOURCES = {
-  * Which battle-report row a run's coverage percentage came from, or null for stats that
-  * have only ever had one source.
-  */
-+function correctedCoverageCount(run, key) {
-+    const source = key === 'destroyedByBlackHolePercentage' ? 'killsWithBlackHole' : 'killsWithOrbs';
-+    return parseNumericStat(run[source], true) ?? parseNumericStat(run.rawParseFields?.[source], true);
-+}
-+function isCorrectedCoverageKey(key) { return key === 'hitByOrbsPercentage' || key === 'destroyedByBlackHolePercentage'; }
-+function correctedCoveragePercentage(run, key = 'hitByOrbsPercentage') {
-+    const count = correctedCoverageCount(run, key);
-+    const total = parseNumericStat(run.totalEnemies) ?? parseNumericStat(run.rawParseFields?.totalEnemies);
-+    return count !== null && count >= 0 && total !== null && total > 0 ? count / total * 100 : null;
-+}
+@@ -184,26 +184,10 @@ exports.TRACKER_DELTA_STAT_KEYS = [
+     'killsWithAmplifyBotPercentage',
+     'summonedEnemiesPercentage',
+ ];
+-const COVERAGE_DELTA_BASIS_SOURCES = {
+-    hitByOrbsPercentage: { kills: 'killsWithOrbs', hits: 'enemiesHitByOrbs' },
+-    destroyedByBlackHolePercentage: { kills: 'killsWithBlackHole', hits: 'enemiesHitByBlackHole' },
+-};
+-/**
+- * Which battle-report row a run's coverage percentage came from, or null for stats that
+- * have only ever had one source.
+- */
++const { TRACKER_RUN_COVERAGE_PERCENTAGE_KEYS, readTrackerRunCoveragePercentage } = require("./tracker-run-derived-metrics");
++// Compatibility export; calculation no longer uses coverage bases.
  function resolveCoverageDeltaBasis(run, key) {
-+    if (isCorrectedCoverageKey(key) && correctedCoveragePercentage(run, key) !== null) return 'kills';
-     const sources = COVERAGE_DELTA_BASIS_SOURCES[key];
-     if (!sources)
-         return null;
-@@ -222,16 +233,16 @@ function parseDurationToHours(run) {
+-    const sources = COVERAGE_DELTA_BASIS_SOURCES[key];
+-    if (!sources)
+-        return null;
+-    // An explicitly stored percentage predates the split, so treat it as the legacy basis.
+-    if (parseNumericStat(run[key]) !== null)
+-        return 'hits';
+-    if (parseNumericStat(run[sources.kills]) !== null)
+-        return 'kills';
+-    if (parseNumericStat(run[sources.hits]) !== null)
+-        return 'hits';
+-    return null;
++    return readTrackerRunCoveragePercentage(run, key) === null ? null : "kills";
+ }
+ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+ const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+@@ -222,16 +206,16 @@ function parseDurationToHours(run) {
          return (parts[0] * 60 + parts[1]) / 3600;
      return null;
  }
@@ -267,25 +278,97 @@ index 542df7d7a8bae224ea656a64fa38fcf2e212091c..cf9cd20c13c0b26ea79feeb567e3593d
  }
  function resolveRunTimestamp(run) {
      const dateStr = String(run.date ?? run.runDate ?? '').trim();
-@@ -469,6 +480,8 @@ function readStatFromRun(run, key) {
-             return raw !== null ? (raw / tot) * 100 : null;
-         }
-         case 'destroyedByBlackHolePercentage': {
-+            const corrected = correctedCoveragePercentage(run, key);
-+            if (corrected !== null) return corrected;
-             const stored = parseNumericStat(run.destroyedByBlackHolePercentage);
-             if (stored !== null)
-                 return stored;
-@@ -499,6 +512,8 @@ function readStatFromRun(run, key) {
-             return raw !== null ? (raw / tot) * 100 : null;
-         }
-         case 'hitByOrbsPercentage': {
-+            const corrected = correctedCoveragePercentage(run, key);
-+            if (corrected !== null) return corrected;
-             const stored = parseNumericStat(run.hitByOrbsPercentage);
-             if (stored !== null)
-                 return stored;
-@@ -547,17 +562,20 @@ function readStatFromRun(run, key) {
+@@ -458,87 +442,8 @@ function readStatFromRun(run, key) {
+         case 'destroyedInSpotlight': return parseNumericStat(run.destroyedInSpotlight);
+         case 'destroyedInGoldenBot': return parseNumericStat(run.destroyedInGoldenBot);
+         // Percentages — read stored field first, fall back to computing from raw counts / totalEnemies
+-        case 'killsWithGoldenTowerPercentage': {
+-            const stored = parseNumericStat(run.killsWithGoldenTowerPercentage);
+-            if (stored !== null)
+-                return stored;
+-            const tot = parseNumericStat(run.totalEnemies);
+-            if (!tot)
+-                return null;
+-            const raw = parseNumericStat(run.killsWithGoldenTower);
+-            return raw !== null ? (raw / tot) * 100 : null;
+-        }
+-        case 'destroyedByBlackHolePercentage': {
+-            const stored = parseNumericStat(run.destroyedByBlackHolePercentage);
+-            if (stored !== null)
+-                return stored;
+-            const tot = parseNumericStat(run.totalEnemies);
+-            if (!tot)
+-                return null;
+-            const raw = parseNumericStat(run.killsWithBlackHole) ?? parseNumericStat(run.enemiesHitByBlackHole);
+-            return raw !== null ? (raw / tot) * 100 : null;
+-        }
+-        case 'destroyedInSpotlightPercentage': {
+-            const stored = parseNumericStat(run.destroyedInSpotlightPercentage);
+-            if (stored !== null)
+-                return stored;
+-            const tot = parseNumericStat(run.totalEnemies);
+-            if (!tot)
+-                return null;
+-            const raw = parseNumericStat(run.destroyedInSpotlight);
+-            return raw !== null ? (raw / tot) * 100 : null;
+-        }
+-        case 'taggedByDeathWavePercentage': {
+-            const stored = parseNumericStat(run.taggedByDeathWavePercentage);
+-            if (stored !== null)
+-                return stored;
+-            const tot = parseNumericStat(run.totalEnemies);
+-            if (!tot)
+-                return null;
+-            const raw = parseNumericStat(run.taggedByDeathWave);
+-            return raw !== null ? (raw / tot) * 100 : null;
+-        }
+-        case 'hitByOrbsPercentage': {
+-            const stored = parseNumericStat(run.hitByOrbsPercentage);
+-            if (stored !== null)
+-                return stored;
+-            const tot = parseNumericStat(run.totalEnemies);
+-            if (!tot)
+-                return null;
+-            const raw = parseNumericStat(run.killsWithOrbs) ?? parseNumericStat(run.enemiesHitByOrbs);
+-            return raw !== null ? (raw / tot) * 100 : null;
+-        }
+-        case 'destroyedInGoldenBotPercentage': {
+-            const stored = parseNumericStat(run.destroyedInGoldenBotPercentage);
+-            if (stored !== null)
+-                return stored;
+-            const tot = parseNumericStat(run.totalEnemies);
+-            if (!tot)
+-                return null;
+-            const raw = parseNumericStat(run.destroyedInGoldenBot);
+-            return raw !== null ? (raw / tot) * 100 : null;
+-        }
+-        case 'killsWithAmplifyBotPercentage': {
+-            const stored = parseNumericStat(run.killsWithAmplifyBotPercentage);
+-            if (stored !== null)
+-                return stored;
+-            const tot = parseNumericStat(run.totalEnemies);
+-            if (!tot)
+-                return null;
+-            const raw = parseNumericStat(run.killsWithAmplifyBot);
+-            return raw !== null ? (raw / tot) * 100 : null;
+-        }
+-        case 'summonedEnemiesPercentage': {
+-            const stored = parseNumericStat(run.summonedEnemiesPercentage);
+-            if (stored !== null)
+-                return stored;
+-            const tot = parseNumericStat(run.totalEnemies);
+-            if (!tot)
+-                return null;
+-            const raw = parseNumericStat(run.guardianSummonedEnemies);
+-            return raw !== null ? (raw / tot) * 100 : null;
+-        }
+-        default: return null;
++        default: return TRACKER_RUN_COVERAGE_PERCENTAGE_KEYS.includes(key)
++            ? readTrackerRunCoveragePercentage(run, key) : null;
+     }
+ }
+ /**
+@@ -547,17 +452,20 @@ function readStatFromRun(run, key) {
   * For 'last' mode: the most recent run before the current one.
   * The `currentRunId` is excluded from the reference pool.
   */
@@ -308,7 +391,7 @@ index 542df7d7a8bae224ea656a64fa38fcf2e212091c..cf9cd20c13c0b26ea79feeb567e3593d
              return false;
          return type.toLowerCase() === normalizedType.toLowerCase();
      });
-@@ -565,9 +583,8 @@ function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
+@@ -565,9 +473,8 @@ function computeTrackerRunDeltaBaseline(runs, runType, mode, currentRunId) {
      const sorted = [...sameTypeRuns].sort((a, b) => resolveRunTimestamp(b) - resolveRunTimestamp(a));
      let referenceRuns;
      if (mode === 'last') {
@@ -320,56 +403,182 @@ index 542df7d7a8bae224ea656a64fa38fcf2e212091c..cf9cd20c13c0b26ea79feeb567e3593d
              referenceRuns = sorted.filter(r => resolveRunTimestamp(r) < currentTs).slice(0, 1);
          }
          else {
-@@ -601,7 +618,7 @@ function buildTrackerRunDeltaBaselineWithBasis(referenceRuns) {
+@@ -600,22 +507,8 @@ function buildTrackerRunDeltaBaselineWithBasis(referenceRuns) {
+     const baseline = {};
      const coverageBasis = {};
      for (const key of exports.TRACKER_DELTA_STAT_KEYS) {
-         const contributing = referenceRuns
+-        const contributing = referenceRuns
 -            .map(r => ({ run: r, value: readStatFromRun(r, key) }))
-+            .map(r => ({ run: r, value: isCorrectedCoverageKey(key) ? correctedCoveragePercentage(r, key) : readStatFromRun(r, key) }))
-             .filter((entry) => entry.value !== null);
-         if (contributing.length === 0)
-             continue;
-@@ -750,6 +767,14 @@ function formatDeltaAnnotation(delta) {
+-            .filter((entry) => entry.value !== null);
+-        if (contributing.length === 0)
+-            continue;
+-        const avg = contributing.reduce((sum, entry) => sum + entry.value, 0) / contributing.length;
+-        baseline[key] = avg;
+-        const bases = new Set(contributing
+-            .map(entry => resolveCoverageDeltaBasis(entry.run, key))
+-            .filter((basis) => basis !== null));
+-        if (bases.size === 1) {
+-            coverageBasis[key] = [...bases][0];
+-        }
+-        else if (bases.size > 1) {
+-            coverageBasis[key] = 'mixed';
+-        }
++        const values = referenceRuns.map(run => readStatFromRun(run, key)).filter(value => value !== null);
++        if (values.length) baseline[key] = values.reduce((sum, value) => sum + value, 0) / values.length;
+     }
+     return { baseline, coverageBasis };
+ }
+@@ -750,16 +643,6 @@ function formatDeltaAnnotation(delta) {
   * Compute and format the delta annotation for a given stat key using a run and a baseline.
   */
  function getDeltaAnnotationForStat(run, key, baseline, coverageBasis) {
-+    if (isCorrectedCoverageKey(key)) {
-+        const current = correctedCoveragePercentage(run, key);
-+        const reference = baseline[key];
-+        if (current === null || coverageBasis?.[key] !== 'kills' || !Number.isFinite(reference))
-+            return '';
-+        if (reference === 0) return '';
-+        return formatDeltaAnnotation(computeStatDelta(current, reference));
-+    }
-     if (coverageBasis) {
-         const referenceBasis = coverageBasis[key];
-         const currentBasis = resolveCoverageDeltaBasis(run, key);
-@@ -802,3 +827,4 @@ exports.TRACKER_STAT_EMBED_COLORS = {
+-    if (coverageBasis) {
+-        const referenceBasis = coverageBasis[key];
+-        const currentBasis = resolveCoverageDeltaBasis(run, key);
+-        // Comparing a kill-tagged percentage against a hit-count one (or against a mixed
+-        // reference pool) would report a change in measurement as a change in performance.
+-        if (referenceBasis && currentBasis && referenceBasis !== currentBasis)
+-            return '';
+-        if (referenceBasis === 'mixed')
+-            return '';
+-    }
+     const currentVal = readStatFromRun(run, key);
+     const referenceVal = baseline[key] ?? null;
+     return formatDeltaAnnotation(computeStatDelta(currentVal, referenceVal));
+@@ -802,3 +685,4 @@ exports.TRACKER_STAT_EMBED_COLORS = {
      utility: 0x66BB6A, // Green
      default: 0x3b82f6, // Blue
  };
 +
+diff --git a/dist/tools/tracker-run-derived-metrics.d.ts b/dist/tools/tracker-run-derived-metrics.d.ts
+index a3e2f1c94563e045310c7e14555656c14afd56c2..b2a66a7427f14ece27d2d8e9a8c6c55c87094e70 100644
+--- a/dist/tools/tracker-run-derived-metrics.d.ts
++++ b/dist/tools/tracker-run-derived-metrics.d.ts
+@@ -13,3 +13,6 @@ export declare const TRACKER_RUN_COVERAGE_LABEL_TO_PERCENTAGE_KEY: {
+ };
+ export type TrackerRunCoverageTableLabel = keyof typeof TRACKER_RUN_COVERAGE_LABEL_TO_PERCENTAGE_KEY;
+ export declare function buildTrackerRunCoveragePercentageByLabel(run: Record<string, unknown>): Record<TrackerRunCoverageTableLabel, string>;
++
++export declare function readTrackerRunCoveragePercentage(run: Record<string, unknown>, key: string): number | null;
++export declare function canUseStoredTrackerRunCoverage(key: string): boolean;
 diff --git a/dist/tools/tracker-run-derived-metrics.js b/dist/tools/tracker-run-derived-metrics.js
-index 596f6723137154ac008e300082644d8908827830..46bd9e7c8277412bfe48e0d0e05e1e446b22eb0e 100644
+index 596f6723137154ac008e300082644d8908827830..c66f51ecc808709d9b8f06cdc209a15a586fc88c 100644
 --- a/dist/tools/tracker-run-derived-metrics.js
 +++ b/dist/tools/tracker-run-derived-metrics.js
-@@ -99,10 +99,16 @@ function buildTrackerRunDerivedMetricFields(rawRun) {
+@@ -1,8 +1,11 @@
+ "use strict";
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.TRACKER_RUN_COVERAGE_LABEL_TO_PERCENTAGE_KEY = exports.TRACKER_RUN_COVERAGE_PERCENTAGE_KEYS = void 0;
++exports.canUseStoredTrackerRunCoverage = canUseStoredTrackerRunCoverage;
++exports.readTrackerRunCoveragePercentage = readTrackerRunCoveragePercentage;
+ exports.buildTrackerRunDerivedMetricFields = buildTrackerRunDerivedMetricFields;
+ exports.buildTrackerRunCoveragePercentageByLabel = buildTrackerRunCoveragePercentageByLabel;
++const { readTrackerMetricValue } = require("./tracker-cloud-schemas");
+ const formatting_1 = require("thetowersdk/formatting");
+ exports.TRACKER_RUN_COVERAGE_PERCENTAGE_KEYS = [
+     'killsWithGoldenTowerPercentage',
+@@ -14,19 +17,49 @@ exports.TRACKER_RUN_COVERAGE_PERCENTAGE_KEYS = [
+     'killsWithAmplifyBotPercentage',
+     'summonedEnemiesPercentage',
+ ];
+-// Coverage mirrors the game's "Killed With Effect Active" percentages. Black Hole and
+-// Orbs also appear under "Enemies Hit By" with slightly higher counts, so those stay as
+-// fallbacks only for runs recorded before the kill-tagged fields were parsed.
+-const TRACKER_RUN_COVERAGE_PERCENTAGE_KEY_TO_SOURCES = {
+-    killsWithGoldenTowerPercentage: ['killsWithGoldenTower'],
+-    destroyedByBlackHolePercentage: ['killsWithBlackHole', 'enemiesHitByBlackHole'],
+-    destroyedInSpotlightPercentage: ['destroyedInSpotlight'],
+-    taggedByDeathWavePercentage: ['taggedByDeathWave'],
+-    hitByOrbsPercentage: ['killsWithOrbs', 'enemiesHitByOrbs'],
+-    destroyedInGoldenBotPercentage: ['destroyedInGoldenBot'],
+-    killsWithAmplifyBotPercentage: ['killsWithAmplifyBot'],
+-    summonedEnemiesPercentage: ['guardianSummonedEnemies'],
++// Coverage values always use one named report field, never a neighboring statistic.
++const coverageSources = {
++    killsWithGoldenTowerPercentage: ['killsWithGoldenTower', 'Golden Tower'],
++    destroyedByBlackHolePercentage: ['killsWithBlackHole'],
++    destroyedInSpotlightPercentage: ['destroyedInSpotlight', 'Destroyed in Spotlight'],
++    taggedByDeathWavePercentage: ['taggedByDeathWave', 'Tagged by Death Wave'],
++    hitByOrbsPercentage: ['killsWithOrbs'],
++    destroyedInGoldenBotPercentage: ['destroyedInGoldenBot', 'Destroyed in Golden Bot'],
++    killsWithAmplifyBotPercentage: ['killsWithAmplifyBot', 'Amplify Bot'],
++    summonedEnemiesPercentage: ['guardianSummonedEnemies', 'Summoned enemies'],
+ };
++// These two stored keys historically carried hit-derived percentages and lack provenance.
++const legacyCoveragePercentageKeys = new Set(['hitByOrbsPercentage', 'destroyedByBlackHolePercentage']);
++function canUseStoredTrackerRunCoverage(key) {
++    return Object.hasOwn(coverageSources, key) && !legacyCoveragePercentageKeys.has(key);
++}
++function readCoverageCount(...values) {
++    for (const value of values) {
++        let text = String(value ?? '').trim().replace(/\s*\[\s*\d+(?:[.,]\d+)?\s*%\s*\]$/, '').trim();
++        if (!/^[\d., \u00a0\u202f]+[a-z]*$/i.test(text)) continue;
++        if (/[ \u00a0\u202f]/.test(text) && !/^\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[.,]\d+)?[a-z]*$/i.test(text)) continue;
++        text = text.replace(/[ \u00a0\u202f]/g, '');
++        if (/^\d{1,3}(?:,\d{3})+(?:\.\d+)?[a-z]*$/i.test(text)) text = text.replace(/,/g, '');
++        else if (/^\d{1,3}(?:\.\d{3})+(?:,\d+)[a-z]*$/i.test(text) || /^\d{1,3}(?:\.\d{3}){2,}[a-z]*$/i.test(text)) text = text.replace(/\./g, '').replace(',', '.');
++        else if (/^\d*,\d+[a-z]*$/i.test(text)) text = text.replace(',', '.');
++        if (!/^(?:\d+(?:\.\d+)?|\.\d+)[a-z]*$/i.test(text)) continue;
++        const count = readTrackerMetricValue(text);
++        if (count !== null && count >= 0) return count;
++    }
++    return null;
++}
++function readTrackerRunCoveragePercentage(run, key) {
++    const sources = coverageSources[key];
++    if (!sources) return null;
++    const [field, ...aliases] = sources;
++    const count = readCoverageCount(run[field], run.rawParseFields?.[field], ...aliases.map(alias => run[alias]));
++    const total = readCoverageCount(run.totalEnemies, run.rawParseFields?.totalEnemies, run['Total Enemies']);
++    if (count !== null && total !== null && total > 0) return Math.min(100, count / total * 100);
++    if (!canUseStoredTrackerRunCoverage(key)) return null;
++    const stored = String(run[key] ?? '').trim().replace(/%$/, '').trim();
++    const percentage = Number(stored.replace(',', '.'));
++    return /^\d+(?:[.,]\d+)?$/.test(stored) && Number.isFinite(percentage) && percentage <= 100 ? percentage : null;
++}
+ const TRACKER_RUN_MODULE_SHARD_KEYS = [
+     'cannonShardsFetched',
+     'armorShardsFetched',
+@@ -46,12 +79,6 @@ function parseTrackerMetricNumber(rawValue) {
+     const numericValue = (0, formatting_1.convertToNumericValue)(parsed.value, parsed.unit);
+     return Number.isFinite(numericValue) ? numericValue : null;
+ }
+-function formatCoverageMetricPercentage(rawValue, totalEnemies) {
+-    const numericValue = parseTrackerMetricNumber(rawValue);
+-    if (numericValue === null || !Number.isFinite(totalEnemies) || totalEnemies <= 0)
+-        return null;
+-    return `${Number(((numericValue / totalEnemies) * 100).toFixed(2))}%`;
+-}
+ function buildTrackerRunDerivedMetricFields(rawRun) {
+     const fields = {};
+     const explicitModuleShards = String(rawRun.moduleShards ?? '').trim();
+@@ -98,23 +125,9 @@ function buildTrackerRunDerivedMetricFields(rawRun) {
+             fields[key] = derivedValue;
          }
      }
-     const totalEnemies = parseTrackerMetricNumber(rawRun.totalEnemies);
-+    const blackHoleCount = parseTrackerMetricNumber(rawRun.killsWithBlackHole) ?? parseTrackerMetricNumber(rawRun.rawParseFields?.killsWithBlackHole);
-+    const blackHoleTotal = totalEnemies ?? parseTrackerMetricNumber(rawRun.rawParseFields?.totalEnemies);
-+    if (blackHoleCount !== null && blackHoleCount >= 0 && blackHoleTotal !== null && blackHoleTotal > 0) {
-+        fields.destroyedByBlackHolePercentage = `${Number((blackHoleCount / blackHoleTotal * 100).toFixed(2))}%`;
-+    }
-     if (totalEnemies === null) {
-         return fields;
+-    const totalEnemies = parseTrackerMetricNumber(rawRun.totalEnemies);
+-    if (totalEnemies === null) {
+-        return fields;
+-    }
+-    for (const [percentageKey, sourceKeys] of Object.entries(TRACKER_RUN_COVERAGE_PERCENTAGE_KEY_TO_SOURCES)) {
+-        const explicitValue = String(rawRun[percentageKey] ?? '').trim();
+-        if (explicitValue) {
+-            fields[percentageKey] = explicitValue;
+-            continue;
+-        }
+-        for (const sourceKey of sourceKeys) {
+-            const derivedValue = formatCoverageMetricPercentage(rawRun[sourceKey], totalEnemies);
+-            if (derivedValue) {
+-                fields[percentageKey] = derivedValue;
+-                break;
+-            }
+-        }
++    for (const key of exports.TRACKER_RUN_COVERAGE_PERCENTAGE_KEYS) {
++        const percentage = readTrackerRunCoveragePercentage(rawRun, key);
++        if (percentage !== null) fields[key] = `${Number(percentage.toFixed(2))}%`;
      }
-     for (const [percentageKey, sourceKeys] of Object.entries(TRACKER_RUN_COVERAGE_PERCENTAGE_KEY_TO_SOURCES)) {
-+        if (percentageKey === 'destroyedByBlackHolePercentage' && blackHoleCount !== null && blackHoleCount >= 0) continue;
-         const explicitValue = String(rawRun[percentageKey] ?? '').trim();
-         if (explicitValue) {
-             fields[percentageKey] = explicitValue;
+     return fields;
+ }
 diff --git a/dist/tools/tracker-run-table-display.js b/dist/tools/tracker-run-table-display.js
 index 30398d207ff02d5a976808dafae1edac61e28bfe..039f75e037f23bb8617f32597d9375107be5df91 100644
 --- a/dist/tools/tracker-run-table-display.js

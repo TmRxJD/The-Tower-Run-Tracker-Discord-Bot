@@ -64,7 +64,7 @@ describe('tracker submission embeds', () => {
     expect(embed.data.fields?.some(field => String(field.value).includes('Orbs:')) ?? false).toBe(false)
   })
 
-  it('shows coverage for canonical orb-hit and summoned-enemy fields', () => {
+  it('shows coverage for canonical killed-with-Orbs and summoned-enemy fields', () => {
     const embed = buildSubmissionResultEmbed({
       data: {
         tierDisplay: '12+',
@@ -76,7 +76,8 @@ describe('tracker submission embeds', () => {
         killedBy: 'Boss',
         type: 'Farming',
         totalEnemies: '5000',
-        enemiesHitByOrbs: '1200',
+        killsWithOrbs: '1200',
+        enemiesHitByOrbs: '4500',
         guardianSummonedEnemies: '300',
       },
       isUpdate: false,
@@ -89,7 +90,7 @@ describe('tracker submission embeds', () => {
     expect(embed.data.fields?.some(field => String(field.value).includes('Summoned: 6%'))).toBe(true)
   })
 
-  it('uses enemies-hit-by-black-hole instead of destroyed-by-black-hole for coverage', () => {
+  it('uses killed-with-Black-Hole rather than hits or direct destruction', () => {
     const embed = buildSubmissionResultEmbed({
       data: {
         tierDisplay: '12+',
@@ -101,7 +102,8 @@ describe('tracker submission embeds', () => {
         killedBy: 'Boss',
         type: 'Farming',
         totalEnemies: '5000',
-        enemiesHitByBlackHole: '1250',
+        killsWithBlackHole: '1250',
+        enemiesHitByBlackHole: '4500',
         destroyedByBlackHole: '5',
       },
       isUpdate: false,
