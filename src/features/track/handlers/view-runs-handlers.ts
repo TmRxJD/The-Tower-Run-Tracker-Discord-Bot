@@ -1,3 +1,4 @@
+import { readTrackerMetricValue } from '../shared/report-number';
 import { TransientCache } from '../../../core/transient-cache';
 import type {
   MessageComponentInteraction,
@@ -29,13 +30,14 @@ import {
 } from '../ui/view-runs-table-image';
 import { getTrackerUiConfig } from '../../../config/tracker-ui-config';
 import { getTrackerFlowMode } from '../flow-mode-store';
-import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
+import { formatNumberForDisplay } from '../../../utils/tracker-math';
 import { buildEmbedUserFromInteraction, resolveInteractionDisplayName } from '../discord-display-name';
 import { buildShareEmbed } from '../share/share-embed';
 import { resolveShareEmbedChannelPayload } from '../share/share-embed-delivery';
 import { buildShareSnapshotRef } from '../share/share-run-ref';
 import { saveShareSnapshot } from '../share/share-snapshot-store';
-import { buildTrackerDocumentEntryReference, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { buildTrackerDocumentEntryReference } from '@tmrxjd/platform/tools';
+import { computeTrackerRunDeltaBaseline } from '../shared/report-number-deltas';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 
@@ -138,8 +140,8 @@ function formatMetric(value: unknown): string {
   if (value === null || value === undefined) return '0';
   const raw = String(value).trim();
   if (!raw) return '0';
-  const parsed = parseNumberInput(standardizeNotation(raw));
-  if (!Number.isFinite(parsed) || parsed <= 0) return '0';
+  const parsed = readTrackerMetricValue(raw);
+  if (parsed === null || parsed <= 0) return '0';
   return formatNumberForDisplay(parsed);
 }
 

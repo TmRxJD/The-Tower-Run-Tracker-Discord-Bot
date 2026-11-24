@@ -1,3 +1,4 @@
+import { readTrackerMetricValue } from '../shared/report-number';
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { createCanvas } from '@napi-rs/canvas';
 import {
@@ -5,14 +6,14 @@ import {
   renderAnalyticsLineChartPng,
 } from '@tmrxjd/platform/tools';
 import { logger } from '../../../core/logger';
-import { parseDurationToHours, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
+import { parseDurationToHours } from '../../../utils/tracker-math';
 
 const runtime = buildNapiRsCanvasChartRenderRuntime((w, h) => createCanvas(w, h));
 
 function toNum(val: unknown): number | null {
   if (val === null || val === undefined || val === '') return null;
-  const n = parseNumberInput(standardizeNotation(String(val)));
-  return Number.isFinite(n) ? n : null;
+  const n = readTrackerMetricValue(val);
+  return n;
 }
 
 function toDurationHours(run: Record<string, unknown>): number | null {

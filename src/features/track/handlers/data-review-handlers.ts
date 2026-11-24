@@ -1,3 +1,4 @@
+import { resolveReportInputPreference } from '../shared/report-number-preference';
 import { updatePasteDiagnostic } from '../paste-diagnostics';
 import { copyKnownHistoryFailure, getKnownHistoryFailure } from '../history-failure-diagnostic';
 import type { MessageComponentInteraction} from 'discord.js';
@@ -32,7 +33,8 @@ import { peekPendingUploadProfile } from '../upload-target-profile';
 import { autoShareToConfiguredLogChannel } from '../share/auto-log-channel-share';
 import type { TrackerBotClient } from '../../../core/tracker-bot-client';
 import type { PendingRecordLike } from '../shared/track-review-records';
-import { ANALYTICS_EVENT_RUN_TRACKER_UPLOAD, computeTrackerRunDeltaBaseline } from '@tmrxjd/platform/tools';
+import { ANALYTICS_EVENT_RUN_TRACKER_UPLOAD } from '@tmrxjd/platform/tools';
+import { computeTrackerRunDeltaBaseline } from '../shared/report-number-deltas';
 import { logger } from '../../../core/logger';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
 import { observeOperation } from '../../../core/operation-lifecycle';
@@ -617,9 +619,10 @@ export async function handleEditFieldSelection(interaction: ReviewInteraction) {
       /* ignore */
     }
 
+    const decimalPreference = await resolveReportInputPreference(submitted.user.id, submitted.locale, pending.decimalPreference);
     const nextRunData = applySubmittedReviewEditValues(pending.runData, selectedFields, (_field, index) => {
       return submitted.fields.getTextInputValue(`${TRACKER_IDS.review.editValue}_${index}`) ?? '';
-    });
+    }, decimalPreference);
 
     const updated = await updatePendingRun(token, { runData: nextRunData });
     const updatedPending = await resolveUpdatedPendingOrReplyExpired(interaction, updated, getTrackUiConfig().manual.sessionExpired);

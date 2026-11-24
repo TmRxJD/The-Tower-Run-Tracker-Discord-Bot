@@ -1,7 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
 import { canonicalizeRunData } from '@tmrxjd/platform/tools';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
-import { standardizeNotation } from '../../../utils/tracker-math';
+import { normalizeReportMetric } from '../shared/report-number';
 import { getTrackerFlowMode } from '../flow-mode-store';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { createAddNoteAndShowFullParseButtonRow, createConfirmationButtons, createDataReviewEmbed, createShowFullParseButtonRow, createTypeSelectionRow } from './tracker-ui';
@@ -23,7 +23,7 @@ export function getCurrentEditFieldValue(runData: RunDataRecord, field: string):
   return String(runData?.[field] ?? '');
 }
 
-export function applyEditFieldValue(runData: RunDataRecord, field: string, rawValue: string): RunDataRecord {
+export function applyEditFieldValue(runData: RunDataRecord, field: string, rawValue: string, decimalPreference?: string): RunDataRecord {
   const nextRunData = { ...runData };
   if (field === 'tier') {
     const parsed = parseTierString(rawValue);
@@ -34,7 +34,7 @@ export function applyEditFieldValue(runData: RunDataRecord, field: string, rawVa
   }
 
   if (field === 'totalCoins' || field === 'totalCells' || field === 'totalDice') {
-    nextRunData[field] = rawValue ? standardizeNotation(rawValue) : null;
+    nextRunData[field] = rawValue ? normalizeReportMetric(rawValue, rawValue === getCurrentEditFieldValue(runData, field) ? undefined : decimalPreference) ?? rawValue : null;
     return canonicalizeRunData(nextRunData);
   }
 

@@ -21,7 +21,8 @@ import { buildShareSnapshotRef } from '../share/share-run-ref';
 import { shouldCompactShare } from '../share/share-compaction';
 import { saveShareSnapshot } from '../share/share-snapshot-store';
 import { getEffectiveUserSharedSettings } from '../../../services/user-shared-settings-db';
-import { computeTrackerRunDeltaBaseline, estimateTrackerRunTimestamp, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
+import { estimateTrackerRunTimestamp, trackerRunReferencesSameEntry } from '@tmrxjd/platform/tools';
+import { computeTrackerRunDeltaBaseline } from '../shared/report-number-deltas';
 
 export function recordShareableRun(userId: string, run: Record<string, unknown>, runTypeCounts: Record<string, number>, screenshotUrl?: string | null) {
   const hydratedRun = { ...run };

@@ -1,4 +1,4 @@
-import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '@tmrxjd/platform/tools';
+import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '../shared/report-number';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
 import { computeHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
 import { formatNumberForDisplay } from '../../../utils/tracker-math';
@@ -6,7 +6,8 @@ import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { trimDisplayTimeSeconds } from '../handlers/upload-helpers';
 import { normalizeNoteForDisplay } from '../handlers/note-panel-handlers';
 import { getTrackUiConfig, getTrackerUiConfig, type TrackerUiMode } from '../../../config/tracker-ui-config';
-import { type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools';
+import { type TrackerRunDeltaResult, type TrackerDeltaStatKey } from '@tmrxjd/platform/tools';
+import { getDeltaAnnotationForStat } from '../shared/report-number-deltas';
 
 function firstPresentValue(data: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {

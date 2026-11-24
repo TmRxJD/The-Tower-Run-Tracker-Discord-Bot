@@ -1,13 +1,13 @@
 import type * as PlatformTools from '@tmrxjd/platform/tools';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const renderAnalyticsLineChartPngMock = vi.fn(async () => new Uint8Array([1, 2, 3]));
+const renderAnalyticsLineChartPngMock = vi.hoisted(() => vi.fn<(options: Parameters<typeof PlatformTools.renderAnalyticsLineChartPng>[0]) => Promise<Uint8Array>>(async () => new Uint8Array([1, 2, 3])));
 
 vi.mock('@tmrxjd/platform/tools', async () => {
   const actual = await vi.importActual<typeof PlatformTools>('@tmrxjd/platform/tools');
   return {
     ...actual,
-    renderAnalyticsLineChartPng: () => renderAnalyticsLineChartPngMock(),
+    renderAnalyticsLineChartPng: renderAnalyticsLineChartPngMock,
   };
 });
 
@@ -105,4 +105,17 @@ describe('buildPerHourChartAttachment', () => {
 
     vi.useRealTimers();
   });
+});
+it('passes comma and period values to the chart as identical hourly rates', async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date('2026-07-03T18:00:00Z'));
+    await buildPerHourChartAttachment([
+      { type: 'Farming', date: '2026-07-02', time: '11:00:00', totalCoins: '12,34K', duration: '2h' },
+      { type: 'Farming', date: '2026-07-03', time: '11:00:00', coinsPerHour: '6.17K', duration: '2h' },
+    ], 'Farming');
+    expect(renderAnalyticsLineChartPngMock.mock.lastCall?.[0].datasets[0].values).toEqual([6170, 6170]);
+  } finally {
+    vi.useRealTimers();
+  }
 });

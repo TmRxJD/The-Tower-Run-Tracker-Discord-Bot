@@ -1,6 +1,7 @@
-import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '@tmrxjd/platform/tools';
+import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '../shared/report-number';
 import { Colors, EmbedBuilder } from 'discord.js'
-import { getFirstMeaningfulRunDataValue, type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools'
+import { getFirstMeaningfulRunDataValue, type TrackerRunDeltaResult, type TrackerDeltaStatKey } from '@tmrxjd/platform/tools'
+import { getDeltaAnnotationForStat } from '../shared/report-number-deltas';
 import { formatNumberForDisplay } from '../../../utils/tracker-math'
 import { getTrackUiConfig } from '../../../config/tracker-ui-config'
 import { computeHourlyRate } from '../tracker-helpers'

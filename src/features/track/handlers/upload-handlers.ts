@@ -6,7 +6,8 @@ import * as Discord from 'discord.js';
 import { beginPasteDiagnostic, updatePasteDiagnostic } from '../paste-diagnostics';
 import { reportPasteFailure, type PasteFailureContext } from './paste-failure-response';
 import { prepareBotRunUploadHistory, withBotRunSubmissionLock } from '../run-upload-history';
-import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeRunData, computeTrackerRunDeltaBaseline, estimateTrackerRunTimestamp } from '@tmrxjd/platform/tools';
+import { buildTrackerDocumentEntryReference, buildTrackerResolvedRunReference, canonicalizeRunDataForOutput, canonicalizeRunData, estimateTrackerRunTimestamp } from '@tmrxjd/platform/tools';
+import { computeTrackerRunDeltaBaseline } from '../shared/report-number-deltas';
 import {
 } from '@tmrxjd/platform/node';
 import type {
@@ -53,7 +54,7 @@ import {
 } from '../ui/tracker-ui';
 import { createPendingRun } from '../pending-run-store';
 import { renderDataReview, renderEditFieldPicker } from './data-review-handlers';
-import { standardizeNotation } from '../../../utils/tracker-math';
+import { readTrackerMetricValue } from '../shared/report-number';
 import { TRACKER_IDS } from '../track-custom-ids';
 import type { TrackReplyInteractionLike } from '../interaction-types';
 import { createManualHandlers } from './manual-handlers';
@@ -445,7 +446,7 @@ function normalizeVerificationValue(key: string, value: unknown): string {
     case 'totalCoins':
     case 'totalCells':
     case 'totalDice':
-      return standardizeNotation(raw);
+      return String(readTrackerMetricValue(raw) ?? raw);
     case 'killedBy':
       return raw.toLowerCase().replace(/\s+/g, ' ');
     case 'date':

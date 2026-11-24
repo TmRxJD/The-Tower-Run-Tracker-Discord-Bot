@@ -1,3 +1,8 @@
+## 2026-11-24 - Keep localized TrackerBot numbers consistent
+
+- Use one strict numeric adapter across report entry/review, share cards, comparisons, hourly rates and charts. Accept comma and period decimals, preserve grouped thousands and compact units, and resolve ambiguous new modal input using the saved decimal preference.
+- Normalize only designated numeric write fields, never recursively rewriting notes, IDs or raw report evidence. New reads use saved values without a historical migration.
+
 ## 2026-11-24 - Correct localized coverage counts
 
 - Render comma-decimal compact report counts (including Death Wave) with their full units instead of silently truncating to a bare integer. Handle trailing game percentage annotations consistently across coverage metrics and preserve valid comma-thousands counts, legacy fallbacks and explicit zero counts.

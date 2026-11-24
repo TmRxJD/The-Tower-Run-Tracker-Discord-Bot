@@ -1,5 +1,5 @@
 import { IncompleteRunReportError } from './paste-input-error';
-import { readCoverageCount } from '../share/coverage-number';
+import { normalizeOcrReportMetric, normalizeReportMetric, readCoverageCount } from '../shared/report-number';
 import { parseBattleReportRunData } from '@tmrxjd/platform/parity';
 import {
   TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS,
@@ -615,27 +615,6 @@ function getTierAndWave(lines: string[]) {
   return { tier, wave, tierRaw };
 }
 
-function fixOCRMisreads(text: string): string | number {
-  if (!text || typeof text !== 'string') return '0';
-  const regex = /(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)([KMBTSqQsS]*)/;
-  const match = text.match(regex);
-  if (!match) return text;
-  let numberPart = match[1];
-  let notationPart = match[2];
-  if (parseFloat(numberPart) === 0) notationPart = '';
-  numberPart = numberPart
-    .replace(/O/g, '0')
-    .replace(/B/g, '8')
-    .replace(/S/g, '5')
-    .replace(/I/g, '1')
-    .replace(/l/g, '1')
-    .replace(/Z/g, '2')
-    .replace(/G/g, '6')
-    .replace(/[^0-9.]/g, '');
-  if (notationPart) return numberPart + notationPart;
-  return parseInt(numberPart, 10);
-}
-
 export function parseTierString(rawTier: unknown): { numeric: number | null; hasPlus: boolean; display: string | null } {
   if (rawTier === null || rawTier === undefined) return { numeric: null, hasPlus: false, display: null };
   const str = String(rawTier).trim();
@@ -737,31 +716,11 @@ export function formatOCRExtraction(
     lines = [];
   }
 
-  const normalizeDecimal = (text: string) => {
-    const value = typeof text === 'string' ? text : String(text);
-    if (decimalIndicator === ',') return value.replace(/,/g, '.');
-    return value;
-  };
-
-  const fuzzyContains = (line: string, expected: string) => line.toLowerCase().replace(/[^a-z0-9]/g, '').includes(expected.toLowerCase().replace(/[^a-z0-9]/g, ''));
-
-  const getField = (allLines: string[], expectedField: string) => {
-    for (const line of allLines) {
-      if (fuzzyContains(line, expectedField)) {
-        const regex = /(\d+[\.,]?\d*)([a-zA-Z]*)/;
-        const match = line.match(regex);
-        if (match) return (match[1] || '') + (match[2] || '');
-        if (line.includes('Killed By')) return line.replace('Killed By', '').trim();
-      }
-    }
-    return '';
-  };
-
+  const preference = decimalIndicator === ',' ? 'Comma (,)' : undefined;
   const processField = (rawValue: string) => {
-    if (!rawValue || !rawValue.trim()) return '';
-    const fixed = fixOCRMisreads(normalizeDecimal(rawValue));
-    if (typeof fixed === 'string' && /[KMBTSqQsS]/.test(fixed)) return fixed;
-    return parseInt(String(fixed), 10);
+    const canonical = normalizeOcrReportMetric(rawValue, preference);
+    if (canonical === null) return '';
+    return /[A-Za-z]/.test(canonical) ? canonical : Number(canonical);
   };
 
   const fields = ocrFieldTranslations[scanLanguage] || ocrFieldTranslations.English;
@@ -773,9 +732,36 @@ export function formatOCRExtraction(
   let tierDisplay: string | null = tierWave.tierRaw || (typeof tier === 'number' && !Number.isNaN(tier) ? String(tier) : null);
   let tierHasPlus = tierDisplay ? tierDisplay.includes('+') : false;
 
-  const totalCoins = processField(getFieldExactOrFuzzy(lines, allTranslations('coins')) || getField(lines, fields.coins));
-  const totalCells = processField(getFieldExactOrFuzzy(lines, allTranslations('cells')) || getField(lines, fields.cells));
-  const totalDice = processField(getFieldExactOrFuzzy(lines, allTranslations('dice')) || getField(lines, fields.dice));
+  function readMetric(field: string) {
+    const labels = [...new Set([fields[field], ...allTranslations(field)].filter(Boolean))];
+    const patterns = labels.map(label => new RegExp('^\\s*' + escapeSingleLinePattern(label).replace(/\s+/g, '\\s*') + '(?=\\s|[:|=–-]|[\\d$]|$)\\s*[:|=–-]?\\s*', 'i'));
+    for (const line of lines) {
+      for (const pattern of patterns) {
+        const match = pattern.exec(line);
+        if (match) {
+          const token = line.slice(match[0].length);
+          if (token) return processField(token);
+        }
+      }
+    }
+    // The fallback can still recognize a slightly misread label. Compare only the
+    // label, then validate the entire value rather than scavenging a numeric prefix.
+    let best: { score: number; value: string } | undefined;
+    const labelKey = (text: string) => text.toLowerCase().replace(/[^\p{L}]/gu, '');
+    for (const line of lines) {
+      const start = line.search(/[\d$]/);
+      if (start < 0) continue;
+      const foundLabel = labelKey(line.slice(0, start));
+      for (const label of labels) {
+        const score = similarity(foundLabel, labelKey(label));
+        if (score > 0.8 && (!best || score > best.score)) best = { score, value: line.slice(start) };
+      }
+    }
+    return best ? processField(best.value) : '';
+  }
+  const totalCoins = readMetric('coins');
+  const totalCells = readMetric('cells');
+  const totalDice = readMetric('dice');
 
   let roundDuration = '';
   for (const line of lines) {
@@ -900,6 +886,20 @@ export function parseRunDataFromText(rawText: string) {
   }
   if (!canonical) {
     throw new IncompleteRunReportError('unrecognized_report');
+  }
+  // The shared parser preserves the original report lexemes separately from
+  // canonical aliases. Normalize known required metrics before validation so
+  // a grouped or mixed-separator count is not truncated by the upstream parser.
+  for (const [key, alias] of [
+    ['totalCoins', 'coins'],
+    ['totalCells', 'cells'],
+    ['totalDice', 'rerollShards'],
+  ] as const) {
+    const raw = canonical.rawParseFields?.[key];
+    if (typeof raw !== 'string') continue;
+    const normalized = normalizeReportMetric(raw);
+    canonical[key] = normalized ?? raw;
+    canonical[alias] = normalized ?? raw;
   }
   try { assertTrackerRunSubmission(canonical as unknown as Record<string, unknown>); }
   catch { throw new IncompleteRunReportError('missing_fields'); }

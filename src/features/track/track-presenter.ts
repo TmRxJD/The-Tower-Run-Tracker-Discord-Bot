@@ -1,11 +1,12 @@
+import { readTrackerMetricValue } from './shared/report-number';
 import { Colors, EmbedBuilder } from 'discord.js';
 import type { BotConfig } from '../../config/bot-config';
-import { formatNumberForDisplay, formatRateWithNotation, parseDurationToHours, parseNumberInput, standardizeNotation } from '../../utils/tracker-math';
+import { formatNumberForDisplay, formatRateWithNotation, parseDurationToHours } from '../../utils/tracker-math';
 import type { RunSummaryView } from './types';
 
 function safeNumber(value?: string) {
   if (!value) return 0;
-  return parseNumberInput(standardizeNotation(value));
+  return readTrackerMetricValue(value) ?? 0;
 }
 
 function trimBattleDateSeconds(value?: string) {

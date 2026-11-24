@@ -1,10 +1,11 @@
-import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '@tmrxjd/platform/tools';
+import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '../shared/report-number';
 import { Colors, EmbedBuilder } from 'discord.js';
 import { generateCoverageDescription, formatDuration as formatRunDuration } from '../handlers/upload-helpers';
 import { computeHourlyRate } from '../tracker-helpers';
 import { formatNumberForDisplay } from '../../../utils/tracker-math';
 import { getTrackUiConfig } from '../../../config/tracker-ui-config';
-import { type TrackerRunDeltaResult, type TrackerDeltaStatKey, getDeltaAnnotationForStat } from '@tmrxjd/platform/tools';
+import { type TrackerRunDeltaResult, type TrackerDeltaStatKey } from '@tmrxjd/platform/tools';
+import { getDeltaAnnotationForStat } from '../shared/report-number-deltas';
 
 export type ShareEmbedInput = {
   user: { username: string; displayName?: string; displayAvatarURL?: () => string | null };

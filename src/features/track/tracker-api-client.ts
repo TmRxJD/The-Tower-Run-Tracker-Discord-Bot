@@ -62,7 +62,7 @@ import { getAppConfig } from '../../config';
 import { logger } from '../../core/logger';
 import { createAppwriteClient } from '../../persistence/appwrite-client';
 import { isUnauthorizedAppwriteError, isNotFoundAppwriteError } from '../../persistence/appwrite-error-utils';
-import { formatDateToISO, formatTimeTo24h, normalizeDecimalSeparators } from './tracker-helpers';
+import { formatDateToISO, formatTimeTo24h } from './tracker-helpers';
 import {
   readTrackerImageText,
   getDocumentOrNull,
@@ -80,7 +80,7 @@ import {
   stitchBotCloudRunsWithExtendedFallback,
   writeBotRunCloudDocumentPair,
 } from './run-cloud-pair-client';
-import { standardizeNotation } from '../../utils/tracker-math';
+import { normalizeKnownRunMetrics, normalizeReportMetric } from './shared/report-number';
 import {
   estimateLifetimeEntryTimestamp,
   mergeLifetimeEntriesDelta,
@@ -329,7 +329,7 @@ async function runOcrObserved(file: AttachmentPayload) {
   try {
     setPerformanceTraceStage('ocr-cloud');
     const visionResult = await measurePerformanceSpan('ocr-cloud', () => runDirectVisionOcr(file));
-    const modelRunData = visionResult.runData;
+    const modelRunData = normalizeKnownRunMetrics(visionResult.runData);
 
     try {
       const parsedRunData = parseOcrRunDataFromLines(visionResult.textLines);
@@ -1204,7 +1204,7 @@ function buildLifetimeDocumentPayload(
   return buildTrackerLifetimeCloudWritePayload(entry, userId, username, {
     existing,
     strictMinimal,
-    normalizeNumericValue: value => standardizeNotation(value.replace(',', '.')),
+    normalizeNumericValue: value => normalizeReportMetric(value) ?? value,
   });
 }
 
@@ -1265,7 +1265,7 @@ export async function saveLifetimeEntry(params: {
   };
 
   const normalizedEntry = normalizeLifetimeEntryValues(nextEntry, {
-    normalizeNumericValue: value => standardizeNotation(value.replace(',', '.')),
+    normalizeNumericValue: value => normalizeReportMetric(value) ?? value,
   });
 
   if (params.screenshotUrl) {
@@ -1488,7 +1488,7 @@ async function upsertCloudLeaderboardForUser(userId: string, usernameHint = 'unk
 }
 
 async function cloudSubmitRunSummary(params: { userId: string; username: string; runData: RunDataPayload; note?: string; screenshot?: AttachmentPayload | null }) {
-  const normalized = normalizeDecimalSeparators(params.runData as unknown as Record<string, unknown>);
+  const normalized = normalizeKnownRunMetrics(params.runData as unknown as Record<string, unknown>);
   const runRecord = {
     ...(normalized as RunRecord),
     note: params.note ?? (normalized as RunRecord).note,
@@ -1520,7 +1520,7 @@ async function cloudLogRun(params: {
   disableDuplicateLookup?: boolean;
   onRunIdentity?: (runId: string) => void;
 }) {
-  const normalizedInput = normalizeDecimalSeparators(params.runData as Record<string, unknown>) as RunRecord;
+  const normalizedInput = normalizeKnownRunMetrics(params.runData as Record<string, unknown>) as RunRecord;
   const targetRunId = pickString(normalizedInput.runId) ?? pickString(normalizedInput.id) ?? null;
   const existingDoc = targetRunId
     ? ({ $id: targetRunId } as RunRecord)

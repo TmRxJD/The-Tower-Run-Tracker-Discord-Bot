@@ -1,3 +1,4 @@
+import { resolveReportInputPreference } from '../shared/report-number-preference';
 import type {
   MessageComponentInteraction,
   ModalSubmitInteraction} from 'discord.js';
@@ -15,7 +16,7 @@ import {
 import { awaitOwnedModalSubmit } from '../../../core/interaction-session';
 import { TRACKER_IDS, withToken } from '../track-custom-ids';
 import { parseTrackerToken } from '../track-custom-ids';
-import { standardizeNotation } from '../../../utils/tracker-math';
+import { normalizeReportMetric } from '../shared/report-number';
 import { formatDate, formatTime, parseTierString } from './upload-helpers';
 import { getPendingRun, updatePendingRun } from '../pending-run-store';
 import { renderDataReview } from './data-review-handlers';
@@ -50,6 +51,7 @@ type RunDataRecord = Record<string, unknown> & {
 };
 
 type PendingRecordLike = {
+  decimalPreference?: string;
   token: string;
   userId: string;
   username: string;
@@ -192,7 +194,7 @@ async function renderManualDraft(interaction: ManualInteraction, token: string, 
   await interaction.editReply({ embeds: [embed], components: manualButtons(token, mode), files: [] }).catch(() => {});
 }
 
-async function openManualStageOne(interaction: ManualInteraction, token: string, current: RunDataRecord) {
+async function openManualStageOne(interaction: ManualInteraction, token: string, current: RunDataRecord, decimalPreference?: string) {
   const manualUi = getTrackUiConfig().manual;
   const reviewLabels = getTrackUiConfig().review.fieldLabels;
   const component = interaction as MessageComponentInteraction;
@@ -223,6 +225,7 @@ async function openManualStageOne(interaction: ManualInteraction, token: string,
   const tierInfo = parseTierString(tierRaw);
   const waveRaw = submitted.fields.getTextInputValue('wave') || '';
   const durationRaw = submitted.fields.getTextInputValue('duration') || '';
+  decimalPreference = await resolveReportInputPreference(submitted.user.id, submitted.locale, decimalPreference);
   const coinsRaw = submitted.fields.getTextInputValue('coins') || '';
   const cellsRaw = submitted.fields.getTextInputValue('cells') || '';
 
@@ -232,12 +235,12 @@ async function openManualStageOne(interaction: ManualInteraction, token: string,
     tierHasPlus: tierInfo.hasPlus,
     wave: waveRaw,
     roundDuration: durationRaw,
-    totalCoins: coinsRaw ? standardizeNotation(coinsRaw) : null,
-    totalCells: cellsRaw ? standardizeNotation(cellsRaw) : null,
+    totalCoins: coinsRaw ? normalizeReportMetric(coinsRaw, coinsRaw === String(current.totalCoins ?? '') ? undefined : decimalPreference) ?? coinsRaw : null,
+    totalCells: cellsRaw ? normalizeReportMetric(cellsRaw, cellsRaw === String(current.totalCells ?? '') ? undefined : decimalPreference) ?? cellsRaw : null,
   };
 }
 
-async function openManualStageTwo(interaction: ManualInteraction, token: string, current: RunDataRecord) {
+async function openManualStageTwo(interaction: ManualInteraction, token: string, current: RunDataRecord, decimalPreference?: string) {
   const manualUi = getTrackUiConfig().manual;
   const reviewLabels = getTrackUiConfig().review.fieldLabels;
   const component = interaction as MessageComponentInteraction;
@@ -262,13 +265,14 @@ async function openManualStageTwo(interaction: ManualInteraction, token: string,
     /* ignore */
   }
 
+  decimalPreference = await resolveReportInputPreference(submitted.user.id, submitted.locale, decimalPreference);
   const diceRaw = submitted.fields.getTextInputValue('dice') || '';
   const killedByRaw = submitted.fields.getTextInputValue('killedBy') || '';
   const dateRaw = submitted.fields.getTextInputValue('date') || '';
   const timeRaw = submitted.fields.getTextInputValue('time') || '';
 
   return {
-    totalDice: diceRaw ? standardizeNotation(diceRaw) : null,
+    totalDice: diceRaw ? normalizeReportMetric(diceRaw, diceRaw === String(current.totalDice ?? '') ? undefined : decimalPreference) ?? diceRaw : null,
     killedBy: killedByRaw ? killedByRaw.trim() : 'Apathy',
     date: dateRaw ? dateRaw.trim() : formatDate(new Date()),
     time: timeRaw ? timeRaw.trim() : formatTime(new Date()),
@@ -413,7 +417,7 @@ export function createManualHandlers(deps: ManualDeps) {
         return;
       }
 
-      const patch = await openManualStageOne(interaction, token, pending.runData);
+      const patch = await openManualStageOne(interaction, token, pending.runData, pending.decimalPreference);
       const updated = await updatePendingRun(token, { runData: withManualDefaults({ ...pending.runData, ...patch }, getTrackerFlowMode(interaction.user.id)) });
       if (!updated) {
         await interaction.editReply({ content: manualUi.sessionExpired, embeds: [], components: [] }).catch(() => {});
@@ -441,7 +445,7 @@ export function createManualHandlers(deps: ManualDeps) {
         return;
       }
 
-      const patch = await openManualStageTwo(interaction, token, pending.runData);
+      const patch = await openManualStageTwo(interaction, token, pending.runData, pending.decimalPreference);
       const updated = await updatePendingRun(token, { runData: withManualDefaults({ ...pending.runData, ...patch }, getTrackerFlowMode(interaction.user.id)) });
       if (!updated) {
         await interaction.editReply({ content: getTrackUiConfig().manual.sessionExpired, embeds: [], components: [] }).catch(() => {});

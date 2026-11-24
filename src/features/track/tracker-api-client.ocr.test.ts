@@ -285,3 +285,12 @@ describe('tracker-api-client OCR routing', () => {
     expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain('PRIVATE_')
   })
 })
+
+it('normalizes structured cloud OCR fallback without changing source text or identity', async () => {
+  const lines = ['Coins Earned 12,34K'];
+  runDirectVisionOcrMock.mockResolvedValue({ textLines: lines, runData: { totalCoins: '12,34K', totalCells: '1.234,56K', runId: 'keep-1,23' } });
+  parseRunDataFromTextMock.mockImplementationOnce(() => { throw new Error('incomplete report'); });
+  const result = await runOCR(loadAttachment('fallback.png'));
+  expect(result.text).toEqual(lines);
+  expect(result.runData).toMatchObject({ totalCoins: '12.34K', totalCells: '1234.56K', runId: 'keep-1,23' });
+});

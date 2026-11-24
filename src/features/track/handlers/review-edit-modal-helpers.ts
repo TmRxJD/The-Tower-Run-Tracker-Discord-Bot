@@ -81,10 +81,11 @@ export function applySubmittedReviewEditValues(
   runData: RunDataRecord,
   selectedFields: string[],
   getFieldValue: (field: string, index: number) => string,
+  decimalPreference?: string,
 ): RunDataRecord {
   let nextRunData = { ...runData };
   selectedFields.forEach((field, index) => {
-    nextRunData = applyEditFieldValue(nextRunData, field, getFieldValue(field, index));
+    nextRunData = applyEditFieldValue(nextRunData, field, getFieldValue(field, index), decimalPreference);
   });
   return nextRunData;
 }

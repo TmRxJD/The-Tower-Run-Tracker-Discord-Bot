@@ -1,3 +1,4 @@
+import { readTrackerMetricValue } from '../shared/report-number';
 import { TransientCache } from '../../../core/transient-cache';
 import {
   ActionRowBuilder,
@@ -17,7 +18,7 @@ import {
 } from '@tmrxjd/platform/tools';
 import { getLastRun } from '../tracker-api-client';
 import { TRACKER_IDS } from '../track-custom-ids';
-import { formatNumberForDisplay, parseNumberInput, standardizeNotation } from '../../../utils/tracker-math';
+import { formatNumberForDisplay, parseDurationToHours } from '../../../utils/tracker-math';
 import { logError } from './error-handlers';
 
 const runtime = buildNapiRsCanvasChartRenderRuntime((w, h) => createCanvas(w, h));
@@ -36,18 +37,21 @@ type AnalysisChartDef = {
 
 function toNum(val: unknown): number | null {
   if (val === null || val === undefined || val === '') return null;
-  const n = parseNumberInput(standardizeNotation(String(val)));
-  return Number.isFinite(n) ? n : null;
+  const n = readTrackerMetricValue(val);
+  return n;
 }
 
 function toDuration(run: Record<string, unknown>): number | null {
   const raw = String(run.roundDuration ?? run.duration ?? '');
   if (!raw) return null;
-  const parts = raw.split(':').map(Number);
-  if (parts.length === 3) return (parts[0] * 3600 + parts[1] * 60 + parts[2]) / 3600;
-  if (parts.length === 2) return (parts[0] * 60 + parts[1]) / 3600;
-  const n = parseFloat(raw);
-  return Number.isFinite(n) ? n / 3600 : null;
+  const duration = raw.trim().replace(',', '.');
+  if (/^\d+(?:\.\d+)?$/.test(duration)) return Number(duration) / 3600;
+  if (duration.includes(':')) {
+    if (!/^\d+(?::\d+){1,2}(?:\.\d+)?$/.test(duration)) return null;
+    return duration.split(':').reduce((seconds, part) => seconds * 60 + Number(part), 0) / 3600;
+  }
+  const hours = parseDurationToHours(raw);
+  return Number.isFinite(hours) && hours > 0 ? hours : null;
 }
 
 function perHour(metric: unknown, run: Record<string, unknown>): number | null {

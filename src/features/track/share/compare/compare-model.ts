@@ -1,4 +1,5 @@
-import { computeTrackerRunDeltaBaseline, readTrackerMetricValue, readTrackerModuleShardsTotal } from '@tmrxjd/platform/tools';
+import { computeTrackerRunDeltaBaseline } from '../../shared/report-number-deltas';
+import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '../../shared/report-number';
 import { parseDurationToHours } from '@tmrxjd/platform/math';
 import { getTrackUiConfig } from '../../../../config/tracker-ui-config';
 import { buildShareEmbed, type ShareEmbedInput } from '../share-embed';

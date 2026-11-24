@@ -1,5 +1,6 @@
 import { escapeMarkdown } from 'discord.js';
-import { computeStatDelta, formatDeltaAnnotation, readTrackerMetricValue } from '@tmrxjd/platform/tools';
+import { readTrackerMetricValue } from '../../shared/report-number';
+import { computeStatDelta, formatDeltaAnnotation } from '@tmrxjd/platform/tools';
 
 export interface CompareRow { section: string; key: string; label: string; shared: string | null; mine: string | null; difference?: string }
 export interface ComparePage { text: string }
