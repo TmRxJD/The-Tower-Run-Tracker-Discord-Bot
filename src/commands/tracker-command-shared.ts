@@ -1,3 +1,4 @@
+import { legacyTrackerInputEnabled } from '../features/track/legacy-input';
 import { getLocalSettings } from '../features/track/local-run-store';
 import { SlashCommandBuilder, type ChatInputCommandInteraction, MessageFlagsBitField } from 'discord.js';
 import { getBotConfig } from '../config/bot-config';
@@ -47,7 +48,7 @@ export function buildTrackerCommandData(commandKey: TrackerCommandKey) {
         .addChoices(...options.type.choices));
   }
 
-  if ('screenshot' in options && options.screenshot) {
+  if (legacyTrackerInputEnabled() && 'screenshot' in options && options.screenshot) {
     data.addAttachmentOption(option =>
       option.setName(options.screenshot.name)
         .setDescription(options.screenshot.description)

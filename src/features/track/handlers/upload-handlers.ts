@@ -1,3 +1,4 @@
+import { legacyTrackerInputEnabled, replyLegacyTrackerInputDisabled, LIFETIME_EXPORT_HELP } from '../legacy-input';
 import { TransientCache } from '../../../core/transient-cache';
 import { downloadBoundedBuffer } from '../../../core/bounded-download';
 import { performanceDiagnosticContext, setPerformanceTraceStage } from '../../../core/performance-trace';
@@ -597,6 +598,7 @@ async function robustProcessImage({ interaction, imageBuffer, filename, contentT
   return null;
 }
 
+/** @deprecated Screenshot OCR is an opt-in fallback; import Battle Report or save exports. */
 export async function handleDirectAttachment(
   interaction: TrackReplyInteractionLike,
   attachment: AttachmentLike,
@@ -605,6 +607,10 @@ export async function handleDirectAttachment(
   mode?: TrackerUiMode,
 ) {
   const resolvedMode = mode ?? getTrackerFlowMode(interaction.user.id);
+  if (!legacyTrackerInputEnabled()) {
+    await replyLegacyTrackerInputDisabled(interaction, resolvedMode === 'lifetime' ? LIFETIME_EXPORT_HELP : undefined);
+    return;
+  }
   const uploadUi = getTrackerUiConfig(resolvedMode).uploadFlows;
   const userId = interaction.user.id;
   const username = interaction.user.username;
@@ -705,6 +711,10 @@ export async function handleUploadFlow(interaction: MessageComponentInteraction 
   const userId = interaction.user.id;
   const mode = getTrackerFlowMode(userId);
 
+  if (!legacyTrackerInputEnabled()) {
+    await replyLegacyTrackerInputDisabled(interaction, mode === 'lifetime' ? LIFETIME_EXPORT_HELP : undefined);
+    return;
+  }
   const ui = getTrackerUiConfig(mode);
   const uploadUi = ui.uploadFlows;
   const Builders = Discord as unknown as BuildersLike;
@@ -1156,7 +1166,7 @@ export async function handleDirectTextPaste(
       defaultRunType: defaultRunType ?? undefined,
     });
 
-    if (resolvedMode === 'track' && attachmentOrNull) {
+    if (legacyTrackerInputEnabled() && resolvedMode === 'track' && attachmentOrNull) {
       void verifyScreenshotMatchesPastedRun(attachmentOrNull, processedData).catch(() => {
         logger.warn('Tracker screenshot verification failed', {
         });
@@ -1257,6 +1267,11 @@ export async function handlePasteFlow(interaction: MessageComponentInteraction |
 export async function handleAddRunFlow(interaction: MessageComponentInteraction | ModalSubmitInteraction) {
   if (!('showModal' in interaction) || typeof interaction.showModal !== 'function') return;
   const mode = getTrackerFlowMode(interaction.user.id);
+  const legacyEnabled = legacyTrackerInputEnabled();
+  if (!legacyEnabled && mode === 'lifetime') {
+    await replyLegacyTrackerInputDisabled(interaction, LIFETIME_EXPORT_HELP);
+    return;
+  }
   const ui = getTrackerUiConfig(mode);
   const uploadUi = ui.uploadFlows;
   const userId = interaction.user.id;
@@ -1284,7 +1299,7 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
     : null;
 
   const includeNotes = mode === 'track';
-  const pasteInput = new TextInputBuilder().setCustomId(TRACKER_IDS.flow.addRunPasteText).setLabel(uploadUi.battleReportLabel).setStyle(TextInputStyle.Paragraph).setRequired(false);
+  const pasteInput = new TextInputBuilder().setCustomId(TRACKER_IDS.flow.addRunPasteText).setLabel(uploadUi.battleReportLabel).setStyle(TextInputStyle.Paragraph).setRequired(!legacyEnabled);
   const noteInput = new TextInputBuilder().setCustomId(TRACKER_IDS.flow.addRunNote).setLabel(uploadUi.addRunNotesLabel).setStyle(TextInputStyle.Short).setRequired(false);
 
   const fileUpload = new Builders.FileUploadBuilder().setCustomId(TRACKER_IDS.flow.addRunFile);
@@ -1293,7 +1308,7 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
   } catch {
     /* ignore */
   }
-  const labeledFile = new Builders.LabelBuilder().setLabel(uploadUi.optionalUploadFileLabel).setFileUploadComponent(fileUpload);
+  const labeledFile = new Builders.LabelBuilder().setLabel(legacyEnabled ? uploadUi.optionalUploadFileLabel : 'Optional screenshot (Battle Report required)').setFileUploadComponent(fileUpload);
 
   modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(pasteInput));
   if (includeNotes) {
@@ -1408,6 +1423,10 @@ export async function handleAddRunFlow(interaction: MessageComponentInteraction 
       await handleDirectTextPaste(submitted as unknown as TrackReplyInteractionLike,
         pastedText, normalizedAttachment, preNote, selectedRunType, mode,
         { source: 'modal', context: 'paste_add_run_modal' });
+      return;
+    }
+    if (!legacyTrackerInputEnabled()) {
+      await replyLegacyTrackerInputDisabled(submitted);
       return;
     }
     if (normalizedAttachment) {

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../features/track/handlers/upload-handlers', () => ({ clearMainMenuSession: vi.fn() }));
 vi.mock('./diagnostics', () => ({ recordDiagnostic: vi.fn() }));
@@ -8,6 +8,10 @@ import { STALE_COMPONENT_MESSAGE, registerInteractionRouter } from './interactio
 import { recordDiagnostic } from './diagnostics';
 import { awaitOwnedModalSubmit } from './interaction-session';
 import type { TrackerBotClient } from './tracker-bot-client';
+
+import { TRACKER_IDS } from '../features/track/track-custom-ids';
+
+afterEach(() => vi.unstubAllEnvs());
 
 type Kind = 'command' | 'button' | 'select' | 'modal';
 
@@ -167,4 +171,18 @@ describe('collector-owned modal diagnostics', () => {
     await fire(makeInteraction('modal', { customId: 'ended-modal' }));
     expect(recordDiagnostic).toHaveBeenCalledWith('interaction.dropped', expect.anything());
   });
+});
+
+it.each([undefined, 'true'])('retired unowned OCR/manual modals only get export guidance when off (%s)', async enabled => {
+  vi.stubEnv('TRACKER_BOT_ENABLE_LEGACY_INPUT', enabled);
+  const { fire } = setup();
+  for (const customId of [TRACKER_IDS.flow.uploadModal, TRACKER_IDS.manual.modalOnePrefix + 'old', TRACKER_IDS.review.editModalPrefix + 'active']) {
+    const interaction = makeInteraction('modal', { customId });
+    await fire(interaction);
+    if (!enabled && !customId.startsWith(TRACKER_IDS.review.editModalPrefix)) {
+      expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('Battle Report export') }));
+    } else {
+      expect(interaction.reply).not.toHaveBeenCalled();
+    }
+  }
 });

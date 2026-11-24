@@ -1,3 +1,4 @@
+import { legacyTrackerInputEnabled } from '../legacy-input';
 import type {
   InteractionUpdateOptions,
   MessageComponentInteraction,
@@ -213,7 +214,7 @@ export async function buildSettingsPayload(userId: string, current: TrackerSetti
     .addFields(
       { name: settingsUi.labels.defaultRunType, value: String(defaultRunType), inline: true },
       { name: settingsUi.labels.appLanguage ?? 'App language', value: formatSharedLanguageLabel(sharedSettings.languagePreference), inline: true },
-      { name: settingsUi.labels.scanLanguage, value: String(language), inline: true },
+      ...(legacyTrackerInputEnabled() ? [{ name: settingsUi.labels.scanLanguage, value: String(language), inline: true }] : []),
       { name: settingsUi.labels.dateFormat ?? 'Date format', value: formatDateFormatLabel(sharedSettings.dateFormatPreference), inline: true },
       { name: settingsUi.labels.decimalIndicator ?? 'Decimal indicator', value: formatDecimalSeparatorLabel(sharedSettings.decimalSeparatorPreference), inline: true },
       { name: settingsUi.labels.timezone ?? 'Timezone', value: String(timezone), inline: true },
@@ -317,13 +318,14 @@ async function buildLanguageSettingsPayload(userId: string, current: TrackerSett
   const settingsUi = getTrackUiConfig().settings;
   const sharedSettings = await getEffectiveUserSharedSettings(userId);
   const scanLanguage = current?.scanLanguage ?? 'English';
+  const legacyEnabled = legacyTrackerInputEnabled();
 
   const embed = new EmbedBuilder()
     .setTitle('🌐 Language & Locale')
-    .setDescription('Adjust shared app locale preferences separately from the OCR scan language.')
+    .setDescription(legacyEnabled ? 'Adjust shared app locale preferences separately from the OCR scan language.' : 'Adjust shared app locale preferences.')
     .addFields(
       { name: settingsUi.labels.appLanguage ?? 'App language', value: formatSharedLanguageLabel(sharedSettings.languagePreference), inline: true },
-      { name: settingsUi.labels.scanLanguage, value: scanLanguage, inline: true },
+      ...(legacyEnabled ? [{ name: settingsUi.labels.scanLanguage, value: scanLanguage, inline: true }] : []),
       { name: settingsUi.labels.dateFormat ?? 'Date format', value: formatDateFormatLabel(sharedSettings.dateFormatPreference), inline: true },
       { name: settingsUi.labels.decimalIndicator ?? 'Decimal indicator', value: formatDecimalSeparatorLabel(sharedSettings.decimalSeparatorPreference), inline: true },
       { name: settingsUi.labels.localePreview ?? 'Locale preview', value: buildLocalePreview(sharedSettings), inline: false },
@@ -375,9 +377,9 @@ async function buildLanguageSettingsPayload(userId: string, current: TrackerSett
   );
 
   return {
-    content: 'Update your shared app locale and tracker scan language below.',
+    content: legacyEnabled ? 'Update your shared app locale and tracker scan language below.' : 'Update your shared app locale below.',
     embeds: [embed],
-    components: [appLanguageRow, scanLanguageRow, dateFormatRow, decimalSeparatorRow, navigationRow],
+    components: [appLanguageRow, ...(legacyEnabled ? [scanLanguageRow] : []), dateFormatRow, decimalSeparatorRow, navigationRow],
   };
 }
 
@@ -781,6 +783,11 @@ export async function handleTrackMenuLanguageBack(interaction: TrackMenuInteract
 
 export async function handleTrackMenuSelectLanguage(interaction: TrackMenuInteraction) {
   try {
+    if (!legacyTrackerInputEnabled()) {
+      const refreshed = await getUserSettings(interaction.user.id);
+      await updateInPlace(interaction, await buildLanguageSettingsPayload(interaction.user.id, refreshed));
+      return;
+    }
     const nextValue = getSelectedValues(interaction)[0] ?? 'English';
     await editUserSettings(interaction.user.id, { scanLanguage: nextValue });
     const refreshed = await getUserSettings(interaction.user.id);

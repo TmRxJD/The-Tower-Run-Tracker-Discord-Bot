@@ -155,15 +155,15 @@
       "wavesCompleted"
     ],
     "options": [
-      { "name": "📤 Upload", "value": "Upload a screenshot of your Lifetime Stats for automatic data extraction.", "inline": true },
-      { "name": "📝 Manual Entry", "value": "Manually enter lifetime stats if you prefer not to use OCR.", "inline": true },
+      { "name": "📤 Upload", "legacyInput": true, "value": "Upload a screenshot of your Lifetime Stats for automatic data extraction.", "inline": true },
+      { "name": "📝 Manual Entry", "legacyInput": true, "value": "Manually enter lifetime stats if you prefer not to use OCR.", "inline": true },
       { "name": "✏️ Edit Last", "value": "Edit your most recent lifetime stats entry.", "inline": true },
       { "name": "📢 Share Last Entry", "value": "Share your latest lifetime stats entry in the channel.", "inline": true },
       { "name": "🗑️ Remove Last", "value": "Remove your most recent lifetime stats entry with confirmation.", "inline": true },
       { "name": "📈 View Entries", "value": "View and analyze your previous lifetime entries.", "inline": true },
       { "name": "🔗 Web Tracker", "value": "Open your lifetime tracker page on the website.", "inline": true },
       { "name": "🎟️ Support", "value": "Open support and ticket help for the tracker Discord server.", "inline": true },
-      { "name": "⚙️ Settings", "value": "Configure shared tracker settings such as scan language and timezone.", "inline": true }
+      { "name": "⚙️ Settings", "value": "Configure shared tracker settings such as locale and timezone.", "inline": true }
     ]
   },
   "submission": {

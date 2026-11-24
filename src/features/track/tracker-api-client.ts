@@ -322,6 +322,7 @@ async function runLocalGutenyeOcr(file: AttachmentPayload): Promise<ParsedOcrRes
   }
 }
 
+/** @deprecated Legacy screenshot OCR; use Battle Report/save export at user-facing entrypoints. */
 export async function runOCR(file: AttachmentPayload) {
   return observeOperation('ocr', () => runOcrObserved(file));
 }

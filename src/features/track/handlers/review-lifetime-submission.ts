@@ -78,8 +78,8 @@ export async function submitLifetimePendingRun(params: {
 
   await deletePendingRun(params.token);
   return async () => {
-    await params.interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files }).catch(() => {
-      return params.interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(), files: [] });
+    await params.interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(undefined, 'lifetime'), files }).catch(() => {
+      return params.interaction.editReply({ content: undefined, embeds: [embed], components: createSuccessButtons(undefined, 'lifetime'), files: [] });
     });
 
     if (lifetimeResult.cloudUnavailable) {

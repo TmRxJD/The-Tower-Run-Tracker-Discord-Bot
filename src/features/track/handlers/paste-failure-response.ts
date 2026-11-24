@@ -1,3 +1,4 @@
+import { legacyTrackerInputEnabled } from '../legacy-input';
 import { logger } from '../../../core/logger';
 import { updatePasteDiagnostic } from '../paste-diagnostics';
 import { IncompleteRunReportError } from './paste-input-error';
@@ -25,8 +26,8 @@ export async function reportPasteFailure(interaction: TrackReplyInteractionLike,
     await logError(interaction.client as { channels: { fetch: (id: string) => Promise<unknown> } }, interaction.user, safeError, context, null, null, stage);
   }
   const guidance = stage === 'parse' && error instanceof IncompleteRunReportError
-    ? 'Please paste the full Battle Report, including Battle Date, Tier, Wave, Real Time, Coins earned, Cells Earned and Reroll Shards Earned. You can also upload a screenshot.'
-    : stage === 'parse' ? 'The report could not be processed. Please try again or upload a screenshot.'
+    ? 'Please paste the full in-game Battle Report export, including Battle Date, Tier, Wave, Real Time, Coins earned, Cells Earned and Reroll Shards Earned.' + (legacyTrackerInputEnabled() ? ' You can also upload a screenshot.' : '')
+    : stage === 'parse' ? 'The report could not be processed. Try pasting the full in-game Battle Report export again.' + (legacyTrackerInputEnabled() ? ' You can also upload a screenshot.' : '')
       : stage === 'history' ? 'Your run history could not be verified, so no run was saved. Please retry shortly.'
       : 'The report could not be prepared for review. Please try again.';
   await interaction.editReply({ content: `${guidance} Reference: ${reference}`, embeds: [], components: [] }).catch(() => {});

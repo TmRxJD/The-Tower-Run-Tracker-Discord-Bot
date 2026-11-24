@@ -1,3 +1,4 @@
+import { isDeprecatedTrackerInputModal, legacyTrackerInputEnabled, LEGACY_TRACKER_INPUT_DISABLED } from '../features/track/legacy-input';
 import type { Interaction} from 'discord.js';
 import { MessageFlagsBitField } from 'discord.js';
 import { logger } from './logger';
@@ -61,6 +62,11 @@ export function registerInteractionRouter(client: TrackerBotClient) {
         const handled = await client.components.dispatch(interaction);
         if (!handled) {
           if (locallyOwnedModal) return;
+          if (interaction.isModalSubmit() && !legacyTrackerInputEnabled() &&
+              isDeprecatedTrackerInputModal(interaction.customId) && !interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: LEGACY_TRACKER_INPUT_DISABLED, flags: MessageFlagsBitField.Flags.Ephemeral }).catch(() => {});
+            return;
+          }
           // Nothing acknowledged this interaction, so Discord renders "This interaction
           // failed" and the user clicks again. Usually a customId from a message that
           // outlived the process that registered its handler.

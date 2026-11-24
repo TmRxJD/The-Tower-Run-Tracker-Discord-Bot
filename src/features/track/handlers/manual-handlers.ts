@@ -1,3 +1,4 @@
+import { legacyTrackerInputEnabled, replyLegacyTrackerInputDisabled } from '../legacy-input';
 import { resolveReportInputPreference } from '../shared/report-number-preference';
 import type {
   MessageComponentInteraction,
@@ -279,6 +280,7 @@ async function openManualStageTwo(interaction: ManualInteraction, token: string,
   };
 }
 
+/** @deprecated Use Battle Report or structured save exports; retained for rollback. */
 export function createManualHandlers(deps: ManualDeps) {
   const { createPendingRunWithMetadata, handleAddRunFlow, renderTrackMenu } = deps;
 
@@ -501,14 +503,23 @@ export function createManualHandlers(deps: ManualDeps) {
     }
   };
 
+  // Keep old component IDs routable so a stale Discord message gets actionable guidance.
+  const legacyOnly = (handler: (interaction: ManualInteraction) => Promise<void>) => async (interaction: ManualInteraction) => {
+    if (!legacyTrackerInputEnabled()) {
+      await replyLegacyTrackerInputDisabled(interaction);
+      return;
+    }
+    await handler(interaction);
+  };
+
   return {
     handleTrackMenuUploadAnother,
-    handleTrackMenuManual,
-    handleManualTypeSelection,
-    handleManualNote,
-    handleManualEditStageOne,
-    handleManualEditStageTwo,
-    handleManualNext,
-    handleManualBackToMenu,
+    handleTrackMenuManual: legacyOnly(handleTrackMenuManual),
+    handleManualTypeSelection: legacyOnly(handleManualTypeSelection),
+    handleManualNote: legacyOnly(handleManualNote),
+    handleManualEditStageOne: legacyOnly(handleManualEditStageOne),
+    handleManualEditStageTwo: legacyOnly(handleManualEditStageTwo),
+    handleManualNext: legacyOnly(handleManualNext),
+    handleManualBackToMenu: legacyOnly(handleManualBackToMenu),
   };
 }

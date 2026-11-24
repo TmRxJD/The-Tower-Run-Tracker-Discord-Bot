@@ -1,3 +1,4 @@
+import { legacyTrackerInputEnabled, LIFETIME_EXPORT_HELP } from './legacy-input';
 import type { Attachment, ChatInputCommandInteraction, EmbedBuilder} from 'discord.js';
 import { getBotConfig } from '../../config/bot-config';
 import { ensureDeferredEphemeralReply } from './interaction-ack';
@@ -38,7 +39,9 @@ export async function handleTrackWorkflow(interaction: ChatInputCommandInteracti
   if (options.paste) {
     if (mode === 'lifetime') {
       const payload = {
-        content: 'Lifetime paste flow is not supported. Please upload a lifetime screenshot instead.',
+        content: legacyTrackerInputEnabled()
+          ? 'Lifetime paste is unavailable. Upload a lifetime screenshot or use /track → Import Save File.'
+          : LIFETIME_EXPORT_HELP,
         ephemeral: true,
       };
       if (interaction.deferred || interaction.replied) {

@@ -1,3 +1,4 @@
+import { legacyTrackerInputEnabled } from '../features/track/legacy-input';
 import { SlashCommandBuilder } from 'discord.js';
 import { getBotConfig } from '../config/bot-config';
 
@@ -38,7 +39,7 @@ function buildTrackerCommandData(commandKey: TrackerCommandKey) {
         .addChoices(...options.type.choices));
   }
 
-  if ('screenshot' in options && options.screenshot) {
+  if (legacyTrackerInputEnabled() && 'screenshot' in options && options.screenshot) {
     data.addAttachmentOption(option =>
       option.setName(options.screenshot.name)
         .setDescription(options.screenshot.description)

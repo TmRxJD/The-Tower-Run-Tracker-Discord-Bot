@@ -42,3 +42,9 @@ This folder contains the run-tracking feature implemented as an interaction-firs
 - Place new component handlers in the closest domain file under `handlers/`
 - Re-export externally consumed handlers from `handlers/index.ts`
 - Keep heavy orchestration in workflow/handlers, keep stores side-effect-focused
+
+## Deprecated input fallback
+
+Use /track to paste the in-game Battle Report export, or choose **Import Save File** for a supported desktop save or Android tool export. A screenshot attached alongside a pasted report is optional evidence; it is not OCR input while the fallback is off. With the fallback off, /lifetime still opens saved entries; use the structured save import to add new Lifetime Stats.
+
+Manual entry and screenshot OCR stay in the code for rollback. Both are off unless `TRACKER_BOT_ENABLE_LEGACY_INPUT=true`. On the self-hosted production runner, set that value in the existing local `.env.prod.local` (not in Git), then use the next authorized, deployment-eligible push to `main`. The runner loads the same production env for command registration and activation. Applying only an env change does not update the registered slash options or the running bot. Remove the variable or set it to `false` and use the same runner process to disable both again. Do not deploy or restart the bot manually.

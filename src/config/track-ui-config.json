@@ -107,7 +107,7 @@
     "welcomeNewTemplate": "Welcome to the Tower Tracker, <@{userId}>! Log and analyze your runs.",
     "availableOptionsHeader": "**Available Options:**",
     "options": [
-      { "name": "📤 Upload", "value": "Paste or Scan your Battle Report. You can also attach a screenshot when you paste.", "inline": true },
+      { "name": "📤 Upload", "exportInput": true, "value": "Paste or Scan your Battle Report. You can also attach a screenshot when you paste.", "inline": true },
       { "name": "📥 Import Save File", "value": "Import battle reports, lifetime stats, and preview other tracker data from playerInfo.dat or the Android tool_export.json snapshot.", "inline": true },
       { "name": "📢 Share Last Run", "value": "Share your last logged run with others in the channel.", "inline": true },
       { "name": "✏️ Edit Last", "value": "Edit the most recent run you logged. Lets you quickly fix mistakes or update notes.", "inline": true },
@@ -115,7 +115,7 @@
       { "name": "📈 View Runs", "value": "View and analyze your previous runs with charts, tables, and filters.", "inline": true },
       { "name": "🔗 Web Tracker", "value": "Open your personal tracker website to view, edit, and analyze your runs.", "inline": true },
       { "name": "🎟️ Support", "value": "Go to the Tracker Discord server to make a ticket or ask for help.", "inline": true },
-      { "name": "⚙️ Settings", "value": "Configure tracker options such as scan language, timezone, and more.", "inline": true }
+      { "name": "⚙️ Settings", "value": "Configure tracker options such as locale, timezone, and more.", "inline": true }
     ],
     "footer": "Use Creator Code \"JDEVO\" to Support The Tower Run Tracker!",
     "lastRunFieldLabels": {
@@ -144,6 +144,7 @@
     "mainRows": [
       [
         { "key": "addRun", "label": "Add Run", "style": "Success", "emoji": "➕" },
+        { "key": "manual", "label": "Manual Entry", "style": "Secondary" },
         { "key": "import", "label": "Import Save File", "style": "Primary", "emoji": "📥" },
         { "key": "shareLastMenu", "label": "Share Last Run", "style": "Success", "emoji": "📢" }
       ],

@@ -1,3 +1,4 @@
+import { legacyTrackerInputEnabled, BATTLE_REPORT_EXPORT_HELP, LIFETIME_EXPORT_HELP } from '../legacy-input';
 import { readTrackerMetricValue, readTrackerModuleShardsTotal } from '../shared/report-number';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Colors, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
 import { computeHourlyRate, formatDateToISO, formatTimeTo24h } from '../tracker-helpers';
@@ -178,7 +179,7 @@ export function createConfirmationButtons(token: string) {
   ];
 }
 
-export function createSuccessButtons(preparedShareToken?: string | null) {
+export function createSuccessButtons(preparedShareToken?: string | null, mode: TrackerUiMode = 'track') {
   const ui = getTrackUiConfig();
   const idByKey: Record<string, string> = {
     shareLast: preparedShareToken ? withToken(TRACKER_IDS.flow.preparedSharePrefix, preparedShareToken) : TRACKER_IDS.flow.shareLast,
@@ -190,6 +191,7 @@ export function createSuccessButtons(preparedShareToken?: string | null) {
   };
 
   const buildBtn = (button: { key: string; label: string; style: string; emoji?: string }) => {
+    if (mode === 'lifetime' && !legacyTrackerInputEnabled() && button.key === 'uploadAnother') return null;
     const builder = new ButtonBuilder().setLabel(button.label).setStyle(toButtonStyle(button.style));
     if (button.emoji) builder.setEmoji(button.emoji);
     if (button.key === 'webTracker') {
@@ -218,7 +220,8 @@ export function createInitialEmbed(params: {
   comparisonLabel?: string;
   deltaResult?: TrackerRunDeltaResult;
 }) {
-  const ui = getTrackerUiConfig(params.mode ?? 'track');
+  const mode = params.mode ?? 'track';
+  const ui = getTrackerUiConfig(mode);
   const menu = ui.initialMenu;
   const { userLabel, userId, lastRun, runCount = 0, runTypeCounts = {}, deltaResult } = params;
   const mentionUserId = typeof userId === 'string' && userId.trim() ? userId.trim() : userLabel;
@@ -249,6 +252,7 @@ export function createInitialEmbed(params: {
       if (fields.length) {
         embed.addFields(fields);
       }
+      if (!legacyTrackerInputEnabled()) embed.addFields({ name: 'Import Lifetime Stats', value: LIFETIME_EXPORT_HELP });
       if (menu.footer) {
         embed.setFooter({ text: menu.footer });
       }
@@ -324,7 +328,18 @@ export function createInitialEmbed(params: {
     embed.setThumbnail(menu.thumbnail);
   }
 
-  embed.addFields(...menu.options.map(option => ({ name: option.name, value: option.value, inline: option.inline })));
+  const legacyEnabled = legacyTrackerInputEnabled();
+  const menuOptions = menu.options
+    .filter(option => legacyEnabled || !('legacyInput' in option && option.legacyInput))
+    .map(option => ({
+      name: option.name,
+      value: !legacyEnabled && 'exportInput' in option ? BATTLE_REPORT_EXPORT_HELP : option.value,
+      inline: option.inline,
+    }));
+  if (mode === 'lifetime' && !legacyEnabled) {
+    menuOptions.unshift({ name: 'Import Lifetime Stats', value: LIFETIME_EXPORT_HELP, inline: false });
+  }
+  embed.addFields(...menuOptions);
 
   embed.setFooter({ text: menu.footer });
   return embed;
@@ -347,7 +362,9 @@ export function createMainMenuButtons(mode: TrackerUiMode = 'track', preparedSha
     cancel: TRACKER_IDS.flow.cancel,
   };
 
+  const legacyEnabled = legacyTrackerInputEnabled();
   const buildBtn = (button: { key: string; label: string; style: string; emoji?: string }) => {
+    if (!legacyEnabled && (button.key === 'manual' || (mode === 'lifetime' && button.key === 'addRun'))) return null;
     const builder = new ButtonBuilder().setLabel(button.label).setStyle(toButtonStyle(button.style));
     if (button.emoji) builder.setEmoji(button.emoji);
     if (button.key === 'webTracker') {
@@ -396,7 +413,7 @@ export function createErrorRecoveryButtons(manualId: string, mainId: string, can
   const idByKey: Record<string, string> = { mainMenu: mainId, manual: manualId, cancel: cancelId };
   const components = ui.errorUi.recoveryButtons.map(item => {
     const customId = idByKey[item.key];
-    if (!customId) return null;
+    if (!customId || (item.key === 'manual' && !legacyTrackerInputEnabled())) return null;
     return new ButtonBuilder().setCustomId(customId).setLabel(item.label).setStyle(toButtonStyle(item.style));
   }).filter((b): b is ButtonBuilder => b !== null);
   return components.length ? [new ActionRowBuilder<ButtonBuilder>().addComponents(...components)] : [];
