@@ -3,6 +3,10 @@
 - Use one strict numeric adapter across report entry/review, share cards, comparisons, hourly rates and charts. Accept comma and period decimals, preserve grouped thousands and compact units, and resolve ambiguous new modal input using the saved decimal preference.
 - Normalize only designated numeric write fields, never recursively rewriting notes, IDs or raw report evidence. New reads use saved values without a historical migration.
 
+## Auto-Log chart embeds
+
+- Show generated per-hour charts inline in Auto-Log posts and replace stale chart attachments when an existing post is updated.
+
 ## Battle Report exports by default
 
 - Deprecate and hide manual entry and screenshot OCR by default. Keep optional evidence on pasted Battle Reports, structured save import, and review/edit of saved runs. Both legacy paths can be restored with one production env flag.

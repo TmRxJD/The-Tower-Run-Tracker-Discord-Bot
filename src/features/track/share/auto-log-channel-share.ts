@@ -9,7 +9,7 @@ import { buildShareSnapshotRef } from './share-run-ref';
 import { saveShareSnapshot } from './share-snapshot-store';
 import { resolveShareEmbedChannelPayload, type ShareEmbedChannelPayload } from './share-embed-delivery';
 import { getAutoLogMessageRef, setAutoLogMessageRef } from './log-channel-state';
-import { buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
+import { applyPerHourChartImage, buildPerHourChartAttachment } from '../ui/per-hour-chart-helpers';
 import type { TrackerRunDeltaResult } from '@tmrxjd/platform/tools';
 
 const LOG_CHANNEL_RESTRICTED_GUILD_ID = '850137217828388904';
@@ -17,7 +17,7 @@ const LOG_CHANNEL_RESTRICTED_GUILD_ID = '850137217828388904';
 type ReviewInteraction = MessageComponentInteraction | ModalSubmitInteraction;
 
 type EditableLogMessage = {
-  edit?: (payload: ShareEmbedChannelPayload) => Promise<{ id?: unknown }> | unknown;
+  edit?: (payload: ShareEmbedChannelPayload & { attachments: [] }) => Promise<{ id?: unknown }> | unknown;
   delete: () => Promise<unknown>;
 };
 
@@ -59,6 +59,7 @@ export async function autoShareToConfiguredLogChannel(params: {
   const runType = typeof params.run.type === 'string' && params.run.type.trim() ? params.run.type : 'Farming';
   const chartAttachment = await buildPerHourChartAttachment(allRuns as Record<string, unknown>[], runType).catch(() => null);
   const files = chartAttachment ? [chartAttachment] : [];
+  applyPerHourChartImage(embed, files);
 
   const channel = await params.interaction.client.channels.fetch(logChannelId).catch(() => null);
   if (!channel || !('send' in channel) || typeof channel.send !== 'function') return;
@@ -70,12 +71,14 @@ export async function autoShareToConfiguredLogChannel(params: {
       .then(async (message) => {
         const editableMessage = message as EditableLogMessage;
         if (typeof editableMessage.edit === 'function') {
-          const edited = await Promise.resolve(editableMessage.edit(await resolveShareEmbedChannelPayload({
+          const payload = await resolveShareEmbedChannelPayload({
             userId: params.userId,
             embed,
             files,
             shareRunRef,
-          }))).catch(() => null);
+          });
+          // Do not keep the previous chart attachment when replacing it or when no chart is available.
+          const edited = await Promise.resolve(editableMessage.edit({ ...payload, attachments: [] })).catch(() => null);
           const messageId = typeof (edited as { id?: unknown } | null)?.id === 'string'
             ? String((edited as { id?: unknown }).id)
             : previousRef.messageId;
