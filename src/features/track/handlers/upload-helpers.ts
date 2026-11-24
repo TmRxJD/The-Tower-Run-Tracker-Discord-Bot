@@ -1,5 +1,5 @@
 import { IncompleteRunReportError } from './paste-input-error';
-import { parseNumberInput } from '../../../utils/tracker-math';
+import { readCoverageCount } from '../share/coverage-number';
 import { parseBattleReportRunData } from '@tmrxjd/platform/parity';
 import {
   TRACK_RUN_BATTLE_REPORT_SECTION_HEADERS,
@@ -459,11 +459,11 @@ export function generateCoverageDescription(
   if (!runData) return '';
   const rawFields = runData.rawParseFields && typeof runData.rawParseFields === 'object'
     ? runData.rawParseFields as Record<string, unknown> : {};
-  const totalEnemies = parseNumberInput(String(runData['Total Enemies'] ?? runData.totalEnemies ?? rawFields.totalEnemies ?? 0));
+  const totalEnemies = readCoverageCount(runData['Total Enemies'] ?? runData.totalEnemies ?? rawFields.totalEnemies) ?? 0;
   const hasValidTotalEnemies = Number.isFinite(totalEnemies) && totalEnemies > 0;
   if (!hasValidTotalEnemies) return '';
 
-  const getVal = (key: unknown) => parseNumberInput(String(key ?? 0));
+  const getVal = (key: unknown) => readCoverageCount(key) ?? 0;
   const killsWithGoldenTower = getVal(runData['Golden Tower'] ?? runData.killsWithGoldenTower);
   const enemiesHitByBlackHole = getVal(
     runData['Enemies Hit By Black Hole'] ??
@@ -477,14 +477,9 @@ export function generateCoverageDescription(
   // rows, which differ from the "Enemies Hit By" rows. Fall back to hits only for older
   // runs that predate the kill-tagged fields — presence decides, not magnitude, so a
   // genuine zero stays zero here exactly as it does in the platform's delta extractor.
-  const getOptionalVal = (raw: unknown): number | null => {
-    if (raw === undefined || raw === null || String(raw).trim() === '') return null;
-    const parsed = parseNumberInput(String(raw));
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const correctedOrbs = getOptionalVal(runData.killsWithOrbs) ?? getOptionalVal(rawFields.killsWithOrbs);
+  const correctedOrbs = readCoverageCount(runData.killsWithOrbs) ?? readCoverageCount(rawFields.killsWithOrbs);
   const orbsCoverage = correctedOrbs ?? enemiesHitByOrbs;
-  const correctedBlackHole = getOptionalVal(runData.killsWithBlackHole) ?? getOptionalVal(rawFields.killsWithBlackHole);
+  const correctedBlackHole = readCoverageCount(runData.killsWithBlackHole) ?? readCoverageCount(rawFields.killsWithBlackHole);
   const blackHoleCoverage = correctedBlackHole ?? enemiesHitByBlackHole;
   const taggedByDeathWave = getVal(runData['Tagged by Death Wave'] ?? runData.taggedByDeathWave);
   const destroyedInSpotlight = getVal(runData['Destroyed in Spotlight'] ?? runData.destroyedInSpotlight);

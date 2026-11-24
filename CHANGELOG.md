@@ -1,3 +1,8 @@
+## 2026-11-24 - Correct localized coverage counts
+
+- Render comma-decimal compact report counts (including Death Wave) with their full units instead of silently truncating to a bare integer. Handle trailing game percentage annotations consistently across coverage metrics and preserve valid comma-thousands counts, legacy fallbacks and explicit zero counts.
+- Correct future renders of historical and new reports without rewriting stored runs. Existing posted messages remain unchanged until rerendered. No submission-validation or deployment behavior changes.
+
 ## 2026-11-05 - Preserve prepared Share after cloud identity acknowledgement
 
 - Keep a newly uploaded run's prepared Share valid when deferred cloud replay assigns its first cloud ID to the same durable local run with unchanged captured content. Continue rejecting changed content, known cloud identities, membership, pending intent, tombstones, profile/mode/message bindings and expired tokens.
