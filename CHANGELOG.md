@@ -1,3 +1,8 @@
+## 2026-11-26 - Preserve effect-active counters from structured exports
+
+- Recognize the SDK player-data schema’s `enemiesDestroyedInOrbsThisRound` and `enemiesDestroyedInBlackholeThisRound` fields at the shared save importer, mapping them to the same canonical effect-active counts used by pasted Battle Reports.
+- Preserve canonical and existing alias precedence, explicit zeroes, and the separation between effect-active counts, hit counts, and direct final blows. Do not fill historical runs from unrelated current-player counters or rewrite existing records.
+
 ## 2026-11-24 - Keep localized TrackerBot numbers consistent
 
 - Use one strict numeric adapter across report entry/review, share cards, comparisons, hourly rates and charts. Accept comma and period decimals, preserve grouped thousands and compact units, and resolve ambiguous new modal input using the saved decimal preference.

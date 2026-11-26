@@ -11,6 +11,9 @@ patchedDependencies:
   '@tmrxjd/platform@0.2.4':
     hash: d2b4ac9c7aeec781a464c7e274364637022c4a1a0ca199e713731bdeca27a6fc
     path: patches/@tmrxjd__platform@0.2.4.patch
+  thetowersdk@0.11.3:
+    hash: 30e921faf27dcd308a4aa2f095fcca771bec43c747f485c3347318f218607d84
+    path: patches/thetowersdk@0.11.3.patch
 
 importers:
 
@@ -3348,7 +3351,7 @@ snapshots:
   '@tmrxjd/platform@0.2.4(patch_hash=d2b4ac9c7aeec781a464c7e274364637022c4a1a0ca199e713731bdeca27a6fc)(@gutenye/ocr-node@1.4.8)(@huggingface/transformers@3.8.1)(@vue/compiler-dom@3.5.32)(@vue/compiler-sfc@3.5.32)(fake-indexeddb@6.2.5)(hyperformula@3.2.0)(indexeddb-js@0.0.14)(magic-string@0.30.21)(sharp@0.34.5)(sqlite3@5.1.7)(typescript@5.9.3)':
     dependencies:
       '@tmrxjd/tracker-languages': 0.1.23
-      thetowersdk: 0.11.3
+      thetowersdk: 0.11.3(patch_hash=30e921faf27dcd308a4aa2f095fcca771bec43c747f485c3347318f218607d84)
       zod: 4.4.3
     optionalDependencies:
       '@gutenye/ocr-node': 1.4.8
@@ -5084,7 +5087,7 @@ snapshots:
       yallist: 5.0.0
     optional: true
 
-  thetowersdk@0.11.3:
+  thetowersdk@0.11.3(patch_hash=30e921faf27dcd308a4aa2f095fcca771bec43c747f485c3347318f218607d84):
     dependencies:
       zod: 4.4.3
 

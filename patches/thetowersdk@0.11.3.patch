@@ -1,0 +1,15 @@
+diff --git a/dist/save/battle/report-fields.js b/dist/save/battle/report-fields.js
+index be7babe8a170f4afa35020ccac3b26770e9d8487..d39b94d0a51df9c3f861d9e48827cf9fe728ed83 100644
+--- a/dist/save/battle/report-fields.js
++++ b/dist/save/battle/report-fields.js
+@@ -75,8 +75,8 @@ const BATTLE_REPORT_SAVE_KEY_ALIASES = {
+         'enemiesHitByDeathWaveThisRound',
+         'enemiesHitByDeathwaveThisRound',
+     ],
+-    killsWithBlackHole: ['destroyedInBlackhole', 'destroyedInBlackHole', 'killedWithBlackHole'],
+-    killsWithOrbs: ['destroyedInOrbs', 'killedWithOrbs'],
++    killsWithBlackHole: ['destroyedInBlackhole', 'destroyedInBlackHole', 'killedWithBlackHole', 'enemiesDestroyedInBlackholeThisRound'],
++    killsWithOrbs: ['destroyedInOrbs', 'killedWithOrbs', 'enemiesDestroyedInOrbsThisRound'],
+     coinsFromGoldenCombo: ['coinsFromGoldenTowerPlus'],
+     criticalCoinCoins: ['coinsFromCritCoin'],
+     largestInnerLandmineCharge: ['largestILMCharge'],

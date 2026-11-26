@@ -102,7 +102,8 @@
       "@napi-rs/canvas"
     ],
     "patchedDependencies": {
-      "@tmrxjd/platform@0.2.4": "patches/@tmrxjd__platform@0.2.4.patch"
+      "@tmrxjd/platform@0.2.4": "patches/@tmrxjd__platform@0.2.4.patch",
+      "thetowersdk@0.11.3": "patches/thetowersdk@0.11.3.patch"
     },
     "overrides": {
       "thetowersdk": "0.11.3"
